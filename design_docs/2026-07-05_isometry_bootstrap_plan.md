@@ -1,16 +1,16 @@
 # Isometry bootstrap plan
 
 **Date:** 2026-07-05
-**Status:** active plan. I0-I4 landed 2026-07-05/06 (probes verified,
-receipts in Findings). I4 = DM-authority sessions over iroh: replication
-core (5 tests), real-QUIC loopback (converges on state + log hash),
-windowed `--host`/`--join` (a client process renders the host's board
-over QUIC; the host UI→net→UI round-trip verified); per-player fog of
-war (client-side render fog; LOS in core). Residue: a "new empty map"
-entry point; drag-to-reorder on the turn list; real-time two-window
-live-move shown only by composition (OS input automation can't reliably
-drive one of two stacked windows). I5 (initiative modes, dice,
-templates, whispers) next.
+**Status:** active plan. I0-I5 landed 2026-07-05/06 (probes verified,
+receipts in Findings). I4 = DM-authority sessions over iroh (replication
+core, real-QUIC loopback, windowed `--host`/`--join`, per-player fog).
+I5 = table furniture: dice roller, initiative modes, measurement + area
+templates, GM whispers (four committed pieces; receipts in
+scry-shots/2026-07-06_isometry_{dice,init,measure,whisper}_*.png).
+Residue: a "new empty map" entry point; drag-to-reorder on the turn
+list; serval `.side` wheel-scroll (taller window meanwhile);
+cross-machine run (unavailable here). I6 (system plugins: schema + rhai)
+is next and the phase that makes a full encounter run end to end.
 **Thesis:** a pixel-art isometric P2P VTT is buildable on the Strophos
 stack with the woodshed consumer pattern, and the GBA tactics aesthetic
 (fixed camera, battle-scale maps) keeps every known engine risk inside
@@ -167,12 +167,22 @@ see the fog Finding). **Deferred:** cross-machine/cross-network run
 (physically unavailable here; the loopback binds two real endpoints and
 does the mid-session-join + convergence the done-condition names).
 
-### I5: table furniture
+### I5: table furniture (landed 2026-07-06)
 
 Initiative modes (individual speed order and side-based, a system-level
 choice over the same turn list), dice roller with modifier expressions,
 measurement and area templates, GM whispers. **Done when** a 5e-shaped
-encounter runs end to end without leaving the app.
+encounter runs end to end without leaving the app. Landed as four
+committed pieces: (1) a seedable dice roller (core `dice`: xorshift Rng +
+NdS+M parser) with a shared roll log replicated as `GameEvent::Rolled`;
+(2) initiative modes (`roll_initiative` orders the turn list by d20 per
+token or per side, via `TurnList::set_order` / `GameEvent::TurnSetOrder`);
+(3) measurement + area templates (core `template`: Chebyshev distance,
+burst/line/cone tile sets; a Measure mode previews them); (4) directed GM
+whispers (net `Hello`/`Whisper`, a host key-capture composer, a message
+log). The mechanical furniture for a 5e encounter is present; the rules
+that consume it (HP, AC, hit resolution) are system-plugin work in I6, so
+"end to end" completes when a system lands.
 
 ### I6: system plugins
 
@@ -213,6 +223,23 @@ system is created, bound to a token, and drives its rolls in a session.
 
 ## Findings
 
+- 2026-07-06 (I5 shape): the table furniture reused the seams the earlier
+  phases established. Randomness is data, not shared state: the roller
+  resolves a roll with its own Rng and the RESULT crosses the wire (a
+  `RollRecord`), the friendly-table trust model again (like fog and the
+  DM-authority log); a portable xorshift Rng keeps it dep-free and
+  test-seedable. Initiative is "just" a reorder of the turn list, so
+  modes change how the order is BUILT, not how `advance` walks it.
+  Templates are the same core-geometry shape as visibility/movement.
+  Whispers are the one thing that is NOT the broadcast log: directed
+  `Recipient::One`, verified by the sim (reaches only the named player,
+  never touches the replicated log). Text input avoided the serval
+  `text_field`/focus lane: the host captures keystrokes into a compose
+  buffer directly, simpler and fully in our control. Panel growth forced
+  a taller default window (820) + `.side { overflow-y: auto }`; the
+  wheel-scroll of `.side` did not visibly engage in a quick test (serval
+  scroll-container wiring is a later check), so the height bump is the
+  load-bearing fit for now.
 - 2026-07-06 (I4 architecture): the session layer keeps networking out
   of the code that carries the rules. `HostSession`/`ClientSession` are
   pure synchronous state machines (consume `NetMessage`, emit
@@ -369,6 +396,16 @@ system is created, bound to a token, and drives its rolls in a session.
 
 ## Progress
 
+- 2026-07-06 (I5): table furniture landed as four committed pieces.
+  Dice (core `dice`: Rng + roller; net `Rolled` + shared roll log;
+  panel dice buttons + log). Initiative (`TurnList::set_order`,
+  `GameEvent::TurnSetOrder`, `roll_initiative` individual/side; panel
+  toggle + Roll init). Measure (core `template`: distance +
+  burst/line/cone; Measure mode + highlight + readout). Whispers (net
+  `Hello`/`Whisper` directed routing; host key-capture composer +
+  message log; NetBridge whisper channel + inbox + player list). +5
+  core, +1 net, +4 views tests; receipts in scry-shots. Panel outgrew
+  720, so the window is 820 and `.side` is `overflow-y: auto`.
 - 2026-07-06 (I4 fog): per-player fog of war landed. Core
   `visibility` module (radius Bresenham LOS + opacity, 4 tests); views
   fog state (viewer, visible/explored sets, three-state fog_level,
