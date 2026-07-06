@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
 use isometry_core::{
-    apply, reachable, visible_tiles, Facing, IsoGeometry, Layer, MapDocument, MoveRules,
-    SessionEvent, SightRules, TileCoord, TileKindId, Token, TokenId, TurnList,
+    apply, reachable, roll, visible_tiles, Facing, IsoGeometry, Layer, MapDocument, MoveRules,
+    Rng, RollRecord, SessionEvent, SightRules, TileCoord, TileKindId, Token, TokenId, TurnList,
 };
-use isometry_net::{GameEvent, GameSnapshot};
+use isometry_net::{GameEvent, GameSnapshot, ROLL_LOG_CAP};
 
 /// Fixed side-panel width in logical px (CSS `.side` width plus its
 /// padding); the host uses it to keep drag painting off the panel.
@@ -132,6 +132,12 @@ pub struct UiState {
     pub visible: HashSet<TileCoord>,
     /// Tiles the viewer has ever seen (remembered terrain under fog).
     pub explored: HashSet<TileCoord>,
+    /// The shared roll log (most recent last). Mirrored from the session
+    /// snapshot in Remote mode; kept locally in Local mode.
+    pub roll_log: Vec<RollRecord>,
+    /// Dice generator. Seeded deterministically; the host reseeds with
+    /// real entropy at startup.
+    rng: Rng,
     /// Sprite the Token mode places.
     pub token_sprite: String,
     /// Play state: the substrate turn order.
@@ -170,6 +176,47 @@ impl UiState {
             sight_radius: SIGHT_RADIUS,
             visible: HashSet::new(),
             explored: HashSet::new(),
+            roll_log: Vec::new(),
+            rng: Rng::new(1),
+        }
+    }
+
+    /// Reseed the dice generator (the host does this with real entropy so
+    /// rolls differ per launch).
+    pub fn reseed(&mut self, seed: u64) {
+        self.rng = Rng::new(seed);
+    }
+
+    /// The name shown as the roller: the viewer's player name in a
+    /// session, else "dm".
+    fn roller_name(&self) -> String {
+        self.viewer.clone().unwrap_or_else(|| "dm".to_owned())
+    }
+
+    /// Roll a dice expression (e.g. "1d20+5"). The result is shared: in a
+    /// session it goes to the host as a `Rolled` event and returns via the
+    /// snapshot; solo it appends to the local log. Bad expressions set a
+    /// status and do nothing.
+    pub fn roll_dice(&mut self, expr: &str) {
+        let Some((total, dice)) = roll(expr, &mut self.rng) else {
+            self.status = format!("bad roll: {expr}");
+            return;
+        };
+        let record = RollRecord {
+            by: self.roller_name(),
+            expr: expr.to_owned(),
+            dice,
+            total,
+        };
+        self.status = format!("{} rolled {} = {}", record.by, record.expr, record.total);
+        if self.net_mode == NetMode::Remote {
+            self.net_outbox.push(GameEvent::Rolled(record));
+        } else {
+            self.roll_log.push(record);
+            let overflow = self.roll_log.len().saturating_sub(ROLL_LOG_CAP);
+            if overflow > 0 {
+                self.roll_log.drain(0..overflow);
+            }
         }
     }
 
@@ -261,6 +308,7 @@ impl UiState {
     pub fn apply_snapshot(&mut self, snap: GameSnapshot) {
         self.map = snap.map;
         self.turns = snap.turns;
+        self.roll_log = snap.roll_log;
         if let Some(id) = self.selected_token {
             if self.map.token(id).is_none() {
                 self.selected_token = None;
@@ -692,9 +740,36 @@ mod tests {
         let snap = GameSnapshot {
             map: snap_map,
             turns: ui.turns.clone(),
+            roll_log: Vec::new(),
         };
         ui.apply_snapshot(snap);
         assert_eq!(ui.map.token(TokenId(1)).unwrap().at, (before.0 + 1, before.1));
+    }
+
+    #[test]
+    fn local_roll_appends_to_log_and_is_reproducible() {
+        let mut ui = UiState::new(demo_map());
+        ui.reseed(99);
+        ui.roll_dice("1d20+3");
+        assert_eq!(ui.roll_log.len(), 1);
+        let rec = &ui.roll_log[0];
+        assert_eq!(rec.by, "dm");
+        assert_eq!(rec.dice.len(), 1);
+        assert_eq!(rec.total, rec.dice[0] as i32 + 3);
+        // A bad expression sets a status and adds nothing.
+        ui.roll_dice("nonsense");
+        assert_eq!(ui.roll_log.len(), 1);
+        assert!(ui.status.starts_with("bad roll"));
+    }
+
+    #[test]
+    fn remote_roll_routes_out_not_local() {
+        let mut ui = UiState::new(demo_map());
+        ui.net_mode = NetMode::Remote;
+        ui.viewer = Some("A".to_owned());
+        ui.roll_dice("2d6");
+        assert!(ui.roll_log.is_empty(), "remote rolls come back via snapshot");
+        assert_eq!(ui.net_outbox.len(), 1);
     }
 
     #[test]

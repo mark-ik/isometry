@@ -19,7 +19,9 @@ mod protocol;
 mod session;
 pub mod sim;
 
-pub use protocol::{GameEvent, GameSnapshot, NetMessage, Outbound, PeerId, Recipient};
+pub use protocol::{
+    GameEvent, GameSnapshot, NetMessage, Outbound, PeerId, Recipient, ROLL_LOG_CAP,
+};
 pub use session::{apply_game, ClientSession, HostSession};
 
 #[cfg(feature = "iroh")]

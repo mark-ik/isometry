@@ -1,4 +1,4 @@
-use isometry_core::{MapDocument, SessionEvent, TokenId, TurnList};
+use isometry_core::{MapDocument, RollRecord, SessionEvent, TokenId, TurnList};
 use serde::{Deserialize, Serialize};
 
 /// A peer's identity within a session. For the iroh transport this wraps
@@ -13,7 +13,14 @@ pub struct PeerId(pub u64);
 pub struct GameSnapshot {
     pub map: MapDocument,
     pub turns: TurnList,
+    /// The shared roll log, most recent last, capped at
+    /// [`ROLL_LOG_CAP`]. Everyone at the table sees every roll.
+    #[serde(default)]
+    pub roll_log: Vec<RollRecord>,
 }
+
+/// Rolls kept in the shared log; older ones drop off.
+pub const ROLL_LOG_CAP: usize = 50;
 
 /// The replicated unit: a map mutation or a turn-order change. The host
 /// orders these into one log every peer replays; `MapDocument` and
@@ -28,6 +35,8 @@ pub enum GameEvent {
     TurnRemove(TokenId),
     /// Advance to the next turn.
     TurnAdvance,
+    /// A resolved dice roll to append to the shared log.
+    Rolled(RollRecord),
 }
 
 /// One message on the wire. The host is the authority: clients send

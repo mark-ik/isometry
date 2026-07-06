@@ -508,6 +508,7 @@ impl ApplicationHandler for App {
                 let snapshot = GameSnapshot {
                     map: ui.map.clone(),
                     turns: ui.turns.clone(),
+                    roll_log: Vec::new(),
                 };
                 self.net = Some(NetBridge::spawn(Role::Host(snapshot)));
             }
@@ -527,6 +528,13 @@ impl ApplicationHandler for App {
             ui.viewer = Some(v);
             ui.recompute_fog();
         }
+        // Seed the dice generator with real entropy so rolls differ per
+        // launch (the clock is plenty for a friendly table).
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(1);
+        ui.reseed(seed);
 
         let dom = Rc::new(RefCell::new(ScriptedDom::new()));
         let runner = Runner::new(dom, board_root as fn(&UiState) -> UiChild, ui);

@@ -77,7 +77,10 @@ pub fn board_css() -> String {
 .turn-row-active { background-color: #2c3347; }
 .turn-row-selected { color: #9fd48a; }
 .turn-label { flex: 1; }
-.btn-mini { padding: 1px 6px; font-size: 11px; margin-bottom: 0; }
+.btn-mini { padding: 1px 6px; font-size: 11px; margin-bottom: 4px; }
+
+.roll-log { margin-top: 4px; margin-bottom: 2px; }
+.roll-line { color: #cfd3dd; font-size: 12px; margin-bottom: 2px; }
 
 /* Ground markers under tokens: gold = whose turn, green = selected. */
 .marker {

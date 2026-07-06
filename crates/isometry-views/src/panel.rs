@@ -88,6 +88,23 @@ fn swatch(ui: &UiState, kind: TileKindId, name: &str) -> UiChild {
     ))
 }
 
+const DICE: [(&str, &str); 7] = [
+    ("d20", "1d20"),
+    ("d12", "1d12"),
+    ("d10", "1d10"),
+    ("d8", "1d8"),
+    ("d6", "1d6"),
+    ("d4", "1d4"),
+    ("2d6", "2d6"),
+];
+
+fn dice_button(label: &'static str, expr: &'static str) -> UiChild {
+    Box::new(clickable(
+        el("div", text(label)).attr("class", "btn btn-mini"),
+        move |ui: &mut UiState, _| ui.roll_dice(expr),
+    ))
+}
+
 fn action_button(label: &'static str, enabled: bool, act: fn(&mut UiState)) -> UiChild {
     let class = if enabled { "btn" } else { "btn btn-dim" };
     Box::new(clickable(
@@ -181,6 +198,36 @@ pub fn side_panel(ui: &UiState) -> UiChild {
                 (action_button("End turn", true, |ui| ui.end_turn()),),
             )
             .attr("class", "btn-row"),
+        ),
+        Box::new(el("div", text("Dice")).attr("class", "side-heading")),
+        Box::new(
+            el(
+                "div",
+                DICE.iter()
+                    .map(|(label, expr)| dice_button(label, expr))
+                    .collect::<Vec<UiChild>>(),
+            )
+            .attr("class", "btn-row"),
+        ),
+        Box::new(
+            el(
+                "div",
+                ui.roll_log
+                    .iter()
+                    .rev()
+                    .take(5)
+                    .map(|r| {
+                        Box::new(
+                            el(
+                                "div",
+                                text(format!("{}: {} = {}", r.by, r.expr, r.total)),
+                            )
+                            .attr("class", "roll-line"),
+                        ) as UiChild
+                    })
+                    .collect::<Vec<UiChild>>(),
+            )
+            .attr("class", "roll-log"),
         ),
         Box::new(el("div", text(ui.status.clone())).attr("class", "side-status")),
         Box::new(

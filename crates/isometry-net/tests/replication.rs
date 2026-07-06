@@ -32,6 +32,7 @@ fn snapshot() -> GameSnapshot {
     GameSnapshot {
         map,
         turns: TurnList::new(),
+        roll_log: Vec::new(),
     }
 }
 

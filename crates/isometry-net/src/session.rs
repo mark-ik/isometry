@@ -32,6 +32,14 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Eve
             state.turns.advance();
             Ok(())
         }
+        GameEvent::Rolled(record) => {
+            state.roll_log.push(record.clone());
+            let overflow = state.roll_log.len().saturating_sub(crate::protocol::ROLL_LOG_CAP);
+            if overflow > 0 {
+                state.roll_log.drain(0..overflow);
+            }
+            Ok(())
+        }
     }
 }
 
