@@ -1,0 +1,31 @@
+[package]
+name = "isometry-net"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Isometry's session layer: DM-authority replication of the SessionEvent log over a transport seam. Pure-sync protocol core; iroh QUIC binding behind the `iroh` feature."
+
+[features]
+# The core (protocol + session state machines + in-memory routing) is
+# dep-light and always built. The iroh transport pulls the QUIC stack
+# and a tokio runtime, so it is opt-in.
+default = []
+iroh = ["dep:iroh", "dep:iroh-tickets", "dep:tokio", "dep:tracing"]
+
+[dependencies]
+isometry-core = { workspace = true }
+serde = { workspace = true }
+# Compact, no_std-friendly wire framing; also the byte form the portable
+# log hash folds over (so convergence is std-hash-independent).
+postcard = { version = "1", features = ["alloc"] }
+
+# iroh feature only.
+iroh = { version = "0.98", optional = true }
+iroh-tickets = { version = "0.5", optional = true }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros", "io-util", "time"], optional = true }
+tracing = { version = "0.1", optional = true }
+
+[dev-dependencies]
+isometry-core = { workspace = true }
