@@ -2578,6 +2578,7 @@ name = "isometry-serval"
 version = "0.1.0"
 dependencies = [
  "isometry-core",
+ "isometry-net",
  "isometry-views",
  "layout-dom-api",
  "netrender",
@@ -2588,6 +2589,7 @@ dependencies = [
  "serval-layout",
  "serval-scripted-dom",
  "serval-winit-host",
+ "tokio",
  "wgpu",
  "winit",
  "xilem-serval",
@@ -2598,6 +2600,7 @@ name = "isometry-views"
 version = "0.1.0"
 dependencies = [
  "isometry-core",
+ "isometry-net",
  "xilem-serval",
 ]
 

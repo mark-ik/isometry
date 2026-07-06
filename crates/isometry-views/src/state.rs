@@ -4,6 +4,7 @@ use isometry_core::{
     apply, reachable, Facing, IsoGeometry, Layer, MapDocument, MoveRules, SessionEvent,
     TileCoord, TileKindId, Token, TokenId, TurnList,
 };
+use isometry_net::{GameEvent, GameSnapshot};
 
 /// Fixed side-panel width in logical px (CSS `.side` width plus its
 /// padding); the host uses it to keep drag painting off the panel.
@@ -68,6 +69,18 @@ impl EditMode {
 /// reverse application order (so replaying the list undoes the step).
 type Step = Vec<SessionEvent>;
 
+/// Whether this app owns its state or mirrors a networked session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NetMode {
+    /// Solo / hot-seat: mutations apply locally with undo (the editor).
+    Local,
+    /// In a session: Play moves and turn changes become [`GameEvent`]s
+    /// routed to the host authority, and the map/turns render from the
+    /// replicated snapshot (no optimistic mutation). Editing is a
+    /// Local-mode, offline activity, so editor actions are inert here.
+    Remote,
+}
+
 /// Runner state: the substrate document plus view-layer concerns
 /// (camera, selection, editor).
 pub struct UiState {
@@ -88,6 +101,11 @@ pub struct UiState {
     /// One-shot host requests (the host consumes and clears these).
     pub save_requested: bool,
     pub load_requested: bool,
+    /// Local vs networked-session behavior.
+    pub net_mode: NetMode,
+    /// In `Remote` mode, game events the app should send to the session
+    /// (the host drains these each frame). Empty in `Local` mode.
+    pub net_outbox: Vec<GameEvent>,
     /// Sprite the Token mode places.
     pub token_sprite: String,
     /// Play state: the substrate turn order.
@@ -120,6 +138,38 @@ impl UiState {
             selected_token: None,
             reach: HashMap::new(),
             hover_tile: None,
+            net_mode: NetMode::Local,
+            net_outbox: Vec::new(),
+        }
+    }
+
+    /// Mirror a replicated snapshot into the view (Remote mode): the map
+    /// and turn order become the host's authoritative copy, then reach
+    /// recomputes for whatever token is selected. Selection and camera
+    /// are local and survive.
+    pub fn apply_snapshot(&mut self, snap: GameSnapshot) {
+        self.map = snap.map;
+        self.turns = snap.turns;
+        if let Some(id) = self.selected_token {
+            if self.map.token(id).is_none() {
+                self.selected_token = None;
+            }
+        }
+        if self.status == "connecting..." {
+            self.status = "in session".to_owned();
+        }
+        self.recompute_reach();
+    }
+
+    /// In Remote mode, queue a game event for the session instead of
+    /// mutating locally. Returns true when it was queued (so callers
+    /// skip the local path).
+    fn net_emit(&mut self, event: GameEvent) -> bool {
+        if self.net_mode == NetMode::Remote {
+            self.net_outbox.push(event);
+            true
+        } else {
+            false
         }
     }
 
@@ -247,7 +297,16 @@ impl UiState {
     /// Add or drop `id` from the turn order (the drag-in/drag-out
     /// trichotomy's click form; out of the list = free movement).
     pub fn toggle_turn(&mut self, id: TokenId) {
-        if self.turns.contains(id) {
+        let listed = self.turns.contains(id);
+        let event = if listed {
+            GameEvent::TurnRemove(id)
+        } else {
+            GameEvent::TurnAdd(id)
+        };
+        if self.net_emit(event) {
+            return;
+        }
+        if listed {
             self.turns.remove(id);
         } else {
             self.turns.add(id);
@@ -257,6 +316,9 @@ impl UiState {
 
     /// Advance the turn and select whoever is up.
     pub fn end_turn(&mut self) {
+        if self.net_emit(GameEvent::TurnAdvance) {
+            return;
+        }
         self.turns.advance();
         if let Some(active) = self.turns.active() {
             self.select_token(active);
@@ -267,7 +329,8 @@ impl UiState {
         }
     }
 
-    /// Rotate the selected token's facing clockwise (undoable).
+    /// Rotate the selected token's facing clockwise (undoable locally,
+    /// replicated in a session).
     pub fn rotate_selected(&mut self) {
         let Some(id) = self.selected_token else { return };
         let Some(t) = self.map.token(id) else { return };
@@ -277,6 +340,9 @@ impl UiState {
             Facing::South => Facing::West,
             Facing::West => Facing::North,
         };
+        if self.net_emit(GameEvent::Map(SessionEvent::TokenFaced { id, facing: next })) {
+            return;
+        }
         self.apply_step(vec![SessionEvent::TokenFaced { id, facing: next }]);
     }
 
@@ -284,7 +350,8 @@ impl UiState {
     pub fn click_token(&mut self, id: TokenId) {
         match self.mode {
             EditMode::Play => self.select_token(id),
-            EditMode::Token => {
+            // Token placement is a Local-mode editor action.
+            EditMode::Token if self.net_mode == NetMode::Local => {
                 self.apply_step(vec![SessionEvent::TokenRemoved { id }]);
                 self.turns.remove(id);
                 self.recompute_reach();
@@ -295,6 +362,13 @@ impl UiState {
 
     /// The editor entry point: a click (or paint-drag) on tile `at`.
     pub fn click_tile(&mut self, at: TileCoord) {
+        // Editing is offline (Local) work; in a session only Play and
+        // Select act on a click.
+        if self.net_mode == NetMode::Remote
+            && !matches!(self.mode, EditMode::Play | EditMode::Select)
+        {
+            return;
+        }
         match self.mode {
             EditMode::Select => {
                 self.selected = Some(at);
@@ -329,11 +403,20 @@ impl UiState {
                             .and_then(|i| path.get(i).copied())
                             .unwrap_or(from);
                         let facing = facing_between(last_from, at);
-                        self.apply_step(vec![
-                            SessionEvent::TokenMoved { id, to: at },
-                            SessionEvent::TokenFaced { id, facing },
-                        ]);
-                        self.recompute_reach();
+                        if self.net_mode == NetMode::Remote {
+                            // Send intent; the authoritative echo moves
+                            // the token, so don't touch the local map.
+                            self.net_outbox
+                                .push(GameEvent::Map(SessionEvent::TokenMoved { id, to: at }));
+                            self.net_outbox
+                                .push(GameEvent::Map(SessionEvent::TokenFaced { id, facing }));
+                        } else {
+                            self.apply_step(vec![
+                                SessionEvent::TokenMoved { id, to: at },
+                                SessionEvent::TokenFaced { id, facing },
+                            ]);
+                            self.recompute_reach();
+                        }
                     }
                 }
             }
@@ -459,6 +542,42 @@ mod tests {
         // The move is undoable (one step: move + facing).
         ui.select_token(TokenId(1));
         assert!(!ui.may_move(TokenId(1)) || ui.turns.active() == Some(TokenId(1)));
+    }
+
+    #[test]
+    fn remote_mode_routes_moves_as_events_not_local_mutation() {
+        use isometry_core::TokenId;
+        let mut ui = UiState::new(demo_map());
+        ui.net_mode = NetMode::Remote;
+        ui.mode = EditMode::Play;
+        let before = ui.map.token(TokenId(1)).unwrap().at;
+        ui.select_token(TokenId(1));
+        // A move in a session emits intents and leaves the local map
+        // untouched (the host authority echoes the real move back).
+        ui.click_tile((before.0 + 1, before.1));
+        assert_eq!(ui.map.token(TokenId(1)).unwrap().at, before);
+        assert_eq!(ui.net_outbox.len(), 2, "move + facing emitted");
+        // End turn and toggle also route out, not local.
+        ui.net_outbox.clear();
+        ui.end_turn();
+        ui.toggle_turn(TokenId(2));
+        assert_eq!(ui.net_outbox.len(), 2);
+        // Editing is inert in a session.
+        ui.net_outbox.clear();
+        ui.mode = EditMode::PaintGround;
+        ui.click_tile((0, 0));
+        assert!(ui.net_outbox.is_empty());
+        assert!(ui.can_undo() == false, "no local edit happened");
+
+        // A snapshot mirrors the authoritative state in.
+        let mut snap_map = ui.map.clone();
+        snap_map.token_mut(TokenId(1)).unwrap().at = (before.0 + 1, before.1);
+        let snap = GameSnapshot {
+            map: snap_map,
+            turns: ui.turns.clone(),
+        };
+        ui.apply_snapshot(snap);
+        assert_eq!(ui.map.token(TokenId(1)).unwrap().at, (before.0 + 1, before.1));
     }
 
     #[test]

@@ -9,14 +9,27 @@
 //! and composites onto the backbuffer. Borrowed from the woodshed-serval
 //! harness shape.
 //!
-//! `ISOMETRY_PROFILE=1` prints per-frame scene-build and raster times,
-//! the probe P2 receipt hook.
+//! Sessions (I4): `--host` binds an iroh session and prints a join
+//! ticket; `--join <ticket>` dials it. In a session the view is Remote —
+//! play routes through the host authority (`net` module bridges the
+//! async session to this sync loop). Env hooks: `ISOMETRY_PROFILE=1`
+//! (frame timers + net trace), `ISOMETRY_CAPTURE_DIR` (self-capture),
+//! `ISOMETRY_SYNTH=1` (stress board), `ISOMETRY_NET_SELFTEST=1` (fire one
+//! end-turn after warm-up to verify the session round-trip without OS
+//! input automation).
 
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-use isometry_views::{board_css, board_root, demo_map, synth_map, UiChild, UiState, PANEL_W};
+use isometry_net::GameSnapshot;
+use isometry_views::{
+    board_css, board_root, demo_map, synth_map, NetMode, UiChild, UiState, PANEL_W,
+};
+
+mod net;
+use net::{NetBridge, Role};
 use layout_dom_api::{DomMutation, LayoutDomMut as _};
 use netrender::{ColorLoad, ExternalTexturePlacement, NetrenderOptions};
 use paint_list_api::{DeviceIntSize, PaintList as _};
@@ -58,6 +71,27 @@ struct App {
     /// with every presented frame, read back from the app's own texture.
     /// Screen grabs lose to overlapping windows; this cannot.
     capture_dir: Option<std::path::PathBuf>,
+    /// What session, if any, this process runs (from `--host`/`--join`),
+    /// consumed once at `resumed`.
+    net_intent: Option<NetIntent>,
+    /// The live session bridge in networked mode.
+    net: Option<NetBridge>,
+    /// Last session version pulled into the UI; a bump means redraw.
+    last_net_version: u64,
+    /// `ISOMETRY_NET_SELFTEST=1`: fire one end-turn from inside the app a
+    /// few seconds after a session starts, so the UI→net→republish→UI
+    /// round-trip is verifiable without OS input automation (Windows
+    /// foreground-lock makes driving one of two windows unreliable).
+    net_selftest: bool,
+    /// Session start instant, for the self-test delay.
+    started: Option<Instant>,
+    selftest_fired: bool,
+}
+
+/// Parsed session role from the command line.
+enum NetIntent {
+    Host,
+    Join(String),
 }
 
 /// Where map documents save: `maps/<slug>.json` under the working
@@ -300,6 +334,61 @@ impl App {
         if let Some(window) = self.window.as_ref() {
             window.request_redraw();
         }
+        self.pump_net();
+    }
+
+    /// In networked mode: ship the UI's queued game events to the
+    /// session, and pull the latest replicated snapshot into the view
+    /// when the session advanced. No-op when solo.
+    fn pump_net(&mut self) {
+        if self.net.is_none() {
+            return;
+        }
+        // Drain the outbox and submit each event.
+        let mut events = Vec::new();
+        if let Some(runner) = self.runner.as_mut() {
+            runner.update(|ui| events = std::mem::take(&mut ui.net_outbox));
+        }
+        if let Some(net) = self.net.as_ref() {
+            if !events.is_empty() && self.profile {
+                eprintln!("[isometry] pump: submitting {} event(s)", events.len());
+            }
+            for event in events {
+                net.submit(event);
+            }
+        }
+        // Mirror in a new snapshot when the session version bumped.
+        let version = self.net.as_ref().map(|n| n.version()).unwrap_or(0);
+        if version != self.last_net_version {
+            self.last_net_version = version;
+            let snap = self.net.as_ref().and_then(|n| n.latest());
+            if let (Some(snap), Some(runner)) = (snap, self.runner.as_mut()) {
+                runner.update(|ui| ui.apply_snapshot(snap));
+                if let Some(window) = self.window.as_ref() {
+                    window.request_redraw();
+                }
+            }
+        }
+    }
+
+    /// The env-gated self-test: after a warm-up, emit one end-turn as if
+    /// the user pressed it, exercising the full session round-trip.
+    fn maybe_selftest(&mut self) {
+        if !self.net_selftest || self.selftest_fired {
+            return;
+        }
+        let ready = self
+            .started
+            .map(|t| t.elapsed() > Duration::from_secs(3))
+            .unwrap_or(false);
+        if ready {
+            self.selftest_fired = true;
+            eprintln!("[isometry] selftest: firing end_turn");
+            if let Some(runner) = self.runner.as_mut() {
+                runner.update(|ui| ui.end_turn());
+            }
+            self.pump_net();
+        }
     }
 
     fn key(&mut self, event: &WinitKeyEvent) {
@@ -316,6 +405,9 @@ impl App {
                 return;
             }
             WinitKey::Named(WinitNamedKey::Enter) => {
+                if self.profile {
+                    eprintln!("[isometry] key: Enter -> end_turn");
+                }
                 runner.update(|ui| ui.end_turn());
                 self.after_dispatch();
                 return;
@@ -395,11 +487,46 @@ impl ApplicationHandler for App {
         for id in ids {
             ui.turns.add(id);
         }
+
+        // Session setup: host publishes this board; a client starts from
+        // an empty view and fills in on the first snapshot. Either way the
+        // view is Remote, so play routes through the session.
+        match self.net_intent.take() {
+            Some(NetIntent::Host) => {
+                ui.net_mode = NetMode::Remote;
+                let snapshot = GameSnapshot {
+                    map: ui.map.clone(),
+                    turns: ui.turns.clone(),
+                };
+                self.net = Some(NetBridge::spawn(Role::Host(snapshot)));
+            }
+            Some(NetIntent::Join(ticket)) => {
+                ui.net_mode = NetMode::Remote;
+                ui.status = "connecting...".to_owned();
+                self.net = Some(NetBridge::spawn(Role::Client(ticket)));
+            }
+            None => {}
+        }
+        if self.net.is_some() {
+            self.started = Some(Instant::now());
+        }
+
         let dom = Rc::new(RefCell::new(ScriptedDom::new()));
         let runner = Runner::new(dom, board_root as fn(&UiState) -> UiChild, ui);
         self.window = Some(window);
         self.host = Some(host);
         self.runner = Some(runner);
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // In a session, poll the bridge ~10Hz so remote changes (a peer's
+        // move) reach the view without local input driving the loop.
+        if self.net.is_some() {
+            self.maybe_selftest();
+            self.pump_net();
+            event_loop
+                .set_control_flow(ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(100)));
+        }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -484,6 +611,18 @@ impl ApplicationHandler for App {
     }
 }
 
+/// Parse `--host` or `--join <ticket>` from the command line.
+fn parse_net_intent() -> Option<NetIntent> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--host") {
+        Some(NetIntent::Host)
+    } else if let Some(i) = args.iter().position(|a| a == "--join") {
+        args.get(i + 1).map(|t| NetIntent::Join(t.clone()))
+    } else {
+        None
+    }
+}
+
 fn main() {
     let event_loop = EventLoop::new().expect("event loop");
     event_loop.set_control_flow(ControlFlow::Wait);
@@ -502,6 +641,12 @@ fn main() {
         last_focus: None,
         profile: std::env::var_os("ISOMETRY_PROFILE").is_some(),
         capture_dir: std::env::var_os("ISOMETRY_CAPTURE_DIR").map(Into::into),
+        net_intent: parse_net_intent(),
+        net: None,
+        last_net_version: 0,
+        net_selftest: std::env::var_os("ISOMETRY_NET_SELFTEST").is_some(),
+        started: None,
+        selftest_fired: false,
     };
     event_loop.run_app(&mut app).expect("run app");
 }

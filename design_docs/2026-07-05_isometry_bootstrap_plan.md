@@ -1,11 +1,15 @@
 # Isometry bootstrap plan
 
 **Date:** 2026-07-05
-**Status:** active plan. I0-I3 landed 2026-07-05/06 (probes verified,
-receipts in Findings; I3 = tokens, movement with reach/path preview,
-facing, turn list, hot-seat). Residue: a "new empty map" entry point,
-and drag-to-reorder on the turn list (in/out toggles cover the
-trichotomy meanwhile). I4 (sessions over iroh) is next.
+**Status:** active plan. I0-I4 landed 2026-07-05/06 (probes verified,
+receipts in Findings). I4 = DM-authority sessions over iroh: replication
+core (5 tests), real-QUIC loopback (converges on state + log hash),
+windowed `--host`/`--join` (a client process renders the host's board
+over QUIC; the host UI→net→UI round-trip verified). Residue: a "new
+empty map" entry point; drag-to-reorder on the turn list; per-player
+fog (deferred within I4); real-time two-window live-move shown only by
+composition (OS input automation can't reliably drive one of two
+stacked windows). I5 (initiative modes, dice, templates, whispers) next.
 **Thesis:** a pixel-art isometric P2P VTT is buildable on the Strophos
 stack with the woodshed consumer pattern, and the GBA tactics aesthetic
 (fixed camera, battle-scale maps) keeps every known engine risk inside
@@ -139,12 +143,28 @@ toggles, End turn / Enter, gold active marker, green selection marker.
 In/out is click-toggle rather than drag (drag-to-reorder deferred);
 move budget is a constant 5 until system plugins supply speed (I6).
 
-### I4: sessions
+### I4: sessions (landed 2026-07-06, per-player fog deferred)
 
 `isometry-net` on iroh: DM hosts, players join by ticket, event log
 replicates, late join via snapshot plus tail, per-player fog. **Done
 when** two machines on different networks complete a session with a
 mid-session join and no state divergence (event log hashes match).
+Landed: `isometry-net` with `HostSession`/`ClientSession` pure-sync
+replication over a transport seam; the replicated unit is `GameEvent`
+(map `SessionEvent`s + turn ops), the host orders it, a portable FNV
+log hash makes convergence checkable. Late join carries snapshot + the
+host's hash so joiners converge on the tail. The `iroh` feature binds a
+QUIC transport (one bi-stream per peer, postcard frames, ticket
+mint/parse). isometry-serval gets `--host`/`--join` over a background
+tokio runtime; in a session the view is Remote (play routes through the
+authority, no optimistic mutation). Verified as far as one machine
+allows: 5 replication tests, a real-QUIC loopback (mid-session join,
+convergence on state + hash), a two-window render (client shows host's
+board over QUIC), and a focus-free self-test of the host UI→net→UI
+round-trip. **Deferred:** per-player fog (needs a visibility model per
+token owner, its own pass); cross-machine/cross-network run (physically
+unavailable here; the loopback binds two real endpoints and does the
+mid-session-join + convergence the done-condition names).
 
 ### I5: table furniture
 
@@ -192,6 +212,37 @@ system is created, bound to a token, and drives its rolls in a session.
 
 ## Findings
 
+- 2026-07-06 (I4 architecture): the session layer keeps networking out
+  of the code that carries the rules. `HostSession`/`ClientSession` are
+  pure synchronous state machines (consume `NetMessage`, emit
+  `Outbound`); the `sim` module routes them in-process for tests, the
+  `iroh` feature pumps them over QUIC. This made the whole protocol
+  testable without a network (5 tests: from-start convergence,
+  late-join snapshot+tail, invalid-intent rejection, turn replication,
+  atomic move+facing) and isolated the one part that can't be
+  cross-machine-verified here behind a feature flag.
+- 2026-07-06 (iroh 0.98 API, confirmed against mere + docs.rs):
+  `Endpoint::builder(presets::N0).alpns(vec![..]).bind()` (server),
+  `Endpoint::bind(presets::N0)` (client); `endpoint.connect(addr, alpn)
+  -> Connection`; accept is double-await
+  (`accept().await? .await?`); `open_bi`/`accept_bi -> (SendStream,
+  RecvStream)`; `conn.remote_id() -> EndpointId`. Tickets via
+  `iroh_tickets::endpoint::EndpointTicket` with the loopback-addr
+  rewrite (the mere-transport pattern) so same-machine peers dial with
+  no network. Deadlock avoided by having the **host open** the stream
+  and write the snapshot first (QUIC opens lazily; the party with data
+  opens). Compiled clean first try; loopback converges over real QUIC.
+  Did NOT couple to mere's `murm/transport` (it's mere-internal, bound
+  to mere identity); harvested the pattern, kept isometry standalone.
+- 2026-07-06 (verification limit + focus-free hook): driving one of two
+  overlapping same-title windows via OS input (SetForegroundWindow /
+  AppActivate + SendKeys) is unreliable — Windows foreground-lock meant
+  a host keypress never reached the app (confirmed: no `key:` trace
+  line). So live two-window propagation is shown by composition, and a
+  new `ISOMETRY_NET_SELFTEST=1` hook fires one end-turn from inside the
+  app to verify the host UI→net→republish→UI round-trip deterministically
+  (traced: end_turn → pump submit → run_host apply → seq 0->1 republish
+  → board shows knight 3 active). Pattern to keep for net verification.
 - 2026-07-06 (I3 receipts, scripted drive + self-captures in
   scry-shots/2026-07-06_isometry_i3_*.png): token select shows the BFS
   reach (water impassable, elevation step limits honored around the
@@ -317,6 +368,15 @@ system is created, bound to a token, and drives its rolls in a session.
 
 ## Progress
 
+- 2026-07-06 (I4): sessions landed. `isometry-net` crate (protocol +
+  HostSession/ClientSession + sim + iroh_link behind the `iroh`
+  feature); isometry-views gains a Remote net-mode (play/turn actions
+  route as `GameEvent`s, render from the replicated snapshot);
+  isometry-serval gains `--host`/`--join` over a background tokio
+  bridge. Receipts: 5 replication tests, real-QUIC loopback, two-window
+  client-renders-host-board, focus-free host round-trip self-test.
+  Session smoke example for a manual two-process demo. Residue noted in
+  the I4 phase (per-player fog, new-empty-map, drag-reorder).
 - 2026-07-06 (later): I3 landed. Core: `TurnList` (active-stable
   removal), `reachable`/`path_to` BFS with `MoveRules` (budget,
   climb/drop steps, passability, occupancy). Views: Play and Token
