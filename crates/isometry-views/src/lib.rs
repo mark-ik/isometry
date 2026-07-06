@@ -8,10 +8,11 @@
 
 mod board;
 mod demo;
+mod panel;
 mod state;
 mod theme;
 
 pub use board::{board_root, UiChild};
-pub use demo::demo_map;
-pub use state::UiState;
+pub use demo::{demo_map, synth_map};
+pub use state::{EditMode, UiState, PANEL_W};
 pub use theme::board_css;

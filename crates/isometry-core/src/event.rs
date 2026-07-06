@@ -45,20 +45,37 @@ pub enum EventError {
 
 /// Apply one event to the map, or reject it unchanged. The host runs
 /// this as validation before broadcast; peers run it on receipt.
-pub fn apply(map: &mut MapDocument, event: &SessionEvent) -> Result<(), EventError> {
+///
+/// On success returns the **inverse event**: applying it restores the
+/// state from before this call. Editor undo is a stack of inverses;
+/// replication peers ignore the return value.
+pub fn apply(map: &mut MapDocument, event: &SessionEvent) -> Result<SessionEvent, EventError> {
     match event {
         SessionEvent::TilePlaced { layer, at, kind } => {
             if kind.0 as usize >= map.tile_kinds.len() {
                 return Err(EventError::UnknownTileKind(*kind));
             }
             let (col, row) = in_bounds(map, *at)?;
-            map.layer_mut(*layer).set(col, row, *kind);
-            Ok(())
+            let prev = map
+                .layer_mut(*layer)
+                .set(col, row, *kind)
+                .expect("bounds checked");
+            Ok(SessionEvent::TilePlaced {
+                layer: *layer,
+                at: *at,
+                kind: prev,
+            })
         }
         SessionEvent::ElevationSet { at, height } => {
             let (col, row) = in_bounds(map, *at)?;
-            map.elevation.set(col, row, *height);
-            Ok(())
+            let prev = map
+                .elevation
+                .set(col, row, *height)
+                .expect("bounds checked");
+            Ok(SessionEvent::ElevationSet {
+                at: *at,
+                height: prev,
+            })
         }
         SessionEvent::TokenPlaced(token) => {
             if map.token(token.id).is_some() {
@@ -66,27 +83,33 @@ pub fn apply(map: &mut MapDocument, event: &SessionEvent) -> Result<(), EventErr
             }
             in_bounds(map, token.at)?;
             map.tokens.push(token.clone());
-            Ok(())
+            Ok(SessionEvent::TokenRemoved { id: token.id })
         }
         SessionEvent::TokenMoved { id, to } => {
             let to = *to;
             in_bounds(map, to)?;
             let token = map.token_mut(*id).ok_or(EventError::UnknownToken(*id))?;
+            let from = token.at;
             token.at = to;
-            Ok(())
+            Ok(SessionEvent::TokenMoved { id: *id, to: from })
         }
         SessionEvent::TokenFaced { id, facing } => {
             let token = map.token_mut(*id).ok_or(EventError::UnknownToken(*id))?;
+            let prev = token.facing;
             token.facing = *facing;
-            Ok(())
+            Ok(SessionEvent::TokenFaced {
+                id: *id,
+                facing: prev,
+            })
         }
         SessionEvent::TokenRemoved { id } => {
-            let before = map.tokens.len();
-            map.tokens.retain(|t| t.id != *id);
-            if map.tokens.len() == before {
-                return Err(EventError::UnknownToken(*id));
-            }
-            Ok(())
+            let pos = map
+                .tokens
+                .iter()
+                .position(|t| t.id == *id)
+                .ok_or(EventError::UnknownToken(*id))?;
+            let removed = map.tokens.remove(pos);
+            Ok(SessionEvent::TokenPlaced(removed))
         }
     }
 }
@@ -174,6 +197,30 @@ mod tests {
         for (event, expected) in bad {
             assert_eq!(apply(&mut m, &event), Err(expected));
             assert_eq!(m, snapshot);
+        }
+    }
+
+    #[test]
+    fn every_inverse_restores_the_prior_state() {
+        let mut m = board();
+        apply(&mut m, &SessionEvent::TokenPlaced(knight(1, (0, 0)))).unwrap();
+        let events = vec![
+            SessionEvent::TilePlaced {
+                layer: Layer::Ground,
+                at: (1, 1),
+                kind: TileKindId(1),
+            },
+            SessionEvent::ElevationSet { at: (1, 1), height: 3 },
+            SessionEvent::TokenPlaced(knight(2, (2, 2))),
+            SessionEvent::TokenMoved { id: TokenId(1), to: (3, 3) },
+            SessionEvent::TokenFaced { id: TokenId(1), facing: Facing::West },
+            SessionEvent::TokenRemoved { id: TokenId(1) },
+        ];
+        for event in events {
+            let snapshot = m.clone();
+            let inverse = apply(&mut m, &event).unwrap();
+            apply(&mut m, &inverse).unwrap();
+            assert_eq!(m, snapshot, "inverse of {event:?} failed to restore");
         }
     }
 

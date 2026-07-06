@@ -7,8 +7,9 @@
 //! [`isometry_core::depth_key`] as a plain z-index.
 
 use isometry_core::{depth_key, MapDocument, TileCoord, TileKindId, Token};
-use xilem_serval::{clickable, el, text, AnyView, ServalCtx, ServalElement};
+use xilem_serval::{clickable, el, AnyView, ServalCtx, ServalElement};
 
+use crate::panel::side_panel;
 use crate::state::UiState;
 
 pub type UiChild = Box<dyn AnyView<UiState, (), ServalCtx, ServalElement>>;
@@ -26,7 +27,7 @@ fn tile_el(ui: &UiState, at: TileCoord, elevation: i32, class: String) -> UiChil
             format!("left: {x}px; top: {y}px; z-index: {z};"),
         ),
         move |ui: &mut UiState, _| {
-            ui.selected = Some(at);
+            ui.click_tile(at);
         },
     ))
 }
@@ -98,8 +99,8 @@ fn token_el(ui: &UiState, token: &Token) -> UiChild {
         .unwrap_or(&0) as i32;
     let (cx, cy) = geo.tile_to_screen(token.at, elev);
     let z = depth_key(token.at, elev) + 2;
-    // 14x20 body, feet at the diamond center.
-    let (x, y) = (cx - 7.0, cy - 18.0);
+    // 8x12 sprite at 3x (24x36), feet at the diamond center.
+    let (x, y) = (cx - 12.0, cy - 32.0);
     Box::new(
         el("div", ())
             .attr("class", format!("token token-{}", token.sprite))
@@ -108,41 +109,6 @@ fn token_el(ui: &UiState, token: &Token) -> UiChild {
                 format!("left: {x}px; top: {y}px; z-index: {z};"),
             ),
     )
-}
-
-fn side_panel(ui: &UiState) -> UiChild {
-    let selected = match ui.selected {
-        Some((c, r)) => {
-            let elev = *ui
-                .map
-                .elevation
-                .get(c.max(0) as u32, r.max(0) as u32)
-                .unwrap_or(&0);
-            format!("selected: ({c}, {r}) h{elev}")
-        }
-        None => "selected: none".to_owned(),
-    };
-    Box::new(el(
-        "div",
-        (
-            el("div", text("Isometry")).attr("class", "side-title"),
-            el("div", text(ui.map.name.clone())).attr("class", "side-line"),
-            el(
-                "div",
-                text(format!(
-                    "{}x{} board, {} tokens",
-                    ui.map.ground.width(),
-                    ui.map.ground.height(),
-                    ui.map.tokens.len()
-                )),
-            )
-            .attr("class", "side-line"),
-            el("div", text(selected)).attr("class", "side-line side-strong"),
-            el("div", text("click: select tile")).attr("class", "side-hint"),
-            el("div", text("arrows: pan (tile steps)")).attr("class", "side-hint"),
-        ),
-    )
-    .attr("class", "side"))
 }
 
 /// The screen root the runner diffs.

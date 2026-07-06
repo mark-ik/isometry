@@ -20,3 +20,7 @@ paint_list_api = { workspace = true }
 paint_list_render = { workspace = true }
 wgpu = { workspace = true }
 winit = { workspace = true }
+serde_json = { workspace = true }
+# ISOMETRY_CAPTURE_DIR self-capture (headed-verify receipts without
+# screen grabs, which lose to overlapping windows).
+png = "0.17"

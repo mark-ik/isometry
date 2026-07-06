@@ -65,6 +65,39 @@ impl<T> TileGrid<T> {
     }
 }
 
+impl<T: PartialEq> TileGrid<T> {
+    /// The 4-connected region of cells sharing `start`'s value (flood
+    /// fill's footprint). Empty when `start` is out of bounds.
+    pub fn flood_region(&self, start: (u32, u32)) -> Vec<(u32, u32)> {
+        let Some(target) = self.get(start.0, start.1) else {
+            return Vec::new();
+        };
+        let mut seen = vec![false; (self.width as usize) * (self.height as usize)];
+        let mut stack = vec![start];
+        let mut out = Vec::new();
+        seen[(start.1 * self.width + start.0) as usize] = true;
+        while let Some((c, r)) = stack.pop() {
+            out.push((c, r));
+            let neighbors = [
+                (c.wrapping_sub(1), r),
+                (c + 1, r),
+                (c, r.wrapping_sub(1)),
+                (c, r + 1),
+            ];
+            for (nc, nr) in neighbors {
+                if nc < self.width && nr < self.height {
+                    let idx = (nr * self.width + nc) as usize;
+                    if !seen[idx] && self.get(nc, nr) == Some(target) {
+                        seen[idx] = true;
+                        stack.push((nc, nr));
+                    }
+                }
+            }
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -85,6 +118,20 @@ mod tests {
         assert_eq!(g.set(4, 0, 1), None);
         assert!(!g.in_bounds(-1, 0));
         assert!(g.in_bounds(3, 2));
+    }
+
+    #[test]
+    fn flood_region_stops_at_value_boundaries() {
+        // 4x3 of 0 with a wall of 1 down column 2.
+        let mut g = TileGrid::new(4, 3, 0u16);
+        for r in 0..3 {
+            g.set(2, r, 1);
+        }
+        let mut region = g.flood_region((0, 0));
+        region.sort_unstable();
+        assert_eq!(region, vec![(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2)]);
+        assert_eq!(g.flood_region((3, 0)).len(), 3);
+        assert!(g.flood_region((9, 9)).is_empty());
     }
 
     #[test]

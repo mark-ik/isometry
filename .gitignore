@@ -12,3 +12,4 @@ Thumbs.db
 # Machine-local cargo overrides (source-specific [patch] to local serval
 # checkouts, the mere pattern). Never committed.
 .cargo/config.toml
+/maps/

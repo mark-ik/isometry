@@ -16,7 +16,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use isometry_views::{board_css, board_root, demo_map, UiChild, UiState};
+use isometry_views::{board_css, board_root, demo_map, synth_map, UiChild, UiState, PANEL_W};
 use layout_dom_api::{DomMutation, LayoutDomMut as _};
 use netrender::{ColorLoad, ExternalTexturePlacement, NetrenderOptions};
 use paint_list_api::{DeviceIntSize, PaintList as _};
@@ -28,7 +28,7 @@ use serval_winit_host::SurfaceHost;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent as WinitKeyEvent, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{Key as WinitKey, NamedKey as WinitNamedKey};
+use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey as WinitNamedKey};
 use winit::window::{Window, WindowId};
 use xilem_serval::{PointerClick, Propagation, ServalAppRunner};
 
@@ -44,9 +44,31 @@ struct App {
     layout_size: (f32, f32),
     sheet: String,
     cursor: (f32, f32),
+    modifiers: ModifiersState,
+    /// Left button held: paint-capable modes keep applying on entry
+    /// into each new tile (drag painting).
+    lmb_down: bool,
+    /// Opaque id of the last element a held drag dispatched to, so one
+    /// tile gets one application per crossing, not one per pixel.
+    last_drag: Option<u64>,
     last_hover: Option<u64>,
     last_focus: Option<u64>,
     profile: bool,
+    /// `ISOMETRY_CAPTURE_DIR`: overwrite `<dir>/isometry_capture.png`
+    /// with every presented frame, read back from the app's own texture.
+    /// Screen grabs lose to overlapping windows; this cannot.
+    capture_dir: Option<std::path::PathBuf>,
+}
+
+/// Where map documents save: `maps/<slug>.json` under the working
+/// directory, so a campaign folder can live in version control.
+fn map_path(name: &str) -> std::path::PathBuf {
+    let slug: String = name
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect();
+    std::path::PathBuf::from("maps").join(format!("{slug}.json"))
 }
 
 impl App {
@@ -108,13 +130,34 @@ impl App {
         let t_scene = t0.elapsed();
 
         let t1 = std::time::Instant::now();
-        let (_tex, view) = host.core().rasterize_scaled(
+        let (tex, view) = host.core().rasterize_scaled(
             &scene,
             pw,
             ph,
             ColorLoad::Clear(wgpu::Color::BLACK),
             scale,
         );
+        if let Some(dir) = &self.capture_dir {
+            let rgba = host
+                .core()
+                .renderer()
+                .wgpu_device
+                .read_rgba8_texture(&tex, pw, ph);
+            let path = dir.join("isometry_capture.png");
+            if let Err(e) = std::fs::create_dir_all(dir).and_then(|_| {
+                let file = std::fs::File::create(&path)?;
+                let mut enc = png::Encoder::new(std::io::BufWriter::new(file), pw, ph);
+                enc.set_color(png::ColorType::Rgba);
+                enc.set_depth(png::BitDepth::Eight);
+                let mut writer = enc.write_header().map_err(std::io::Error::other)?;
+                writer
+                    .write_image_data(&rgba)
+                    .map_err(std::io::Error::other)?;
+                Ok(())
+            }) {
+                eprintln!("[isometry] capture failed: {e}");
+            }
+        }
         let Some(frame) = host.acquire() else { return };
         let target = frame
             .texture
@@ -170,17 +213,28 @@ impl App {
         }
     }
 
-    fn click(&mut self) {
-        let (Some(runner), Some(layout)) = (self.runner.as_mut(), self.layout.as_ref()) else {
-            return;
+    /// Hit-test the cursor against the retained layout: the node plus
+    /// its stable opaque id (the drag-dedupe key).
+    fn cursor_hit(&self) -> Option<(NodeId, u64)> {
+        let (Some(runner), Some(layout)) = (self.runner.as_ref(), self.layout.as_ref()) else {
+            return None;
         };
         let (x, y) = self.cursor;
-        let hit = {
-            let dom = runner.dom();
-            let dom_ref = dom.borrow();
-            layout.hit_test(&*dom_ref, x, y, &ScrollOffsets::default())
-        };
-        let Some(node) = hit else { return };
+        let dom = runner.dom();
+        let dom_ref = dom.borrow();
+        layout
+            .hit_test(&*dom_ref, x, y, &ScrollOffsets::default())
+            .map(|n| (n, layout_dom_api::LayoutDom::opaque_id(&*dom_ref, n)))
+    }
+
+    fn click(&mut self) {
+        let hit = self.cursor_hit();
+        if self.profile {
+            eprintln!("[isometry] click at {:?} hit {:?}", self.cursor, hit.map(|h| h.1));
+        }
+        let Some((node, id)) = hit else { return };
+        self.last_drag = Some(id);
+        let Some(runner) = self.runner.as_mut() else { return };
         runner.dispatch_click(
             node,
             PointerClick {
@@ -188,6 +242,61 @@ impl App {
                 prop: Propagation::new(),
             },
         );
+        if self.profile {
+            runner.update(|ui| {
+                eprintln!(
+                    "[isometry] post-dispatch mode={:?} selected={:?} status={:?}",
+                    ui.mode, ui.selected, ui.status
+                );
+            });
+        }
+        self.after_dispatch();
+    }
+
+    /// Consume one-shot state requests (save/load) and repaint: the
+    /// tail of every dispatch.
+    fn after_dispatch(&mut self) {
+        let mut save: Option<(std::path::PathBuf, String)> = None;
+        let mut load: Option<std::path::PathBuf> = None;
+        if let Some(runner) = self.runner.as_mut() {
+            runner.update(|ui| {
+                if std::mem::take(&mut ui.save_requested) {
+                    match serde_json::to_string_pretty(&ui.map) {
+                        Ok(json) => save = Some((map_path(&ui.map.name), json)),
+                        Err(e) => ui.status = format!("save failed: {e}"),
+                    }
+                }
+                if std::mem::take(&mut ui.load_requested) {
+                    load = Some(map_path(&ui.map.name));
+                }
+            });
+        }
+        if let Some((path, json)) = save {
+            let ok = std::fs::create_dir_all("maps")
+                .and_then(|_| std::fs::write(&path, json));
+            if let Some(runner) = self.runner.as_mut() {
+                runner.update(|ui| {
+                    ui.status = match &ok {
+                        Ok(()) => format!("saved {}", path.display()),
+                        Err(e) => format!("save failed: {e}"),
+                    };
+                });
+            }
+        }
+        if let Some(path) = load {
+            let loaded = std::fs::read_to_string(&path)
+                .map_err(|e| e.to_string())
+                .and_then(|json| serde_json::from_str(&json).map_err(|e| e.to_string()));
+            if let Some(runner) = self.runner.as_mut() {
+                runner.update(|ui| match loaded {
+                    Ok(map) => {
+                        ui.replace_map(map);
+                        ui.status = format!("loaded {}", path.display());
+                    }
+                    Err(e) => ui.status = format!("load failed: {e}"),
+                });
+            }
+        }
         if let Some(window) = self.window.as_ref() {
             window.request_redraw();
         }
@@ -200,6 +309,21 @@ impl App {
         let Some(runner) = self.runner.as_mut() else {
             return;
         };
+        if self.modifiers.control_key() {
+            match &event.logical_key {
+                WinitKey::Character(c) if c.as_str() == "z" => {
+                    runner.update(|ui| ui.undo());
+                    self.after_dispatch();
+                    return;
+                }
+                WinitKey::Character(c) if c.as_str() == "y" => {
+                    runner.update(|ui| ui.redo());
+                    self.after_dispatch();
+                    return;
+                }
+                _ => {}
+            }
+        }
         let pan = match event.logical_key {
             WinitKey::Named(WinitNamedKey::ArrowLeft) => Some((-1.0, 1.0)),
             WinitKey::Named(WinitNamedKey::ArrowRight) => Some((1.0, -1.0)),
@@ -242,7 +366,14 @@ impl ApplicationHandler for App {
             },
         )
         .expect("boot serval host");
-        let mut ui = UiState::new(demo_map());
+        // `ISOMETRY_SYNTH=1` loads the probe P2 stress board instead of
+        // the demo skirmish.
+        let map = if std::env::var_os("ISOMETRY_SYNTH").is_some() {
+            synth_map()
+        } else {
+            demo_map()
+        };
+        let mut ui = UiState::new(map);
         // Start with the board roughly centered in the pane.
         ui.camera = (420.0, 140.0);
         let dom = Rc::new(RefCell::new(ScriptedDom::new()));
@@ -268,6 +399,9 @@ impl ApplicationHandler for App {
                     window.request_redraw();
                 }
             }
+            WindowEvent::ModifiersChanged(mods) => {
+                self.modifiers = mods.state();
+            }
             WindowEvent::CursorMoved { position, .. } => {
                 let scale = self.scale_factor();
                 self.cursor = (
@@ -275,12 +409,45 @@ impl ApplicationHandler for App {
                     (position.y / scale) as f32,
                 );
                 self.hover();
+                // Drag painting: while the button is held in a paint
+                // mode, entering a tile applies the brush there. The
+                // panel strip is excluded so a drag can never spam its
+                // buttons.
+                if self.lmb_down && self.cursor.0 > PANEL_W {
+                    let drags = self
+                        .runner
+                        .as_mut()
+                        .map(|r| {
+                            let mut d = false;
+                            r.update(|ui| d = ui.mode.drags());
+                            d
+                        })
+                        .unwrap_or(false);
+                    if drags {
+                        if let Some((_, id)) = self.cursor_hit() {
+                            if self.last_drag != Some(id) {
+                                self.click();
+                            }
+                        }
+                    }
+                }
             }
             WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
                 ..
-            } => self.click(),
+            } => {
+                self.lmb_down = true;
+                self.click();
+            }
+            WindowEvent::MouseInput {
+                state: ElementState::Released,
+                button: MouseButton::Left,
+                ..
+            } => {
+                self.lmb_down = false;
+                self.last_drag = None;
+            }
             WindowEvent::KeyboardInput { event, .. } => self.key(&event),
             WindowEvent::RedrawRequested => self.redraw(),
             _ => {}
@@ -299,9 +466,13 @@ fn main() {
         layout_size: (0.0, 0.0),
         sheet: board_css(),
         cursor: (0.0, 0.0),
+        modifiers: ModifiersState::empty(),
+        lmb_down: false,
+        last_drag: None,
         last_hover: None,
         last_focus: None,
         profile: std::env::var_os("ISOMETRY_PROFILE").is_some(),
+        capture_dir: std::env::var_os("ISOMETRY_CAPTURE_DIR").map(Into::into),
     };
     event_loop.run_app(&mut app).expect("run app");
 }

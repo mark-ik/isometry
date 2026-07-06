@@ -185,6 +185,50 @@ system is created, bound to a token, and drives its rolls in a session.
 
 ## Findings
 
+- 2026-07-06 (P1 fix landed, both repos): serval-layout paint emission
+  now reads computed `image-rendering` (commit in serval,
+  `paint_emit.rs`); netrender carries a `nearest` flag on
+  `SceneImage`/`ScenePattern`, hashes it (and `clamp_to_uv`, a
+  pre-existing hash gap) into tile deps, and maps it to vello's
+  nearest-neighbor sampler; the paint translator sets it from the paint
+  list (`crisp-edges` and `pixelated` both lower to nearest). Token
+  sprites are 8x12 data-URI PNGs at 3x under
+  `image-rendering: pixelated`.
+- 2026-07-06 (engine gap, found by the sprite tokens): serval-layout's
+  retained `IncrementalLayout` never decoded CSS background/border
+  images; every `emit_paint_list` passed a fresh empty
+  `BackgroundImagePlane`, so `background-image` painted only on the
+  one-shot layout path. Fixed engine-side: the session owns the plane,
+  builds it from the cascade, and rebuilds it after applies that can
+  change which URL applies (structural batches, class/id flips,
+  inline-style edits mentioning background/border-image), with a
+  URL-keyed decode cache so rebuilds decode nothing twice.
+  Geometry-only inline-style edits (the pan case) skip the rebuild.
+  Receipt: knight sprite crisp at 3x in
+  `scry-shots/2026-07-06_isometry_sprites_zoom.png`, nearest-neighbor
+  edges, gold pauldrons intact; P1 verified end to end.
+- 2026-07-06 (engine gap, found by the I2 click probe): absolute inset
+  sizing (`position: absolute; left: 0; right: 0; top: 0; bottom: 0`
+  with auto width/height) is not honored by serval-layout. The app root
+  sized to content (228px, the side panel), `hit_test` returned None
+  everywhere right of it, while paint still drew the overflowing board,
+  so the bug presented as "panel clicks work, board clicks vanish."
+  Two engine-side notes worth their own serval issue: inset sizing for
+  absolutes, and the paint/hit divergence on content overflowing an
+  undersized `overflow: hidden` box (paint did not clip where hit-test
+  pruned). App-side fix: the woodshed root idiom
+  (`width: 100%; height: 100%`).
+- 2026-07-06 (I2 editor receipts, scripted input drive): mode and brush
+  buttons dispatch; a five-tile water drag-paint applies through the
+  per-tile dedupe; Raise applies twice; Ctrl+Z pops one step (7 steps
+  became 6, matching 5 paints + 2 raises); Save writes
+  `maps/demo_skirmish.json`. Fill and paint/undo/redo round-trips are
+  covered headlessly by `isometry-views` state tests.
+- 2026-07-06 (harness): screen-grab captures lost twice to overlapping
+  windows during concurrent desktop use (the known scry-shots gotcha).
+  The host now self-captures: `ISOMETRY_CAPTURE_DIR=<dir>` overwrites
+  `<dir>/isometry_capture.png` with every presented frame via
+  netrender_device texture readback, immune to window occlusion.
 - 2026-07-05 (I1, probe P1, code-grounded): `image-rendering: pixelated`
   is knocked out at three seams. serval-layout's paint emission hardcodes
   `ImageRendering::Auto` at every image site
@@ -242,3 +286,13 @@ system is created, bound to a token, and drives its rolls in a session.
   receipts in Findings. Residue for the next session: the P1 engine fix
   in serval/netrender, a 30x30x3 synthetic P2 run, release-build
   numbers, and a click-to-select edit-cost receipt.
+- 2026-07-06: P1 engine fix landed in serval + netrender (see Findings);
+  pixel-sprite tokens replace the colored rects. I2 largely landed:
+  core `apply` returns inverse events and `TileGrid::flood_region`
+  (undo primitive, 14 core tests); editor modes
+  (Select/Paint/Prop/Fill/Raise/Lower), tile-kind palette bound to the
+  tileset classes, undo/redo/save/load, drag painting with per-tile
+  dedupe, Ctrl+Z / Ctrl+Y; `ISOMETRY_SYNTH=1` stress board;
+  `ISOMETRY_CAPTURE_DIR` self-capture. I2 residue: load-flow receipt
+  and an authored-from-empty save/reload identity receipt; release
+  numbers still owed from I1.
