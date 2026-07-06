@@ -184,8 +184,11 @@ pub fn side_panel(ui: &UiState) -> UiChild {
         ),
         Box::new(el("div", text(ui.status.clone())).attr("class", "side-status")),
         Box::new(
-            el("div", text("arrows: pan / ctrl+z ctrl+y / r: face / enter: end turn"))
-                .attr("class", "side-hint"),
+            el(
+                "div",
+                text("arrows: pan / r: face / enter: end turn / f: fog view"),
+            )
+            .attr("class", "side-hint"),
         ),
     ];
     Box::new(el("div", children).attr("class", "side"))

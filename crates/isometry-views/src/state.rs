@@ -1,8 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use isometry_core::{
-    apply, reachable, Facing, IsoGeometry, Layer, MapDocument, MoveRules, SessionEvent,
-    TileCoord, TileKindId, Token, TokenId, TurnList,
+    apply, reachable, visible_tiles, Facing, IsoGeometry, Layer, MapDocument, MoveRules,
+    SessionEvent, SightRules, TileCoord, TileKindId, Token, TokenId, TurnList,
 };
 use isometry_net::{GameEvent, GameSnapshot};
 
@@ -12,6 +12,22 @@ pub const PANEL_W: f32 = 228.0;
 
 /// Default move budget until system plugins supply speed stats (I6).
 const MOVE_BUDGET: u32 = 5;
+
+/// Default token sight radius until system plugins supply per-token
+/// senses. Configurable via [`UiState::sight_radius`].
+const SIGHT_RADIUS: u32 = 6;
+
+/// How a tile presents under fog of war for the current viewer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FogLevel {
+    /// In sight now: full render.
+    Clear,
+    /// Seen before, not in sight now: remembered terrain, dimmed, no
+    /// live tokens.
+    Dim,
+    /// Never seen: not rendered at all.
+    Hidden,
+}
 
 /// What a click on a tile does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,6 +122,16 @@ pub struct UiState {
     /// In `Remote` mode, game events the app should send to the session
     /// (the host drains these each frame). Empty in `Local` mode.
     pub net_outbox: Vec<GameEvent>,
+    /// Whose eyes the board renders through. `None` is omniscient (the
+    /// DM / a spectator). `Some(player)` shows fog of war from that
+    /// player's tokens.
+    pub viewer: Option<String>,
+    /// Sight radius for fog computation.
+    pub sight_radius: u32,
+    /// Tiles currently in sight of the viewer's tokens (fog active only).
+    pub visible: HashSet<TileCoord>,
+    /// Tiles the viewer has ever seen (remembered terrain under fog).
+    pub explored: HashSet<TileCoord>,
     /// Sprite the Token mode places.
     pub token_sprite: String,
     /// Play state: the substrate turn order.
@@ -140,7 +166,92 @@ impl UiState {
             hover_tile: None,
             net_mode: NetMode::Local,
             net_outbox: Vec::new(),
+            viewer: None,
+            sight_radius: SIGHT_RADIUS,
+            visible: HashSet::new(),
+            explored: HashSet::new(),
         }
+    }
+
+    /// Whether fog of war is being applied (a viewer is set).
+    pub fn fog_active(&self) -> bool {
+        self.viewer.is_some()
+    }
+
+    /// The fog presentation of tile `at` for the current viewer.
+    pub fn fog_level(&self, at: TileCoord) -> FogLevel {
+        if !self.fog_active() {
+            FogLevel::Clear
+        } else if self.visible.contains(&at) {
+            FogLevel::Clear
+        } else if self.explored.contains(&at) {
+            FogLevel::Dim
+        } else {
+            FogLevel::Hidden
+        }
+    }
+
+    /// Whether a token should be drawn: always when omniscient, always if
+    /// it is the viewer's own, otherwise only while in current sight (you
+    /// see foes only when they are lit).
+    pub fn token_visible(&self, token: &Token) -> bool {
+        if !self.fog_active() {
+            return true;
+        }
+        token.owner.as_deref() == self.viewer.as_deref() || self.visible.contains(&token.at)
+    }
+
+    /// Recompute the visible set from the viewer's tokens and fold it into
+    /// explored memory. No-op (and clears) when omniscient.
+    pub fn recompute_fog(&mut self) {
+        if self.viewer.is_none() {
+            self.visible.clear();
+            self.explored.clear();
+            return;
+        }
+        let origins: Vec<TileCoord> = self
+            .map
+            .tokens
+            .iter()
+            .filter(|t| t.owner.as_deref() == self.viewer.as_deref())
+            .map(|t| t.at)
+            .collect();
+        let rules = SightRules {
+            radius: self.sight_radius,
+            opaque: &|kind| kind == "tree" || kind == "wall",
+        };
+        self.visible = visible_tiles(&self.map, &origins, &rules);
+        self.explored.extend(self.visible.iter().copied());
+    }
+
+    /// Cycle the viewer for previewing fog: omniscient, then each token
+    /// owner in turn, then back. Explored memory resets per viewer.
+    pub fn cycle_viewer(&mut self) {
+        let mut owners: Vec<String> = Vec::new();
+        for t in &self.map.tokens {
+            if let Some(o) = &t.owner {
+                if !owners.contains(o) {
+                    owners.push(o.clone());
+                }
+            }
+        }
+        let next = match &self.viewer {
+            None => owners.first().cloned(),
+            Some(cur) => {
+                let idx = owners.iter().position(|o| o == cur);
+                match idx {
+                    Some(i) => owners.get(i + 1).cloned(),
+                    None => None,
+                }
+            }
+        };
+        self.viewer = next;
+        self.explored.clear();
+        self.recompute_fog();
+        self.status = match &self.viewer {
+            Some(v) => format!("view: {v} (fog)"),
+            None => "view: all".to_owned(),
+        };
     }
 
     /// Mirror a replicated snapshot into the view (Remote mode): the map
@@ -158,6 +269,7 @@ impl UiState {
         if self.status == "connecting..." {
             self.status = "in session".to_owned();
         }
+        self.recompute_fog();
         self.recompute_reach();
     }
 
@@ -213,6 +325,7 @@ impl UiState {
             self.undo.push(inverses);
             self.redo.clear();
         }
+        self.recompute_fog();
     }
 
     pub fn can_undo(&self) -> bool {
@@ -234,6 +347,7 @@ impl UiState {
         redo_step.reverse();
         self.redo.push(redo_step);
         self.status = format!("undo ({} left)", self.undo.len());
+        self.recompute_fog();
         self.recompute_reach();
     }
 
@@ -248,6 +362,7 @@ impl UiState {
         undo_step.reverse();
         self.undo.push(undo_step);
         self.status = "redo".to_owned();
+        self.recompute_fog();
         self.recompute_reach();
     }
 
@@ -476,6 +591,8 @@ impl UiState {
         self.turns = TurnList::new();
         self.selected_token = None;
         self.reach.clear();
+        self.explored.clear();
+        self.recompute_fog();
     }
 }
 
@@ -578,6 +695,52 @@ mod tests {
         };
         ui.apply_snapshot(snap);
         assert_eq!(ui.map.token(TokenId(1)).unwrap().at, (before.0 + 1, before.1));
+    }
+
+    #[test]
+    fn fog_hides_out_of_sight_and_remembers_explored() {
+        use isometry_core::TokenId;
+        let mut ui = UiState::new(demo_map());
+        // Knights are owner "A" near (10,14)/(9,15); goblins "B" near the
+        // northeast hill. As player A, the goblins are out of sight.
+        ui.viewer = Some("A".to_owned());
+        ui.recompute_fog();
+        let knight = ui.map.token(TokenId(1)).unwrap().at;
+        let goblin = ui.map.token(TokenId(2)).unwrap().at;
+        assert_eq!(ui.fog_level(knight), FogLevel::Clear);
+        assert_eq!(ui.fog_level(goblin), FogLevel::Hidden);
+        assert!(ui.token_visible(ui.map.token(TokenId(1)).unwrap()));
+        assert!(!ui.token_visible(ui.map.token(TokenId(2)).unwrap()));
+
+        // Explored memory: a tile seen once stays remembered (Dim) after
+        // the token that saw it moves away.
+        let seen_far = ui
+            .visible
+            .iter()
+            .copied()
+            .find(|&t| t != knight && (t.0 - knight.0).abs() + (t.1 - knight.1).abs() >= 3)
+            .expect("some far-but-visible tile");
+        // Move the knight to the opposite side so seen_far leaves sight.
+        ui.mode = EditMode::Play;
+        ui.apply_step(vec![SessionEvent::TokenMoved {
+            id: TokenId(1),
+            to: (0, 0),
+        }]);
+        ui.apply_step(vec![SessionEvent::TokenMoved {
+            id: TokenId(3),
+            to: (1, 0),
+        }]);
+        assert_eq!(
+            ui.fog_level(seen_far),
+            FogLevel::Dim,
+            "a tile seen earlier is remembered, not black"
+        );
+
+        // Omniscient clears fog entirely.
+        ui.viewer = None;
+        ui.recompute_fog();
+        assert_eq!(ui.fog_level(goblin), FogLevel::Clear);
+        assert!(!ui.fog_active());
     }
 
     #[test]

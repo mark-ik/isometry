@@ -5,11 +5,12 @@
 receipts in Findings). I4 = DM-authority sessions over iroh: replication
 core (5 tests), real-QUIC loopback (converges on state + log hash),
 windowed `--host`/`--join` (a client process renders the host's board
-over QUIC; the host UI→net→UI round-trip verified). Residue: a "new
-empty map" entry point; drag-to-reorder on the turn list; per-player
-fog (deferred within I4); real-time two-window live-move shown only by
-composition (OS input automation can't reliably drive one of two
-stacked windows). I5 (initiative modes, dice, templates, whispers) next.
+over QUIC; the host UI→net→UI round-trip verified); per-player fog of
+war (client-side render fog; LOS in core). Residue: a "new empty map"
+entry point; drag-to-reorder on the turn list; real-time two-window
+live-move shown only by composition (OS input automation can't reliably
+drive one of two stacked windows). I5 (initiative modes, dice,
+templates, whispers) next.
 **Thesis:** a pixel-art isometric P2P VTT is buildable on the Strophos
 stack with the woodshed consumer pattern, and the GBA tactics aesthetic
 (fixed camera, battle-scale maps) keeps every known engine risk inside
@@ -143,7 +144,7 @@ toggles, End turn / Enter, gold active marker, green selection marker.
 In/out is click-toggle rather than drag (drag-to-reorder deferred);
 move budget is a constant 5 until system plugins supply speed (I6).
 
-### I4: sessions (landed 2026-07-06, per-player fog deferred)
+### I4: sessions (landed 2026-07-06)
 
 `isometry-net` on iroh: DM hosts, players join by ticket, event log
 replicates, late join via snapshot plus tail, per-player fog. **Done
@@ -161,10 +162,10 @@ authority, no optimistic mutation). Verified as far as one machine
 allows: 5 replication tests, a real-QUIC loopback (mid-session join,
 convergence on state + hash), a two-window render (client shows host's
 board over QUIC), and a focus-free self-test of the host UI→net→UI
-round-trip. **Deferred:** per-player fog (needs a visibility model per
-token owner, its own pass); cross-machine/cross-network run (physically
-unavailable here; the loopback binds two real endpoints and does the
-mid-session-join + convergence the done-condition names).
+round-trip; per-player fog of war (client-side render fog, LOS in core;
+see the fog Finding). **Deferred:** cross-machine/cross-network run
+(physically unavailable here; the loopback binds two real endpoints and
+does the mid-session-join + convergence the done-condition names).
 
 ### I5: table furniture
 
@@ -368,6 +369,13 @@ system is created, bound to a token, and drives its rolls in a session.
 
 ## Progress
 
+- 2026-07-06 (I4 fog): per-player fog of war landed. Core
+  `visibility` module (radius Bresenham LOS + opacity, 4 tests); views
+  fog state (viewer, visible/explored sets, three-state fog_level,
+  token_visible, recompute_fog, cycle_viewer) with shroud rendering and
+  enemy-token hiding (1 test); serval `--as <player>` + `f` viewer
+  cycle. Client-side render fog (host still sends full state). Receipts
+  in scry-shots/2026-07-06_isometry_fog_*.png.
 - 2026-07-06 (I4): sessions landed. `isometry-net` crate (protocol +
   HostSession/ClientSession + sim + iroh_link behind the `iroh`
   feature); isometry-views gains a Remote net-mode (play/turn actions

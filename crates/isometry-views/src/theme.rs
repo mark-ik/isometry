@@ -127,6 +127,16 @@ pub fn board_css() -> String {
 .tile-path { background-color: #7fa3d8; }
 .tile-path.alt { background-color: #7fa3d8; }
 
+/* Fog of war: a dim shroud over explored-but-unseen tiles. Unexplored
+   tiles are simply not drawn, so the dark pane behind the board shows. */
+.fog-shroud {
+    position: absolute;
+    width: 32px;
+    height: 16px;
+    clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+    background-color: rgba(8, 10, 16, 0.6);
+}
+
 .prop {
     position: absolute;
     width: 20px;

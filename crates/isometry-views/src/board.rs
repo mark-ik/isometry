@@ -12,7 +12,7 @@ use isometry_core::{depth_key, path_to, MapDocument, TileCoord, TileKindId, Toke
 use xilem_serval::{clickable, el, AnyView, ServalCtx, ServalElement};
 
 use crate::panel::side_panel;
-use crate::state::{EditMode, UiState};
+use crate::state::{EditMode, FogLevel, UiState};
 
 pub type UiChild = Box<dyn AnyView<UiState, (), ServalCtx, ServalElement>>;
 
@@ -62,6 +62,10 @@ fn ground_tiles(ui: &UiState) -> Vec<UiChild> {
             continue;
         }
         let at: TileCoord = (col as i32, row as i32);
+        let fog = ui.fog_level(at);
+        if fog == FogLevel::Hidden {
+            continue; // unexplored: the dark pane shows through
+        }
         let elev = *map.elevation.get(col, row).unwrap_or(&0) as i32;
         for step in 0..elev {
             out.push(tile_el(ui, at, step, "tile tile-under".to_owned()));
@@ -81,8 +85,23 @@ fn ground_tiles(ui: &UiState) -> Vec<UiChild> {
             }
         }
         out.push(tile_el(ui, at, elev, class));
+        if fog == FogLevel::Dim {
+            out.push(shroud_el(ui, at, elev)); // remembered terrain, dimmed
+        }
     }
     out
+}
+
+/// A dim overlay diamond over an explored-but-unseen tile.
+fn shroud_el(ui: &UiState, at: TileCoord, elev: i32) -> UiChild {
+    let geo = &ui.geo;
+    let (cx, cy) = geo.tile_to_screen(at, elev);
+    let (x, y) = (cx - geo.tile_w / 2.0, cy - geo.tile_h / 2.0);
+    let z = depth_key(at, elev) + 2;
+    Box::new(el("div", ()).attr("class", "fog-shroud").attr(
+        "style",
+        format!("left: {x}px; top: {y}px; z-index: {z};"),
+    ))
 }
 
 /// Props stand on their tile: anchored bottom-center on the diamond,
@@ -96,6 +115,9 @@ fn prop_tiles(ui: &UiState) -> Vec<UiChild> {
             continue;
         }
         let at: TileCoord = (col as i32, row as i32);
+        if ui.fog_level(at) == FogLevel::Hidden {
+            continue;
+        }
         let elev = *map.elevation.get(col, row).unwrap_or(&0) as i32;
         let (cx, cy) = geo.tile_to_screen(at, elev);
         let z = depth_key(at, elev) + 1;
@@ -164,13 +186,28 @@ fn marker_el(ui: &UiState, token_id: isometry_core::TokenId, class: &str) -> Opt
 pub fn board_root(ui: &UiState) -> UiChild {
     let mut layers: Vec<UiChild> = ground_tiles(ui);
     layers.extend(prop_tiles(ui));
+    // Markers and tokens follow fog: a marker only shows on a token the
+    // viewer can currently see.
+    let marker_shown = |id: isometry_core::TokenId| {
+        ui.map.token(id).map(|t| ui.token_visible(t)).unwrap_or(false)
+    };
     if let Some(id) = ui.selected_token {
-        layers.extend(marker_el(ui, id, "marker marker-select"));
+        if marker_shown(id) {
+            layers.extend(marker_el(ui, id, "marker marker-select"));
+        }
     }
     if let Some(active) = ui.turns.active() {
-        layers.extend(marker_el(ui, active, "marker marker-turn"));
+        if marker_shown(active) {
+            layers.extend(marker_el(ui, active, "marker marker-turn"));
+        }
     }
-    layers.extend(ui.map.tokens.iter().map(|t| token_el(ui, t)));
+    layers.extend(
+        ui.map
+            .tokens
+            .iter()
+            .filter(|t| ui.token_visible(t))
+            .map(|t| token_el(ui, t)),
+    );
     let (camx, camy) = ui.camera;
     Box::new(
         el(

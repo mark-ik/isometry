@@ -74,6 +74,9 @@ struct App {
     /// What session, if any, this process runs (from `--host`/`--join`),
     /// consumed once at `resumed`.
     net_intent: Option<NetIntent>,
+    /// `--as <player>`: the fog viewer this process plays as. `None` is
+    /// omniscient (the DM / a spectator).
+    viewer_arg: Option<String>,
     /// The live session bridge in networked mode.
     net: Option<NetBridge>,
     /// Last session version pulled into the UI; a bump means redraw.
@@ -404,6 +407,14 @@ impl App {
                 self.after_dispatch();
                 return;
             }
+            WinitKey::Character(c) if c.as_str() == "f" && !self.modifiers.control_key() => {
+                // Cycle the fog viewer: omniscient, then each side. Lets
+                // the DM preview a player's view (and drives single-window
+                // fog verification without a session).
+                runner.update(|ui| ui.cycle_viewer());
+                self.after_dispatch();
+                return;
+            }
             WinitKey::Named(WinitNamedKey::Enter) => {
                 if self.profile {
                     eprintln!("[isometry] key: Enter -> end_turn");
@@ -509,6 +520,12 @@ impl ApplicationHandler for App {
         }
         if self.net.is_some() {
             self.started = Some(Instant::now());
+        }
+        // Fog viewer from `--as`. Applies in any mode: a client sees
+        // through its player's tokens, and a solo run can preview a side.
+        if let Some(v) = self.viewer_arg.take() {
+            ui.viewer = Some(v);
+            ui.recompute_fog();
         }
 
         let dom = Rc::new(RefCell::new(ScriptedDom::new()));
@@ -623,6 +640,15 @@ fn parse_net_intent() -> Option<NetIntent> {
     }
 }
 
+/// Parse `--as <player>` from the command line.
+fn parse_viewer() -> Option<String> {
+    let args: Vec<String> = std::env::args().collect();
+    args.iter()
+        .position(|a| a == "--as")
+        .and_then(|i| args.get(i + 1))
+        .cloned()
+}
+
 fn main() {
     let event_loop = EventLoop::new().expect("event loop");
     event_loop.set_control_flow(ControlFlow::Wait);
@@ -642,6 +668,7 @@ fn main() {
         profile: std::env::var_os("ISOMETRY_PROFILE").is_some(),
         capture_dir: std::env::var_os("ISOMETRY_CAPTURE_DIR").map(Into::into),
         net_intent: parse_net_intent(),
+        viewer_arg: parse_viewer(),
         net: None,
         last_net_version: 0,
         net_selftest: std::env::var_os("ISOMETRY_NET_SELFTEST").is_some(),
