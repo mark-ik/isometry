@@ -59,6 +59,22 @@ impl Sim {
         }
     }
 
+    /// A client announces its player name to the host.
+    pub fn client_hello(&mut self, peer: PeerId, name: &str) {
+        if let Some(client) = self.clients.get(&peer) {
+            let out = client.hello(name);
+            self.enqueue_from_client(peer, vec![out]);
+            self.settle();
+        }
+    }
+
+    /// The DM whispers to a named player.
+    pub fn host_whisper(&mut self, from: &str, to: &str, text: &str) {
+        let out = self.host.whisper(from, to, text);
+        self.enqueue_from_host(out);
+        self.settle();
+    }
+
     fn enqueue_from_host(&mut self, out: Vec<Outbound>) {
         for (to, msg) in out {
             match to {

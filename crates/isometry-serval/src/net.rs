@@ -19,8 +19,8 @@ use tokio::sync::mpsc;
 pub enum Role {
     /// The DM: authoritative, prints a join ticket.
     Host(GameSnapshot),
-    /// A player: dials the host's ticket.
-    Client(String),
+    /// A player: dials the host's ticket, announcing a name.
+    Client { ticket: String, name: String },
 }
 
 /// The winit-thread handle to the background session.
@@ -29,6 +29,12 @@ pub struct NetBridge {
     version: Arc<AtomicU64>,
     ticket: Arc<Mutex<Option<String>>>,
     tx: mpsc::UnboundedSender<GameEvent>,
+    /// Host: whispers to send `(to, text)`. Client: unused.
+    whisper_tx: mpsc::UnboundedSender<(String, String)>,
+    /// Client: whispers received from the DM. Host: unused.
+    inbox: Arc<Mutex<Vec<(String, String)>>>,
+    /// Host: connected player names (whisper targets).
+    players: Arc<Mutex<Vec<String>>>,
 }
 
 impl NetBridge {
@@ -37,11 +43,16 @@ impl NetBridge {
         let snapshot: Arc<Mutex<Option<GameSnapshot>>> = Arc::new(Mutex::new(None));
         let version = Arc::new(AtomicU64::new(0));
         let ticket: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let inbox: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
+        let players: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let (tx, rx) = mpsc::unbounded_channel();
+        let (whisper_tx, whisper_rx) = mpsc::unbounded_channel();
 
         let snap = snapshot.clone();
         let ver = version.clone();
         let tick = ticket.clone();
+        let inb = inbox.clone();
+        let pl = players.clone();
         std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
@@ -49,8 +60,10 @@ impl NetBridge {
                 .expect("session runtime");
             rt.block_on(async move {
                 match role {
-                    Role::Host(state) => run_host(state, rx, snap, ver, tick).await,
-                    Role::Client(t) => run_client(t, rx, snap, ver).await,
+                    Role::Host(state) => run_host(state, rx, whisper_rx, snap, ver, tick, pl).await,
+                    Role::Client { ticket, name } => {
+                        run_client(ticket, name, rx, snap, ver, inb).await
+                    }
                 }
             });
         });
@@ -60,12 +73,30 @@ impl NetBridge {
             version,
             ticket,
             tx,
+            whisper_tx,
+            inbox,
+            players,
         }
     }
 
     /// Queue a local game event for the session.
     pub fn submit(&self, event: GameEvent) {
         let _ = self.tx.send(event);
+    }
+
+    /// Host: send a directed whisper to a named player.
+    pub fn whisper(&self, to: String, text: String) {
+        let _ = self.whisper_tx.send((to, text));
+    }
+
+    /// Client: take whispers received since the last call.
+    pub fn take_whispers(&self) -> Vec<(String, String)> {
+        std::mem::take(&mut self.inbox.lock().unwrap())
+    }
+
+    /// Host: connected player names (whisper targets).
+    pub fn players(&self) -> Vec<String> {
+        self.players.lock().unwrap().clone()
     }
 
     /// The current change version; the UI redraws when it advances.
@@ -93,12 +124,15 @@ fn publish(
     version.fetch_add(1, Ordering::Relaxed);
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_host(
     state: GameSnapshot,
     mut rx: mpsc::UnboundedReceiver<GameEvent>,
+    mut whisper_rx: mpsc::UnboundedReceiver<(String, String)>,
     snapshot: Arc<Mutex<Option<GameSnapshot>>>,
     version: Arc<AtomicU64>,
     ticket: Arc<Mutex<Option<String>>>,
+    players: Arc<Mutex<Vec<String>>>,
 ) {
     let host = match HostNet::bind(state).await {
         Ok(h) => h,
@@ -120,6 +154,9 @@ async fn run_host(
                 Some(event) => host.local_event(event).await,
                 None => break, // UI gone
             },
+            maybe = whisper_rx.recv() => if let Some((to, text)) = maybe {
+                host.whisper("dm", &to, &text).await;
+            },
             _ = tokio::time::sleep(Duration::from_millis(80)) => {}
         }
         // Republish when anything (our move or a client's) advanced the log.
@@ -128,23 +165,26 @@ async fn run_host(
             last_seq = seq;
             publish(&snapshot, &version, host.snapshot().await);
         }
+        *players.lock().unwrap() = host.player_names().await;
     }
 }
 
 async fn run_client(
     ticket: String,
+    name: String,
     mut rx: mpsc::UnboundedReceiver<GameEvent>,
     snapshot: Arc<Mutex<Option<GameSnapshot>>>,
     version: Arc<AtomicU64>,
+    inbox: Arc<Mutex<Vec<(String, String)>>>,
 ) {
-    let client = match ClientNet::join(&ticket).await {
+    let client = match ClientNet::join(&ticket, &name).await {
         Ok(c) => c,
         Err(e) => {
             eprintln!("[isometry] join failed: {e}");
             return;
         }
     };
-    println!("[isometry] joined session; replaying host log.");
+    println!("[isometry] joined session as {name}; replaying host log.");
     let mut last_applied = u64::MAX;
     loop {
         tokio::select! {
@@ -163,5 +203,13 @@ async fn run_client(
                 publish(&snapshot, &version, state);
             }
         }
+        let whispers = client.take_whispers().await;
+        if !whispers.is_empty() {
+            self_inbox_extend(&inbox, whispers);
+        }
     }
+}
+
+fn self_inbox_extend(inbox: &Arc<Mutex<Vec<(String, String)>>>, more: Vec<(String, String)>) {
+    inbox.lock().unwrap().extend(more);
 }

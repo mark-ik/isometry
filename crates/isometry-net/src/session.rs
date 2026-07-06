@@ -4,6 +4,8 @@
 //! networking here — that is what makes the whole protocol testable by
 //! routing messages in a loop and asserting the peers converge.
 
+use std::collections::HashMap;
+
 use isometry_core::{apply, EventError, TokenId};
 
 use crate::protocol::{
@@ -62,6 +64,9 @@ pub struct HostSession {
     /// Count of applied events; also the seq stamped on the next one.
     seq: u64,
     log_hash: u64,
+    /// Player name each connected peer announced (via `Hello`), so the
+    /// DM can whisper by name.
+    peer_names: HashMap<PeerId, String>,
 }
 
 impl HostSession {
@@ -70,6 +75,7 @@ impl HostSession {
             state,
             seq: 0,
             log_hash: FNV_OFFSET,
+            peer_names: HashMap::new(),
         }
     }
 
@@ -106,17 +112,47 @@ impl HostSession {
         self.commit(event)
     }
 
-    /// A message arrived from `from`. Only `Intent` is meaningful to the
-    /// host; anything else is ignored (a well-behaved client never sends
-    /// it, and a misbehaving one cannot corrupt the authority).
+    /// A message arrived from `from`: `Intent` proposes an event,
+    /// `Hello` announces the player's name; anything else is ignored (a
+    /// misbehaving client cannot corrupt the authority).
     pub fn on_message(&mut self, from: PeerId, msg: NetMessage) -> Vec<Outbound> {
         match msg {
             NetMessage::Intent { event } => match self.try_commit(event) {
                 Ok(out) => out,
                 Err(reason) => vec![(Recipient::One(from), NetMessage::Rejected { reason })],
             },
+            NetMessage::Hello { name } => {
+                self.peer_names.insert(from, name);
+                Vec::new()
+            }
             _ => Vec::new(),
         }
+    }
+
+    /// The DM whispers to the player named `to`. Returns a directed
+    /// message to that peer (empty if nobody by that name is connected).
+    pub fn whisper(&self, from: &str, to: &str, text: &str) -> Vec<Outbound> {
+        self.peer_names
+            .iter()
+            .find(|(_, name)| name.as_str() == to)
+            .map(|(&peer, _)| {
+                vec![(
+                    Recipient::One(peer),
+                    NetMessage::Whisper {
+                        from: from.to_owned(),
+                        text: text.to_owned(),
+                    },
+                )]
+            })
+            .unwrap_or_default()
+    }
+
+    /// The player names currently connected (whisper targets).
+    pub fn peer_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.peer_names.values().cloned().collect();
+        names.sort();
+        names.dedup();
+        names
     }
 
     fn commit(&mut self, event: GameEvent) -> Vec<Outbound> {
@@ -149,6 +185,8 @@ pub struct ClientSession {
     /// fills (QUIC is ordered per-stream, but a reconnect or a
     /// multi-stream transport could interleave; this keeps replay exact).
     pending: Vec<(u64, GameEvent)>,
+    /// Whispers received from the DM, oldest first: `(from, text)`.
+    inbox: Vec<(String, String)>,
 }
 
 impl Default for ClientSession {
@@ -164,7 +202,30 @@ impl ClientSession {
             applied: 0,
             log_hash: FNV_OFFSET,
             pending: Vec::new(),
+            inbox: Vec::new(),
         }
+    }
+
+    /// Announce this player's name to the host (sent on connect), so the
+    /// DM can whisper to it.
+    pub fn hello(&self, name: &str) -> Outbound {
+        (
+            Recipient::Host,
+            NetMessage::Hello {
+                name: name.to_owned(),
+            },
+        )
+    }
+
+    /// Whispers received so far.
+    pub fn inbox(&self) -> &[(String, String)] {
+        &self.inbox
+    }
+
+    /// Take and clear received whispers (the bridge drains these to the
+    /// UI).
+    pub fn drain_inbox(&mut self) -> Vec<(String, String)> {
+        std::mem::take(&mut self.inbox)
     }
 
     /// The replicated state, once the snapshot has arrived.
@@ -208,7 +269,12 @@ impl ClientSession {
                 self.pending.push((seq, event));
                 self.drain_pending();
             }
-            NetMessage::Intent { .. } | NetMessage::Rejected { .. } => {}
+            NetMessage::Whisper { from, text } => {
+                self.inbox.push((from, text));
+            }
+            NetMessage::Intent { .. }
+            | NetMessage::Rejected { .. }
+            | NetMessage::Hello { .. } => {}
         }
         Vec::new()
     }

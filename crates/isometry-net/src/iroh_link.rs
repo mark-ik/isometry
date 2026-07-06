@@ -171,6 +171,17 @@ impl HostNet {
         dispatch(&self.peers, out).await;
     }
 
+    /// The DM whispers to a named player (directed, not broadcast).
+    pub async fn whisper(&self, from: &str, to: &str, text: &str) {
+        let out = self.session.lock().await.whisper(from, to, text);
+        dispatch(&self.peers, out).await;
+    }
+
+    /// Connected player names (whisper targets), from their `Hello`s.
+    pub async fn player_names(&self) -> Vec<String> {
+        self.session.lock().await.peer_names()
+    }
+
     pub async fn snapshot(&self) -> GameSnapshot {
         self.session.lock().await.state().clone()
     }
@@ -221,8 +232,9 @@ pub struct ClientNet {
 }
 
 impl ClientNet {
-    /// Dial a host by ticket, receive the snapshot, and start replaying.
-    pub async fn join(ticket: &str) -> Result<Self, String> {
+    /// Dial a host by ticket, announce `name`, receive the snapshot, and
+    /// start replaying.
+    pub async fn join(ticket: &str, name: &str) -> Result<Self, String> {
         let endpoint = Endpoint::bind(presets::N0)
             .await
             .map_err(|e| format!("client bind: {e}"))?;
@@ -236,11 +248,14 @@ impl ClientNet {
             .await
             .map_err(|e| format!("connect: {e}"))?;
         // The host opened the stream; accept it and read the snapshot.
-        let (send, mut recv) = conn
+        let (mut send, mut recv) = conn
             .accept_bi()
             .await
             .map_err(|e| format!("accept_bi: {e}"))?;
         let session = Arc::new(Mutex::new(ClientSession::new()));
+        // Announce our player name so the DM can whisper to us.
+        let hello = session.lock().await.hello(name).1;
+        let _ = write_frame(&mut send, &hello).await;
         let reader_session = session.clone();
         tokio::spawn(async move {
             loop {
@@ -277,6 +292,11 @@ impl ClientNet {
 
     pub async fn log_hash(&self) -> u64 {
         self.session.lock().await.log_hash()
+    }
+
+    /// Take and clear whispers received from the DM.
+    pub async fn take_whispers(&self) -> Vec<(String, String)> {
+        self.session.lock().await.drain_inbox()
     }
 }
 
@@ -334,7 +354,7 @@ mod tests {
         host.spawn_accept();
         let ticket = host.ticket().await;
 
-        let client = ClientNet::join(&ticket).await.expect("client join");
+        let client = ClientNet::join(&ticket, "tester").await.expect("client join");
         // Snapshot handshake arrives.
         wait_until("snapshot", || async { client.state().await.is_some() }).await;
 

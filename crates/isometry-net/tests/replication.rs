@@ -141,6 +141,31 @@ fn turn_order_replicates() {
 }
 
 #[test]
+fn whisper_reaches_only_the_named_player() {
+    let mut sim = Sim::new(HostSession::new(snapshot()));
+    sim.connect(PeerId(10));
+    sim.connect(PeerId(20));
+    sim.client_hello(PeerId(10), "alice");
+    sim.client_hello(PeerId(20), "bob");
+
+    sim.host_whisper("dm", "alice", "the door is trapped");
+    assert_eq!(
+        sim.clients[&PeerId(10)].inbox(),
+        &[("dm".to_owned(), "the door is trapped".to_owned())]
+    );
+    assert!(
+        sim.clients[&PeerId(20)].inbox().is_empty(),
+        "bob does not see alice's whisper"
+    );
+
+    // A whisper to a name nobody announced goes nowhere.
+    sim.host_whisper("dm", "carol", "hello?");
+    assert_eq!(sim.clients[&PeerId(10)].inbox().len(), 1);
+    // Whispers are directed, so they never touch the replicated log.
+    assert_converged(&sim);
+}
+
+#[test]
 fn move_and_facing_batch_orders_atomically() {
     // A play move is two events (move + face); interleaving from two
     // clients must not split a pair, because the host applies each

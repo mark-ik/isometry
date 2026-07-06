@@ -14,6 +14,53 @@ fn next_template_kind(k: TemplateKind) -> TemplateKind {
     TemplateKind::ALL[(i + 1) % TemplateKind::ALL.len()]
 }
 
+/// Messages: the whisper composer (start typing, cycle target) and the
+/// message log.
+fn messages_section(ui: &UiState) -> UiChild {
+    let target = ui
+        .whisper_target
+        .clone()
+        .unwrap_or_else(|| "table".to_owned());
+    let draft = if ui.composing {
+        format!("> {}_", ui.whisper_draft)
+    } else {
+        "(w to whisper)".to_owned()
+    };
+    Box::new(el(
+        "div",
+        (
+            el(
+                "div",
+                (
+                    clickable(
+                        el("div", text("Whisper")).attr("class", "btn"),
+                        |ui: &mut UiState, _| ui.start_compose(),
+                    ),
+                    clickable(
+                        el("div", text(format!("to: {target}"))).attr("class", "btn"),
+                        |ui: &mut UiState, _| ui.cycle_whisper_target(),
+                    ),
+                ),
+            )
+            .attr("class", "btn-row"),
+            el("div", text(draft)).attr("class", "roll-line"),
+            el(
+                "div",
+                ui.messages
+                    .iter()
+                    .rev()
+                    .take(5)
+                    .map(|m| {
+                        Box::new(el("div", text(m.clone())).attr("class", "roll-line")) as UiChild
+                    })
+                    .collect::<Vec<UiChild>>(),
+            )
+            .attr("class", "roll-log"),
+        ),
+    )
+    .attr("class", "messages"))
+}
+
 /// Measure controls: template shape toggle, size stepper, and the
 /// distance readout (from the clicked anchor to the hovered tile).
 fn measure_controls(ui: &UiState) -> UiChild {
@@ -302,6 +349,8 @@ pub fn side_panel(ui: &UiState) -> UiChild {
         ),
         Box::new(el("div", text("Measure")).attr("class", "side-heading")),
         measure_controls(ui),
+        Box::new(el("div", text("Messages")).attr("class", "side-heading")),
+        messages_section(ui),
         Box::new(el("div", text(ui.status.clone())).attr("class", "side-status")),
         Box::new(
             el(

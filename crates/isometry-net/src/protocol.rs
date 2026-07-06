@@ -60,6 +60,12 @@ pub enum NetMessage {
     Intent { event: GameEvent },
     /// Host to the proposer: the intent failed validation.
     Rejected { reason: String },
+    /// Client to host on connect: announce the player name, so the host
+    /// can address whispers to it.
+    Hello { name: String },
+    /// Host to one peer: a private message (a GM whisper). Directed, not
+    /// broadcast, so it never enters the replicated log.
+    Whisper { from: String, text: String },
 }
 
 /// Where a produced message goes. The transport resolves this to actual

@@ -352,12 +352,39 @@ impl App {
         if let Some(runner) = self.runner.as_mut() {
             runner.update(|ui| events = std::mem::take(&mut ui.net_outbox));
         }
+        // Drain queued whispers (host-side) too.
+        let mut whispers = Vec::new();
+        if let Some(runner) = self.runner.as_mut() {
+            runner.update(|ui| whispers = std::mem::take(&mut ui.whisper_outbox));
+        }
         if let Some(net) = self.net.as_ref() {
             if !events.is_empty() && self.profile {
                 eprintln!("[isometry] pump: submitting {} event(s)", events.len());
             }
             for event in events {
                 net.submit(event);
+            }
+            for (to, text) in whispers {
+                net.whisper(to, text);
+            }
+            // Deliver received whispers into the message log, and refresh
+            // the whisper-target list from connected players.
+            let received = net.take_whispers();
+            let players = net.players();
+            if !received.is_empty() || !players.is_empty() {
+                if let Some(runner) = self.runner.as_mut() {
+                    runner.update(|ui| {
+                        for (from, text) in &received {
+                            ui.receive_whisper(from, text);
+                        }
+                        ui.connected_players = players;
+                    });
+                    if !received.is_empty() {
+                        if let Some(window) = self.window.as_ref() {
+                            window.request_redraw();
+                        }
+                    }
+                }
             }
         }
         // Mirror in a new snapshot when the session version bumped.
@@ -401,7 +428,40 @@ impl App {
         let Some(runner) = self.runner.as_mut() else {
             return;
         };
+        // While composing a whisper, keys go to the draft.
+        if runner.state().composing {
+            match &event.logical_key {
+                WinitKey::Named(WinitNamedKey::Escape) => {
+                    runner.update(|ui| ui.compose_cancel());
+                }
+                WinitKey::Named(WinitNamedKey::Enter) => {
+                    runner.update(|ui| ui.compose_send());
+                }
+                WinitKey::Named(WinitNamedKey::Backspace) => {
+                    runner.update(|ui| ui.compose_backspace());
+                }
+                WinitKey::Named(WinitNamedKey::Space) => {
+                    runner.update(|ui| ui.compose_char(' '));
+                }
+                WinitKey::Character(c) => {
+                    let s = c.to_string();
+                    runner.update(|ui| {
+                        for ch in s.chars() {
+                            ui.compose_char(ch);
+                        }
+                    });
+                }
+                _ => {}
+            }
+            self.after_dispatch();
+            return;
+        }
         match &event.logical_key {
+            WinitKey::Character(c) if c.as_str() == "w" && !self.modifiers.control_key() => {
+                runner.update(|ui| ui.start_compose());
+                self.after_dispatch();
+                return;
+            }
             WinitKey::Character(c) if c.as_str() == "r" && !self.modifiers.control_key() => {
                 runner.update(|ui| ui.rotate_selected());
                 self.after_dispatch();
@@ -466,7 +526,7 @@ impl ApplicationHandler for App {
                 .create_window(
                     Window::default_attributes()
                         .with_title("Isometry")
-                        .with_inner_size(winit::dpi::LogicalSize::new(1100.0, 720.0)),
+                        .with_inner_size(winit::dpi::LogicalSize::new(1100.0, 820.0)),
                 )
                 .expect("create window"),
         );
@@ -515,7 +575,11 @@ impl ApplicationHandler for App {
             Some(NetIntent::Join(ticket)) => {
                 ui.net_mode = NetMode::Remote;
                 ui.status = "connecting...".to_owned();
-                self.net = Some(NetBridge::spawn(Role::Client(ticket)));
+                let name = self
+                    .viewer_arg
+                    .clone()
+                    .unwrap_or_else(|| "player".to_owned());
+                self.net = Some(NetBridge::spawn(Role::Client { ticket, name }));
             }
             None => {}
         }

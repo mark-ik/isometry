@@ -176,6 +176,19 @@ pub struct UiState {
     pub measure_anchor: Option<TileCoord>,
     pub template_kind: TemplateKind,
     pub template_size: u32,
+    /// The message log (whispers sent and received), display strings.
+    pub messages: Vec<String>,
+    /// Whether a whisper is being typed (keys route to the draft).
+    pub composing: bool,
+    /// The whisper being typed.
+    pub whisper_draft: String,
+    /// Who a composed whisper goes to (a player name); the DM cycles it.
+    pub whisper_target: Option<String>,
+    /// Whispers to send: `(target, text)`, drained by the host bridge.
+    pub whisper_outbox: Vec<(String, String)>,
+    /// Connected player names the DM can whisper to (set by the host
+    /// bridge). Empty solo.
+    pub connected_players: Vec<String>,
     /// Sprite the Token mode places.
     pub token_sprite: String,
     /// Play state: the substrate turn order.
@@ -220,7 +233,81 @@ impl UiState {
             measure_anchor: None,
             template_kind: TemplateKind::Burst,
             template_size: 3,
+            messages: Vec::new(),
+            composing: false,
+            whisper_draft: String::new(),
+            whisper_target: None,
+            whisper_outbox: Vec::new(),
+            connected_players: Vec::new(),
         }
+    }
+
+    /// Start typing a whisper (host keys route to the draft until send or
+    /// cancel).
+    pub fn start_compose(&mut self) {
+        self.composing = true;
+        self.status = "whisper (enter send, esc cancel)".to_owned();
+    }
+
+    /// Append a typed character to the whisper draft.
+    pub fn compose_char(&mut self, c: char) {
+        if self.composing {
+            self.whisper_draft.push(c);
+        }
+    }
+
+    /// Delete the last draft character.
+    pub fn compose_backspace(&mut self) {
+        if self.composing {
+            self.whisper_draft.pop();
+        }
+    }
+
+    /// Cancel composing, discarding the draft.
+    pub fn compose_cancel(&mut self) {
+        self.composing = false;
+        self.whisper_draft.clear();
+        self.status = "whisper cancelled".to_owned();
+    }
+
+    /// Send the composed whisper to the current target: log it, and (as a
+    /// networked host) queue it for directed delivery.
+    pub fn compose_send(&mut self) {
+        let text = self.whisper_draft.trim().to_owned();
+        self.composing = false;
+        self.whisper_draft.clear();
+        if text.is_empty() {
+            return;
+        }
+        let target = self.whisper_target.clone().unwrap_or_else(|| "table".to_owned());
+        self.messages.push(format!("to {target}: {text}"));
+        self.whisper_outbox.push((target, text));
+        self.status = "whisper sent".to_owned();
+    }
+
+    /// Record a whisper received from the DM.
+    pub fn receive_whisper(&mut self, from: &str, text: &str) {
+        self.messages.push(format!("from {from}: {text}"));
+        self.status = format!("whisper from {from}");
+    }
+
+    /// Cycle the whisper target through the connected player names.
+    pub fn cycle_whisper_target(&mut self) {
+        let names = &self.connected_players;
+        if names.is_empty() {
+            self.whisper_target = None;
+            return;
+        }
+        self.whisper_target = match &self.whisper_target {
+            None => Some(names[0].clone()),
+            Some(cur) => {
+                let i = names.iter().position(|n| n == cur);
+                match i {
+                    Some(i) if i + 1 < names.len() => Some(names[i + 1].clone()),
+                    _ => None,
+                }
+            }
+        };
     }
 
     /// The tiles the current area template covers, aimed at the hovered
@@ -961,6 +1048,30 @@ mod tests {
             .collect();
         let boundaries = owners.windows(2).filter(|w| w[0] != w[1]).count();
         assert_eq!(boundaries, 1, "two sides act in blocks");
+    }
+
+    #[test]
+    fn compose_whisper_builds_draft_and_logs() {
+        let mut ui = UiState::new(demo_map());
+        ui.whisper_target = Some("alice".to_owned());
+        ui.start_compose();
+        assert!(ui.composing);
+        for c in "hi".chars() {
+            ui.compose_char(c);
+        }
+        ui.compose_backspace();
+        ui.compose_char('e');
+        ui.compose_char('y');
+        assert_eq!(ui.whisper_draft, "hey");
+        ui.compose_send();
+        assert!(!ui.composing);
+        assert_eq!(ui.messages, vec!["to alice: hey".to_string()]);
+        assert_eq!(
+            ui.whisper_outbox,
+            vec![("alice".to_string(), "hey".to_string())]
+        );
+        ui.receive_whisper("dm", "watch out");
+        assert_eq!(ui.messages[1], "from dm: watch out");
     }
 
     #[test]

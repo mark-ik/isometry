@@ -17,8 +17,10 @@ pub fn board_css() -> String {
 }
 .side {
     width: 200px;
+    height: 100%;
     padding: 14px;
     background-color: #1b1e27;
+    overflow-y: auto;
 }
 .side-title {
     font-size: 18px;

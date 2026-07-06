@@ -64,7 +64,7 @@ async fn main() {
         }
         "join" => {
             let ticket = std::env::args().nth(2).expect("usage: join <ticket>");
-            let client = ClientNet::join(&ticket).await.expect("join host");
+            let client = ClientNet::join(&ticket, "player").await.expect("join host");
             println!("joined; replaying the host's log. ctrl-c to stop.");
             loop {
                 tokio::time::sleep(Duration::from_secs(1)).await;
