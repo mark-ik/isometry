@@ -66,11 +66,14 @@ crates/
   isometry-core/    Pure-Rust substrate model: grids, iso math, map
                     documents, session events. No I/O, no UI, no net,
                     no serval deps.
+  isometry-views/   xilem_serval view fns + CSS sheets (tilesets are
+                    stylesheets). Host-agnostic.
+  isometry-serval/  Native winit host: window, input, netrender present.
+                    ISOMETRY_PROFILE=1 prints frame timers.
 ```
 
-Planned (phase-gated, see the bootstrap plan): `isometry-views`
-(xilem_serval view fns + CSS sheets), `isometry-serval` (native winit
-host), `isometry-net` (iroh transport), `isometry-web` (browser host).
+Planned (phase-gated, see the bootstrap plan): `isometry-net` (iroh
+transport), `isometry-web` (browser host).
 
 Keep `isometry-core` pure: no `wgpu`, no `iroh`, no serval crates, no
 file I/O. Event log semantics live in core; transport lives in

@@ -1,0 +1,22 @@
+[package]
+name = "isometry-serval"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Isometry's serval desktop host: winit window + netrender present over the isometry-views view layer. Bootstrap plan I1."
+
+[dependencies]
+isometry-core = { workspace = true }
+isometry-views = { workspace = true }
+xilem-serval = { workspace = true }
+layout-dom-api = { workspace = true }
+serval-scripted-dom = { workspace = true }
+serval-layout = { workspace = true }
+serval-winit-host = { workspace = true }
+netrender = { workspace = true }
+paint_list_api = { workspace = true }
+paint_list_render = { workspace = true }
+wgpu = { workspace = true }
+winit = { workspace = true }

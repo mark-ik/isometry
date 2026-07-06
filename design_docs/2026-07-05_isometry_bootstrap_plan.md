@@ -1,8 +1,10 @@
 # Isometry bootstrap plan
 
 **Date:** 2026-07-05
-**Status:** active plan. I0 landed the same day (workspace, isometry-core
-seed, repo docs). I1 is the entry point for the next session.
+**Status:** active plan. I0 landed 2026-07-05. I1 largely landed the same
+day (host renders the demo board, P2/P3 receipts below); I1 residue: the
+P1 engine fix (pixelated sampling), a 30x30x3 synthetic P2 run, and
+release-build numbers.
 **Thesis:** a pixel-art isometric P2P VTT is buildable on the Strophos
 stack with the woodshed consumer pattern, and the GBA tactics aesthetic
 (fixed camera, battle-scale maps) keeps every known engine risk inside
@@ -183,6 +185,41 @@ system is created, bound to a token, and drives its rolls in a session.
 
 ## Findings
 
+- 2026-07-05 (I1, probe P1, code-grounded): `image-rendering: pixelated`
+  is knocked out at three seams. serval-layout's paint emission hardcodes
+  `ImageRendering::Auto` at every image site
+  (`repos/serval/components/serval-layout/paint_emit.rs:1115` and
+  siblings); paint_list_render's translator never reads the field; the
+  vello image quality is never selected from it. `paint_list_api`
+  already carries the `Pixelated` variant
+  (`repos/netrender/paint_list_api/src/primitives.rs:217`). Verdict:
+  engine-side fix (read computed style at emit, thread through the
+  translator, map to the nearest-neighbor sampler), standards-correct
+  over host hacks. Until it lands the placeholder tileset uses clip-path
+  diamonds; `clip-path: polygon()/circle()/ellipse()` is supported
+  (`paint_emit.rs:3191`).
+- 2026-07-05 (I1, probe P2 receipts, debug build, 24x24 demo board,
+  roughly 650 elements, 1100x720 window): first frame scene 146-155ms,
+  first raster 26-44ms; snap-pan frames (camera as one inline-style
+  attribute change on the board container) scene ~65ms, raster ~10-11ms;
+  settled frames cost zero because the host is event-driven
+  (`ControlFlow::Wait`, no redraw without input). The ~65ms pan scene
+  cost is view rebuild + full-scene emit, the expected O(scene) lane;
+  candidates when it matters: memoized row views, retained segment
+  emission, the netrender camera-offset composite. Release numbers and
+  the 30x30x3 synthetic are still to run.
+- 2026-07-05 (I1, probe P3, screenshot receipt
+  `scry-shots/2026-07-05_isometry_i1_board.png`): terraced hill with
+  cliff columns, tokens standing on elevation, trees and path sorting
+  correctly in front of and behind terrain; depth as plain z-index from
+  `depth_key` holds. Cosmetic note: terraces read as dark rings under
+  the placeholder tileset; a real tileset resolves it.
+- 2026-07-05 (I1, infrastructure): the serval GitHub tip (48c08ea) was
+  mid-flight broken (the `invalidate.rs` fix sat uncommitted in the
+  local working tree), the known transient-concurrent-work pattern. The
+  gitignored `.cargo/config.toml` override to the sibling checkouts (the
+  woodshed/mere pattern) is in place; committed manifests stay on git
+  deps and resolve once serval main is pushed green.
 - 2026-07-05 (founding session, code-grounded): netrender tile
   invalidation hashes primitives per world-space tile
   (`repos/netrender/netrender/src/tile_cache/mod.rs`), so camera pan
@@ -197,4 +234,11 @@ system is created, bound to a token, and drives its rolls in a session.
 ## Progress
 
 - 2026-07-05: repo created. I0 landed: workspace, CLAUDE.md, doc set,
-  isometry-core seed (grid, iso, map, event modules with tests). I1 next.
+  isometry-core seed (grid, iso, map, event modules with tests).
+- 2026-07-05 (later): I1 largely landed. isometry-views (board view fn,
+  demo map, placeholder tileset CSS) + isometry-serval (winit host,
+  woodshed harness shape, `ISOMETRY_PROFILE=1` frame timers). Demo board
+  renders with hover, click-select, and arrow-key snap pan; P2/P3
+  receipts in Findings. Residue for the next session: the P1 engine fix
+  in serval/netrender, a 30x30x3 synthetic P2 run, release-build
+  numbers, and a click-to-select edit-cost receipt.

@@ -2,6 +2,8 @@
 resolver = "2"
 members = [
     "crates/isometry-core",
+    "crates/isometry-views",
+    "crates/isometry-serval",
 ]
 
 [workspace.package]
@@ -14,12 +16,35 @@ rust-version = "1.80"
 [workspace.dependencies]
 # Internal crates
 isometry-core = { path = "crates/isometry-core", version = "0.1.0" }
+isometry-views = { path = "crates/isometry-views", version = "0.1.0" }
 
 # Persistence
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
-# The serval host stack (xilem-serval, serval-layout, netrender, ...) lands
-# in phase I1 as git deps on the mark-ik remotes, with the [patch.crates-io]
-# mirror the woodshed root models (stylo, taffy, ipc-channel). See
-# design_docs/2026-07-05_isometry_bootstrap_plan.md.
+# UI: the serval host stack (I1, the woodshed pattern). GIT deps on the
+# owned repos so any machine resolves; local checkouts override via the
+# gitignored .cargo/config.toml source-specific [patch] entries. serval's
+# internal path deps resolve inside its git checkout; only the crates
+# isometry names appear here.
+xilem-serval = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
+layout-dom-api = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
+serval-scripted-dom = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
+serval-layout = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
+serval-winit-host = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
+netrender = { git = "https://github.com/mark-ik/netrender.git", branch = "main" }
+paint_list_api = { git = "https://github.com/mark-ik/netrender.git", branch = "main" }
+paint_list_render = { git = "https://github.com/mark-ik/netrender.git", branch = "main" }
+# wgpu for host-side surface/compose types only; backend features come
+# from netrender's own per-target manifest split.
+wgpu = { version = "29", default-features = false, features = ["std"] }
+winit = "0.30"
+
+# Mirror of serval's [patch.crates-io] entries this workspace's serval
+# graph needs; patches are per-workspace-root and do NOT inherit through
+# a git dep. Copied from the woodshed root (the maintained model).
+[patch.crates-io]
+stylo = { git = "https://github.com/servo/stylo", rev = "8bde0e96db888b7f188830bea261e72b2006fd73" }
+stylo_atoms = { git = "https://github.com/servo/stylo", rev = "8bde0e96db888b7f188830bea261e72b2006fd73" }
+taffy = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
+ipc-channel = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
