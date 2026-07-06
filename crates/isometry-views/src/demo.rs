@@ -59,20 +59,25 @@ pub fn demo_map() -> MapDocument {
         }
     }
 
-    map.tokens.push(Token {
-        id: TokenId(1),
-        at: (10, 14),
-        facing: Facing::East,
-        sprite: "knight".to_owned(),
-        owner: Some("player".to_owned()),
-    });
-    map.tokens.push(Token {
-        id: TokenId(2),
-        at: (15, 8),
-        facing: Facing::West,
-        sprite: "goblin".to_owned(),
-        owner: None,
-    });
+    // Two hot-seat sides: knights (A) vs goblins (B).
+    for (id, at, sprite, owner) in [
+        (1, (10, 14), "knight", "A"),
+        (3, (9, 15), "knight", "A"),
+        (2, (15, 8), "goblin", "B"),
+        (4, (16, 9), "goblin", "B"),
+    ] {
+        map.tokens.push(Token {
+            id: TokenId(id),
+            at,
+            facing: if sprite == "knight" {
+                Facing::East
+            } else {
+                Facing::West
+            },
+            sprite: sprite.to_owned(),
+            owner: Some(owner.to_owned()),
+        });
+    }
     map
 }
 

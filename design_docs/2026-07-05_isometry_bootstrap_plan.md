@@ -1,11 +1,11 @@
 # Isometry bootstrap plan
 
 **Date:** 2026-07-05
-**Status:** active plan. I0 + I1 landed 2026-07-05/06 (all three probes
-verified, receipts in Findings). I2 landed 2026-07-06 (editor, undo,
-save/load, pixel-sprite tokens); I2 residue: a "new empty map" entry
-point (the app always opens the demo board today). I3 (tokens and local
-play) is next.
+**Status:** active plan. I0-I3 landed 2026-07-05/06 (probes verified,
+receipts in Findings; I3 = tokens, movement with reach/path preview,
+facing, turn list, hot-seat). Residue: a "new empty map" entry point,
+and drag-to-reorder on the turn list (in/out toggles cover the
+trichotomy meanwhile). I4 (sessions over iroh) is next.
 **Thesis:** a pixel-art isometric P2P VTT is buildable on the Strophos
 stack with the woodshed consumer pattern, and the GBA tactics aesthetic
 (fixed camera, battle-scale maps) keeps every known engine risk inside
@@ -126,12 +126,18 @@ flood fill, save/load (serde JSON first, format review later), undo via
 the event log. **Done when** a Lodis-scale map can be authored from an
 empty board, saved, reloaded identically, and every edit is undoable.
 
-### I3: tokens and local play
+### I3: tokens and local play (landed 2026-07-06)
 
 Token placement, drag movement with path preview, facing, a turn list
 with drag-in/drag-out (free movement mode when out), hot-seat play on one
 machine. **Done when** two hot-seat players can run a skirmish on an
-authored map with turns and facing tracked.
+authored map with turns and facing tracked. Landed: Token mode
+(place/remove, sprite swatches), Play mode (select, BFS reach with
+elevation/occupancy rules, hover path preview, move + facing as one
+undoable step, r to rotate), TurnList in core with panel rows, in/out
+toggles, End turn / Enter, gold active marker, green selection marker.
+In/out is click-toggle rather than drag (drag-to-reorder deferred);
+move budget is a constant 5 until system plugins supply speed (I6).
 
 ### I4: sessions
 
@@ -186,6 +192,28 @@ system is created, bound to a token, and drives its rolls in a session.
 
 ## Findings
 
+- 2026-07-06 (I3 receipts, scripted drive + self-captures in
+  scry-shots/2026-07-06_isometry_i3_*.png): token select shows the BFS
+  reach (water impassable, elevation step limits honored around the
+  hill terraces), hovered path tints inside it, click moves the token
+  with facing from the final step (mirrored sprite) as one undoable
+  step, Enter advances the turn and the gold marker + panel row follow
+  (knight 1 to knight 3 to goblin 2). Turn gating (listed tokens move
+  only on their turn, unlisted move freely) and token place/remove are
+  covered by isometry-views state tests; TurnList and pathfinding by
+  isometry-core tests (21 total).
+- 2026-07-06 (engine gap, found by sprite mirroring): serval conjugates
+  CSS transforms at the box origin; the spec default `transform-origin`
+  is `50% 50%`, so `scaleX(-1)` reflects an element out of its own box
+  (and its hit region with it, which is how it surfaced: flipped tokens
+  missed clicks). App-side workaround: pre-translate by the width
+  (`translateX(24px) scaleX(-1)`). Worth a serval issue alongside the
+  inset-sizing and paint/hit-divergence notes.
+- 2026-07-06 (CSS lesson, not an engine bug): state tints (reach, path,
+  selected, hover) must sit after the tile-kind rules in the sheet;
+  equal specificity resolves by source order, and kind rules earlier in
+  the sheet silently win otherwise. Tileset authors inherit this rule:
+  kind classes first, state classes last.
 - 2026-07-06 (probe P2 closed, release + synthetic receipts, 1100x720):
   release demo board (24x24, ~650 elements): first frame 13.7ms scene +
   19.1ms raster, snap-pan frames ~4.3ms scene + ~1.3ms raster. Release
@@ -288,6 +316,15 @@ system is created, bound to a token, and drives its rolls in a session.
   (`repos/mere/design_docs/mere_docs/implementation_strategy/2026-06-24_meerkat_render_perf_plan.md`).
 
 ## Progress
+
+- 2026-07-06 (later): I3 landed. Core: `TurnList` (active-stable
+  removal), `reachable`/`path_to` BFS with `MoveRules` (budget,
+  climb/drop steps, passability, occupancy). Views: Play and Token
+  modes, reach/path tinting, turn panel, markers, sprite mirroring.
+  Host: hover-tile preview updates gated by a read-only state check
+  (`runner.update` rebuilds the tree, so per-pixel updates are out),
+  r/Enter keys. Receipts + two new engine notes in Findings. Demo
+  starts with all four tokens in the turn order.
 
 - 2026-07-05: repo created. I0 landed: workspace, CLAUDE.md, doc set,
   isometry-core seed (grid, iso, map, event modules with tests).

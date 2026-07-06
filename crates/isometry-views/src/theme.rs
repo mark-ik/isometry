@@ -59,6 +59,40 @@ pub fn board_css() -> String {
     background-color: #10131a;
 }
 .swatch-active { border: 2px solid #ffd766; }
+.sprite-swatch {
+    width: 24px;
+    height: 36px;
+    background-repeat: no-repeat;
+    background-size: 100% 100%;
+    image-rendering: pixelated;
+    background-color: #10131a;
+}
+
+.turn-list { margin-bottom: 4px; }
+.turn-row {
+    display: flex;
+    padding: 2px 4px;
+    font-size: 12px;
+}
+.turn-row-active { background-color: #2c3347; }
+.turn-row-selected { color: #9fd48a; }
+.turn-label { flex: 1; }
+.btn-mini { padding: 1px 6px; font-size: 11px; margin-bottom: 0; }
+
+/* Ground markers under tokens: gold = whose turn, green = selected. */
+.marker {
+    position: absolute;
+    width: 28px;
+    height: 14px;
+    clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+}
+.marker-turn { background-color: #ffd766; }
+.marker-select { background-color: #7fd8a3; }
+
+/* Mirror about the sprite's own center. serval conjugates transforms
+   at the box origin (spec default is 50% 50%, engine gap on file), so
+   pre-translate by the width to land the reflection back in the box. */
+.token-flip { transform: translateX(24px) scaleX(-1); }
 
 .pane {
     position: relative;
@@ -74,8 +108,6 @@ pub fn board_css() -> String {
     height: 16px;
     clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
 }
-.tile:hover { background-color: #ffe9a0; }
-.tile-selected { background-color: #ffd766; }
 
 .tile-grass { background-color: #4f8f3b; }
 .tile-grass.alt { background-color: #478536; }
@@ -84,6 +116,16 @@ pub fn board_css() -> String {
 .tile-stone { background-color: #8d9098; }
 .tile-stone.alt { background-color: #84878f; }
 .tile-under { background-color: #3b5c2d; }
+
+/* State tints come after the kind classes: equal specificity, source
+   order decides, and these must win over any tile kind. */
+.tile:hover { background-color: #ffe9a0; }
+.tile-selected { background-color: #ffd766; }
+/* Play mode: the selected token's reach, and the hovered path in it. */
+.tile-reach { background-color: #4a6ea8; }
+.tile-reach.alt { background-color: #44669c; }
+.tile-path { background-color: #7fa3d8; }
+.tile-path.alt { background-color: #7fa3d8; }
 
 .prop {
     position: absolute;

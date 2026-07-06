@@ -3,11 +3,64 @@
 //! swatches take their color from the same `tile-<kind>` classes the
 //! board uses, so the palette can never drift from the tileset.
 
-use isometry_core::TileKindId;
+use isometry_core::{TileKindId, TokenId};
 use xilem_serval::{clickable, el, text};
 
 use crate::board::UiChild;
 use crate::state::{EditMode, UiState};
+
+const TOKEN_SPRITES: [&str; 2] = ["knight", "goblin"];
+
+fn sprite_swatch(ui: &UiState, sprite: &'static str) -> UiChild {
+    let mut class = format!("swatch sprite-swatch token-{sprite}");
+    if ui.token_sprite == sprite {
+        class.push_str(" swatch-active");
+    }
+    Box::new(clickable(
+        el("div", ()).attr("class", class),
+        move |ui: &mut UiState, _| {
+            ui.token_sprite = sprite.to_owned();
+            ui.status = format!("token brush: {sprite}");
+        },
+    ))
+}
+
+/// One turn-list row: click selects the token, the trailing toggle
+/// moves it in or out of the turn order (out = free movement).
+fn turn_row(ui: &UiState, id: TokenId) -> UiChild {
+    let token = ui.map.token(id).expect("row for a live token");
+    let listed = ui.turns.contains(id);
+    let active = ui.turns.active() == Some(id);
+    let mut class = "turn-row".to_owned();
+    if active {
+        class.push_str(" turn-row-active");
+    }
+    if ui.selected_token == Some(id) {
+        class.push_str(" turn-row-selected");
+    }
+    let owner = token.owner.as_deref().unwrap_or("dm");
+    let label = format!(
+        "{}{} {} ({owner})",
+        if active { "> " } else { "" },
+        token.sprite,
+        id.0
+    );
+    Box::new(el(
+        "div",
+        (
+            clickable(
+                el("div", text(label)).attr("class", "turn-label"),
+                move |ui: &mut UiState, _| ui.select_token(id),
+            ),
+            clickable(
+                el("div", text(if listed { "out" } else { "in" }))
+                    .attr("class", "btn btn-mini"),
+                move |ui: &mut UiState, _| ui.toggle_turn(id),
+            ),
+        ),
+    )
+    .attr("class", class))
+}
 
 fn mode_button(mode: EditMode, active: bool) -> UiChild {
     let class = if active { "btn btn-active" } else { "btn" };
@@ -66,11 +119,10 @@ pub fn side_panel(ui: &UiState) -> UiChild {
         }
         None => "selected: none".to_owned(),
     };
-    Box::new(el(
-        "div",
-        (
-            el("div", text("Isometry")).attr("class", "side-title"),
-            el("div", text(ui.map.name.clone())).attr("class", "side-line"),
+    let children: Vec<UiChild> = vec![
+        Box::new(el("div", text("Isometry")).attr("class", "side-title")),
+        Box::new(el("div", text(ui.map.name.clone())).attr("class", "side-line")),
+        Box::new(
             el(
                 "div",
                 text(format!(
@@ -81,12 +133,14 @@ pub fn side_panel(ui: &UiState) -> UiChild {
                 )),
             )
             .attr("class", "side-line"),
-            el("div", text(selected)).attr("class", "side-line side-strong"),
-            el("div", text("Mode")).attr("class", "side-heading"),
-            el("div", modes).attr("class", "btn-row"),
-            el("div", text("Brush")).attr("class", "side-heading"),
-            el("div", swatches).attr("class", "swatch-row"),
-            el("div", text("Map")).attr("class", "side-heading"),
+        ),
+        Box::new(el("div", text(selected)).attr("class", "side-line side-strong")),
+        Box::new(el("div", text("Mode")).attr("class", "side-heading")),
+        Box::new(el("div", modes).attr("class", "btn-row")),
+        Box::new(el("div", text("Brush")).attr("class", "side-heading")),
+        Box::new(el("div", swatches).attr("class", "swatch-row")),
+        Box::new(el("div", text("Map")).attr("class", "side-heading")),
+        Box::new(
             el(
                 "div",
                 (
@@ -97,9 +151,42 @@ pub fn side_panel(ui: &UiState) -> UiChild {
                 ),
             )
             .attr("class", "btn-row"),
-            el("div", text(ui.status.clone())).attr("class", "side-status"),
-            el("div", text("arrows: pan / ctrl+z, ctrl+y")).attr("class", "side-hint"),
         ),
-    )
-    .attr("class", "side"))
+        Box::new(el("div", text("Tokens")).attr("class", "side-heading")),
+        Box::new(
+            el(
+                "div",
+                TOKEN_SPRITES
+                    .iter()
+                    .map(|s| sprite_swatch(ui, s))
+                    .collect::<Vec<UiChild>>(),
+            )
+            .attr("class", "swatch-row"),
+        ),
+        Box::new(el("div", text("Turns")).attr("class", "side-heading")),
+        Box::new(
+            el(
+                "div",
+                ui.map
+                    .tokens
+                    .iter()
+                    .map(|t| turn_row(ui, t.id))
+                    .collect::<Vec<UiChild>>(),
+            )
+            .attr("class", "turn-list"),
+        ),
+        Box::new(
+            el(
+                "div",
+                (action_button("End turn", true, |ui| ui.end_turn()),),
+            )
+            .attr("class", "btn-row"),
+        ),
+        Box::new(el("div", text(ui.status.clone())).attr("class", "side-status")),
+        Box::new(
+            el("div", text("arrows: pan / ctrl+z ctrl+y / r: face / enter: end turn"))
+                .attr("class", "side-hint"),
+        ),
+    ];
+    Box::new(el("div", children).attr("class", "side"))
 }

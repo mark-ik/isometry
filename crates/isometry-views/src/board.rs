@@ -6,11 +6,13 @@
 //! single attribute change on one element. Depth comes from
 //! [`isometry_core::depth_key`] as a plain z-index.
 
-use isometry_core::{depth_key, MapDocument, TileCoord, TileKindId, Token};
+use std::collections::HashSet;
+
+use isometry_core::{depth_key, path_to, MapDocument, TileCoord, TileKindId, Token};
 use xilem_serval::{clickable, el, AnyView, ServalCtx, ServalElement};
 
 use crate::panel::side_panel;
-use crate::state::UiState;
+use crate::state::{EditMode, UiState};
 
 pub type UiChild = Box<dyn AnyView<UiState, (), ServalCtx, ServalElement>>;
 
@@ -40,9 +42,20 @@ fn kind_name(map: &MapDocument, kind: TileKindId) -> &str {
 }
 
 /// The ground layer: a column of filler diamonds up to the tile's
-/// elevation, then the top diamond carrying the kind class.
+/// elevation, then the top diamond carrying the kind class. In Play
+/// mode the selected token's reach tints blue and the hovered path
+/// tints lighter still.
 fn ground_tiles(ui: &UiState) -> Vec<UiChild> {
     let map = &ui.map;
+    let playing = ui.mode == EditMode::Play;
+    let path: HashSet<TileCoord> = if playing {
+        ui.hover_tile
+            .filter(|t| ui.reach.contains_key(t))
+            .map(|t| path_to(&ui.reach, t).into_iter().collect())
+            .unwrap_or_default()
+    } else {
+        HashSet::new()
+    };
     let mut out: Vec<UiChild> = Vec::new();
     for (col, row, kind) in map.ground.iter() {
         if kind.0 == 0 {
@@ -59,6 +72,13 @@ fn ground_tiles(ui: &UiState) -> Vec<UiChild> {
         }
         if ui.selected == Some(at) {
             class.push_str(" tile-selected");
+        }
+        if playing {
+            if path.contains(&at) {
+                class.push_str(" tile-path");
+            } else if ui.reach.contains_key(&at) {
+                class.push_str(" tile-reach");
+            }
         }
         out.push(tile_el(ui, at, elev, class));
     }
@@ -101,20 +121,55 @@ fn token_el(ui: &UiState, token: &Token) -> UiChild {
     let z = depth_key(token.at, elev) + 2;
     // 8x12 sprite at 3x (24x36), feet at the diamond center.
     let (x, y) = (cx - 12.0, cy - 32.0);
-    Box::new(
-        el("div", ())
-            .attr("class", format!("token token-{}", token.sprite))
-            .attr(
-                "style",
-                format!("left: {x}px; top: {y}px; z-index: {z};"),
-            ),
-    )
+    let mut class = format!("token token-{}", token.sprite);
+    // One drawn side, mirrored for the other two facings (the GBA
+    // economy): E/N flip, S/W stay.
+    if matches!(
+        token.facing,
+        isometry_core::Facing::East | isometry_core::Facing::North
+    ) {
+        class.push_str(" token-flip");
+    }
+    let id = token.id;
+    Box::new(clickable(
+        el("div", ()).attr("class", class).attr(
+            "style",
+            format!("left: {x}px; top: {y}px; z-index: {z};"),
+        ),
+        move |ui: &mut UiState, _| {
+            ui.click_token(id);
+        },
+    ))
+}
+
+/// A ground marker diamond under a token (turn-active gold, selection
+/// green), one depth step above the tile it stands on.
+fn marker_el(ui: &UiState, token_id: isometry_core::TokenId, class: &str) -> Option<UiChild> {
+    let token = ui.map.token(token_id)?;
+    let elev = *ui
+        .map
+        .elevation
+        .get(token.at.0.max(0) as u32, token.at.1.max(0) as u32)
+        .unwrap_or(&0) as i32;
+    let (cx, cy) = ui.geo.tile_to_screen(token.at, elev);
+    let z = depth_key(token.at, elev) + 1;
+    let (x, y) = (cx - 14.0, cy - 7.0);
+    Some(Box::new(el("div", ()).attr("class", class.to_owned()).attr(
+        "style",
+        format!("left: {x}px; top: {y}px; z-index: {z};"),
+    )))
 }
 
 /// The screen root the runner diffs.
 pub fn board_root(ui: &UiState) -> UiChild {
     let mut layers: Vec<UiChild> = ground_tiles(ui);
     layers.extend(prop_tiles(ui));
+    if let Some(id) = ui.selected_token {
+        layers.extend(marker_el(ui, id, "marker marker-select"));
+    }
+    if let Some(active) = ui.turns.active() {
+        layers.extend(marker_el(ui, active, "marker marker-turn"));
+    }
     layers.extend(ui.map.tokens.iter().map(|t| token_el(ui, t)));
     let (camx, camy) = ui.camera;
     Box::new(

@@ -309,6 +309,19 @@ impl App {
         let Some(runner) = self.runner.as_mut() else {
             return;
         };
+        match &event.logical_key {
+            WinitKey::Character(c) if c.as_str() == "r" && !self.modifiers.control_key() => {
+                runner.update(|ui| ui.rotate_selected());
+                self.after_dispatch();
+                return;
+            }
+            WinitKey::Named(WinitNamedKey::Enter) => {
+                runner.update(|ui| ui.end_turn());
+                self.after_dispatch();
+                return;
+            }
+            _ => {}
+        }
         if self.modifiers.control_key() {
             match &event.logical_key {
                 WinitKey::Character(c) if c.as_str() == "z" => {
@@ -374,8 +387,14 @@ impl ApplicationHandler for App {
             demo_map()
         };
         let mut ui = UiState::new(map);
-        // Start with the board roughly centered in the pane.
+        // Start with the board roughly centered in the pane, and every
+        // token in the turn order (a skirmish ready to play; drop
+        // tokens out via the panel for free movement).
         ui.camera = (420.0, 140.0);
+        let ids: Vec<_> = ui.map.tokens.iter().map(|t| t.id).collect();
+        for id in ids {
+            ui.turns.add(id);
+        }
         let dom = Rc::new(RefCell::new(ScriptedDom::new()));
         let runner = Runner::new(dom, board_root as fn(&UiState) -> UiChild, ui);
         self.window = Some(window);
@@ -409,6 +428,16 @@ impl ApplicationHandler for App {
                     (position.y / scale) as f32,
                 );
                 self.hover();
+                // Play-mode path preview: rebuild only when the hovered
+                // tile changed and a reach highlight is showing.
+                if let Some(runner) = self.runner.as_mut() {
+                    if let Some(t) = runner.state().hover_needs_update(self.cursor) {
+                        runner.update(|ui| ui.hover_tile = t);
+                        if let Some(window) = self.window.as_ref() {
+                            window.request_redraw();
+                        }
+                    }
+                }
                 // Drag painting: while the button is held in a paint
                 // mode, entering a tile applies the brush there. The
                 // panel strip is excluded so a drag can never spam its

@@ -10,8 +10,12 @@ mod event;
 mod grid;
 mod iso;
 mod map;
+mod path;
+mod turn;
 
 pub use event::{EventError, SessionEvent, apply};
 pub use grid::TileGrid;
 pub use iso::{IsoGeometry, ScreenPoint, TileCoord, depth_key};
 pub use map::{Facing, Layer, MapDocument, TileKindId, Token, TokenId};
+pub use path::{path_to, reachable, MoveRules};
+pub use turn::TurnList;
