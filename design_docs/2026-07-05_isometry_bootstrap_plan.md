@@ -1,10 +1,11 @@
 # Isometry bootstrap plan
 
 **Date:** 2026-07-05
-**Status:** active plan. I0 landed 2026-07-05. I1 largely landed the same
-day (host renders the demo board, P2/P3 receipts below); I1 residue: the
-P1 engine fix (pixelated sampling), a 30x30x3 synthetic P2 run, and
-release-build numbers.
+**Status:** active plan. I0 + I1 landed 2026-07-05/06 (all three probes
+verified, receipts in Findings). I2 landed 2026-07-06 (editor, undo,
+save/load, pixel-sprite tokens); I2 residue: a "new empty map" entry
+point (the app always opens the demo board today). I3 (tokens and local
+play) is next.
 **Thesis:** a pixel-art isometric P2P VTT is buildable on the Strophos
 stack with the woodshed consumer pattern, and the GBA tactics aesthetic
 (fixed camera, battle-scale maps) keeps every known engine risk inside
@@ -185,6 +186,17 @@ system is created, bound to a token, and drives its rolls in a session.
 
 ## Findings
 
+- 2026-07-06 (probe P2 closed, release + synthetic receipts, 1100x720):
+  release demo board (24x24, ~650 elements): first frame 13.7ms scene +
+  19.1ms raster, snap-pan frames ~4.3ms scene + ~1.3ms raster. Release
+  synthetic (`ISOMETRY_SYNTH=1`, 30x30 all-layers + 20 tokens, ~2,700
+  elements): first frame 27.6ms + 6.2ms, pan ~16ms + ~3.7ms. Debug
+  synthetic pan ~166ms scene (debug is roughly 10x release on this
+  path). Settled frames remain zero-cost (event-driven). Verdict:
+  battle-scale boards are comfortably real-time in release at the
+  DOM-per-tile design, pan included, before any of the listed
+  optimizations (viewport windowing, retained emission, camera-offset
+  composite).
 - 2026-07-06 (P1 fix landed, both repos): serval-layout paint emission
   now reads computed `image-rendering` (commit in serval,
   `paint_emit.rs`); netrender carries a `nearest` flag on
@@ -293,6 +305,11 @@ system is created, bound to a token, and drives its rolls in a session.
   (Select/Paint/Prop/Fill/Raise/Lower), tile-kind palette bound to the
   tileset classes, undo/redo/save/load, drag painting with per-tile
   dedupe, Ctrl+Z / Ctrl+Y; `ISOMETRY_SYNTH=1` stress board;
-  `ISOMETRY_CAPTURE_DIR` self-capture. I2 residue: load-flow receipt
-  and an authored-from-empty save/reload identity receipt; release
-  numbers still owed from I1.
+  `ISOMETRY_CAPTURE_DIR` self-capture. Scripted-drive receipts: paint,
+  raise, undo, save, and load all applied, and the painted stroke
+  survived the save/load round-trip on screen. Release + synthetic P2
+  numbers landed (see Findings), closing I1's residue. Serval-side,
+  this phase surfaced and fixed two engine gaps (pixelated sampling,
+  retained bg-image decode) and documented two more for later (absolute
+  inset sizing; paint/hit divergence on clipped overflow). Remaining
+  I2 residue: a "new empty map" entry point.
