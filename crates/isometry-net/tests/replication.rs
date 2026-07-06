@@ -3,7 +3,7 @@
 //! (mid-session join, no divergence: state and log hashes match) without
 //! two machines.
 
-use isometry_core::{Facing, MapDocument, SessionEvent, TileKindId, Token, TokenId, TurnList};
+use isometry_core::{Facing, MapDocument, SessionEvent, Token, TokenId, TurnList};
 use isometry_net::{GameEvent, GameSnapshot, HostSession, PeerId};
 use isometry_net::sim::Sim;
 
