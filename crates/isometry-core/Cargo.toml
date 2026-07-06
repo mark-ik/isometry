@@ -1,0 +1,14 @@
+[package]
+name = "isometry-core"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Isometry's pure substrate model: tile grids, isometric projection math, map documents, session events. No UI, no I/O, no network."
+
+[dependencies]
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
