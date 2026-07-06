@@ -17,6 +17,33 @@ const MOVE_BUDGET: u32 = 5;
 /// senses. Configurable via [`UiState::sight_radius`].
 const SIGHT_RADIUS: u32 = 6;
 
+/// How initiative builds the turn order (a system choice over the same
+/// turn list; `advance` just walks whatever order results).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InitiativeMode {
+    /// Each token rolls its own d20; the order sorts high to low.
+    Individual,
+    /// Each side rolls one d20; sides are ordered high to low and their
+    /// tokens grouped, so a whole side acts before the next.
+    SideBased,
+}
+
+impl InitiativeMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            InitiativeMode::Individual => "individual",
+            InitiativeMode::SideBased => "side",
+        }
+    }
+
+    pub fn toggled(self) -> Self {
+        match self {
+            InitiativeMode::Individual => InitiativeMode::SideBased,
+            InitiativeMode::SideBased => InitiativeMode::Individual,
+        }
+    }
+}
+
 /// How a tile presents under fog of war for the current viewer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FogLevel {
@@ -138,6 +165,8 @@ pub struct UiState {
     /// Dice generator. Seeded deterministically; the host reseeds with
     /// real entropy at startup.
     rng: Rng,
+    /// How "roll initiative" orders the turn list.
+    pub initiative_mode: InitiativeMode,
     /// Sprite the Token mode places.
     pub token_sprite: String,
     /// Play state: the substrate turn order.
@@ -178,6 +207,99 @@ impl UiState {
             explored: HashSet::new(),
             roll_log: Vec::new(),
             rng: Rng::new(1),
+            initiative_mode: InitiativeMode::Individual,
+        }
+    }
+
+    /// A short display label for a token, e.g. "knight 1".
+    fn token_label(&self, id: TokenId) -> String {
+        match self.map.token(id) {
+            Some(t) => format!("{} {}", t.sprite, id.0),
+            None => format!("token {}", id.0),
+        }
+    }
+
+    /// Roll initiative and reorder the turn list. Individual mode rolls a
+    /// d20 per token and sorts high-to-low; side mode rolls a d20 per side
+    /// and groups them. The rolls go to the shared roll log; the new order
+    /// replicates (Remote) or applies locally.
+    pub fn roll_initiative(&mut self) {
+        let ids: Vec<TokenId> = if self.turns.is_empty() {
+            self.map.tokens.iter().map(|t| t.id).collect()
+        } else {
+            self.turns.entries().to_vec()
+        };
+        if ids.is_empty() {
+            self.status = "no tokens to order".to_owned();
+            return;
+        }
+        let mut records: Vec<RollRecord> = Vec::new();
+        let order: Vec<TokenId> = match self.initiative_mode {
+            InitiativeMode::Individual => {
+                let mut rolled: Vec<(i32, usize, TokenId)> = ids
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &id)| {
+                        let (total, dice) = roll("1d20", &mut self.rng).unwrap();
+                        records.push(RollRecord {
+                            by: self.token_label(id),
+                            expr: "init".to_owned(),
+                            dice,
+                            total,
+                        });
+                        (total, i, id)
+                    })
+                    .collect();
+                // High roll first; ties keep input order.
+                rolled.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+                rolled.into_iter().map(|(_, _, id)| id).collect()
+            }
+            InitiativeMode::SideBased => {
+                // Group tokens by owner, preserving order within a side.
+                let mut sides: Vec<(String, Vec<TokenId>)> = Vec::new();
+                for &id in &ids {
+                    let owner = self
+                        .map
+                        .token(id)
+                        .and_then(|t| t.owner.clone())
+                        .unwrap_or_else(|| "dm".to_owned());
+                    match sides.iter_mut().find(|(o, _)| *o == owner) {
+                        Some(s) => s.1.push(id),
+                        None => sides.push((owner, vec![id])),
+                    }
+                }
+                let mut rolled: Vec<(i32, usize, Vec<TokenId>)> = sides
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, (owner, toks))| {
+                        let (total, dice) = roll("1d20", &mut self.rng).unwrap();
+                        records.push(RollRecord {
+                            by: format!("side {owner}"),
+                            expr: "init".to_owned(),
+                            dice,
+                            total,
+                        });
+                        (total, i, toks)
+                    })
+                    .collect();
+                rolled.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+                rolled.into_iter().flat_map(|(_, _, toks)| toks).collect()
+            }
+        };
+        self.status = format!("rolled initiative ({})", self.initiative_mode.label());
+        if self.net_mode == NetMode::Remote {
+            for r in records {
+                self.net_outbox.push(GameEvent::Rolled(r));
+            }
+            self.net_outbox.push(GameEvent::TurnSetOrder(order));
+        } else {
+            self.roll_log.extend(records);
+            let overflow = self.roll_log.len().saturating_sub(ROLL_LOG_CAP);
+            if overflow > 0 {
+                self.roll_log.drain(0..overflow);
+            }
+            self.turns.set_order(order);
+            self.recompute_reach();
         }
     }
 
@@ -760,6 +882,38 @@ mod tests {
         ui.roll_dice("nonsense");
         assert_eq!(ui.roll_log.len(), 1);
         assert!(ui.status.starts_with("bad roll"));
+    }
+
+    #[test]
+    fn roll_initiative_individual_and_side() {
+        let mut ui = UiState::new(demo_map());
+        ui.reseed(5);
+        let ids: Vec<_> = ui.map.tokens.iter().map(|t| t.id).collect();
+        for id in &ids {
+            ui.turns.add(*id);
+        }
+        // Individual: one roll per token, order preserved as a set.
+        ui.roll_initiative();
+        assert_eq!(ui.turns.entries().len(), ids.len());
+        assert_eq!(ui.roll_log.len(), ids.len());
+        let mut sorted = ui.turns.entries().to_vec();
+        sorted.sort();
+        let mut expect = ids.clone();
+        expect.sort();
+        assert_eq!(sorted, expect, "same tokens, reordered");
+
+        // Side-based: tokens grouped by owner, so exactly one boundary
+        // between the two sides (A knights, B goblins).
+        ui.initiative_mode = InitiativeMode::SideBased;
+        ui.roll_initiative();
+        let owners: Vec<String> = ui
+            .turns
+            .entries()
+            .iter()
+            .map(|id| ui.map.token(*id).unwrap().owner.clone().unwrap())
+            .collect();
+        let boundaries = owners.windows(2).filter(|w| w[0] != w[1]).count();
+        assert_eq!(boundaries, 1, "two sides act in blocks");
     }
 
     #[test]

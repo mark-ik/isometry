@@ -35,6 +35,8 @@ pub enum GameEvent {
     TurnRemove(TokenId),
     /// Advance to the next turn.
     TurnAdvance,
+    /// Replace the whole turn order (initiative roll result).
+    TurnSetOrder(Vec<TokenId>),
     /// A resolved dice roll to append to the shared log.
     Rolled(RollRecord),
 }

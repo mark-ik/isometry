@@ -42,6 +42,13 @@ impl TurnList {
         }
     }
 
+    /// Replace the whole order (e.g. after rolling initiative) and start
+    /// the round at the top.
+    pub fn set_order(&mut self, entries: Vec<TokenId>) {
+        self.entries = entries;
+        self.active = 0;
+    }
+
     /// Remove `id`, keeping the active cursor on the same token when
     /// possible (the turn does not skip because someone left the list).
     pub fn remove(&mut self, id: TokenId) {
@@ -100,6 +107,18 @@ mod tests {
         t.remove(TokenId(3));
         assert_eq!(t.active(), None);
         t.advance(); // empty list: no panic
+    }
+
+    #[test]
+    fn set_order_replaces_and_resets_active() {
+        let mut t = TurnList::new();
+        for i in 1..=3 {
+            t.add(TokenId(i));
+        }
+        t.advance(); // active = index 1
+        t.set_order(vec![TokenId(9), TokenId(8), TokenId(7)]);
+        assert_eq!(t.entries(), &[TokenId(9), TokenId(8), TokenId(7)]);
+        assert_eq!(t.active(), Some(TokenId(9)));
     }
 
     #[test]

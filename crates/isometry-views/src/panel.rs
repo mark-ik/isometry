@@ -105,6 +105,30 @@ fn dice_button(label: &'static str, expr: &'static str) -> UiChild {
     ))
 }
 
+/// Initiative controls: a mode toggle (individual / side) and a roll.
+fn init_controls(ui: &UiState) -> UiChild {
+    Box::new(
+        el(
+            "div",
+            (
+                clickable(
+                    el("div", text(format!("init: {}", ui.initiative_mode.label())))
+                        .attr("class", "btn"),
+                    |ui: &mut UiState, _| {
+                        ui.initiative_mode = ui.initiative_mode.toggled();
+                        ui.status = format!("initiative: {}", ui.initiative_mode.label());
+                    },
+                ),
+                clickable(
+                    el("div", text("Roll init")).attr("class", "btn"),
+                    |ui: &mut UiState, _| ui.roll_initiative(),
+                ),
+            ),
+        )
+        .attr("class", "btn-row"),
+    )
+}
+
 fn action_button(label: &'static str, enabled: bool, act: fn(&mut UiState)) -> UiChild {
     let class = if enabled { "btn" } else { "btn btn-dim" };
     Box::new(clickable(
@@ -199,6 +223,7 @@ pub fn side_panel(ui: &UiState) -> UiChild {
             )
             .attr("class", "btn-row"),
         ),
+        init_controls(ui),
         Box::new(el("div", text("Dice")).attr("class", "side-heading")),
         Box::new(
             el(
