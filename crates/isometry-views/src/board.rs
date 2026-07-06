@@ -56,6 +56,7 @@ fn ground_tiles(ui: &UiState) -> Vec<UiChild> {
     } else {
         HashSet::new()
     };
+    let template: HashSet<TileCoord> = ui.template_preview();
     let mut out: Vec<UiChild> = Vec::new();
     for (col, row, kind) in map.ground.iter() {
         if kind.0 == 0 {
@@ -83,6 +84,9 @@ fn ground_tiles(ui: &UiState) -> Vec<UiChild> {
             } else if ui.reach.contains_key(&at) {
                 class.push_str(" tile-reach");
             }
+        }
+        if template.contains(&at) {
+            class.push_str(" tile-template");
         }
         out.push(tile_el(ui, at, elev, class));
         if fog == FogLevel::Dim {

@@ -3,11 +3,57 @@
 //! swatches take their color from the same `tile-<kind>` classes the
 //! board uses, so the palette can never drift from the tileset.
 
-use isometry_core::{TileKindId, TokenId};
+use isometry_core::{TemplateKind, TileKindId, TokenId};
 use xilem_serval::{clickable, el, text};
 
 use crate::board::UiChild;
 use crate::state::{EditMode, UiState};
+
+fn next_template_kind(k: TemplateKind) -> TemplateKind {
+    let i = TemplateKind::ALL.iter().position(|&x| x == k).unwrap_or(0);
+    TemplateKind::ALL[(i + 1) % TemplateKind::ALL.len()]
+}
+
+/// Measure controls: template shape toggle, size stepper, and the
+/// distance readout (from the clicked anchor to the hovered tile).
+fn measure_controls(ui: &UiState) -> UiChild {
+    let dist = match ui.measured_distance() {
+        Some(d) => format!("size {} · dist {d}", ui.template_size),
+        None => format!("size {} · dist -", ui.template_size),
+    };
+    Box::new(el(
+        "div",
+        (
+            el(
+                "div",
+                (
+                    clickable(
+                        el("div", text(format!("tpl: {}", ui.template_kind.label())))
+                            .attr("class", "btn"),
+                        |ui: &mut UiState, _| {
+                            ui.template_kind = next_template_kind(ui.template_kind);
+                        },
+                    ),
+                    clickable(
+                        el("div", text("-")).attr("class", "btn btn-mini"),
+                        |ui: &mut UiState, _| {
+                            ui.template_size = ui.template_size.saturating_sub(1).max(1);
+                        },
+                    ),
+                    clickable(
+                        el("div", text("+")).attr("class", "btn btn-mini"),
+                        |ui: &mut UiState, _| {
+                            ui.template_size = (ui.template_size + 1).min(12);
+                        },
+                    ),
+                ),
+            )
+            .attr("class", "btn-row"),
+            el("div", text(dist)).attr("class", "side-line"),
+        ),
+    )
+    .attr("class", "measure"))
+}
 
 const TOKEN_SPRITES: [&str; 2] = ["knight", "goblin"];
 
@@ -254,6 +300,8 @@ pub fn side_panel(ui: &UiState) -> UiChild {
             )
             .attr("class", "roll-log"),
         ),
+        Box::new(el("div", text("Measure")).attr("class", "side-heading")),
+        measure_controls(ui),
         Box::new(el("div", text(ui.status.clone())).attr("class", "side-status")),
         Box::new(
             el(

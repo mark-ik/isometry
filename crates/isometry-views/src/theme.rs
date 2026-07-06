@@ -129,6 +129,9 @@ pub fn board_css() -> String {
 .tile-reach.alt { background-color: #44669c; }
 .tile-path { background-color: #7fa3d8; }
 .tile-path.alt { background-color: #7fa3d8; }
+/* Area template preview (measure mode). */
+.tile-template { background-color: #d98a4a; }
+.tile-template.alt { background-color: #cf8040; }
 
 /* Fog of war: a dim shroud over explored-but-unseen tiles. Unexplored
    tiles are simply not drawn, so the dark pane behind the board shows. */

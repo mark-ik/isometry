@@ -1,8 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
 use isometry_core::{
-    apply, reachable, roll, visible_tiles, Facing, IsoGeometry, Layer, MapDocument, MoveRules,
-    Rng, RollRecord, SessionEvent, SightRules, TileCoord, TileKindId, Token, TokenId, TurnList,
+    apply, distance, reachable, roll, template_tiles, visible_tiles, Facing, IsoGeometry, Layer,
+    MapDocument, MoveRules, Rng, RollRecord, SessionEvent, SightRules, TemplateKind, TileCoord,
+    TileKindId, Token, TokenId, TurnList,
 };
 use isometry_net::{GameEvent, GameSnapshot, ROLL_LOG_CAP};
 
@@ -72,10 +73,12 @@ pub enum EditMode {
     Token,
     /// Hot-seat play: select a token, move within its reach.
     Play,
+    /// Measure distance and preview area templates from a clicked anchor.
+    Measure,
 }
 
 impl EditMode {
-    pub const ALL: [EditMode; 8] = [
+    pub const ALL: [EditMode; 9] = [
         EditMode::Select,
         EditMode::PaintGround,
         EditMode::PaintProp,
@@ -84,6 +87,7 @@ impl EditMode {
         EditMode::Lower,
         EditMode::Token,
         EditMode::Play,
+        EditMode::Measure,
     ];
 
     pub fn label(self) -> &'static str {
@@ -96,6 +100,7 @@ impl EditMode {
             EditMode::Lower => "Lower",
             EditMode::Token => "Token",
             EditMode::Play => "Play",
+            EditMode::Measure => "Measure",
         }
     }
 
@@ -167,6 +172,10 @@ pub struct UiState {
     rng: Rng,
     /// How "roll initiative" orders the turn list.
     pub initiative_mode: InitiativeMode,
+    /// Measure mode: the clicked anchor, the area shape, and its size.
+    pub measure_anchor: Option<TileCoord>,
+    pub template_kind: TemplateKind,
+    pub template_size: u32,
     /// Sprite the Token mode places.
     pub token_sprite: String,
     /// Play state: the substrate turn order.
@@ -208,6 +217,31 @@ impl UiState {
             roll_log: Vec::new(),
             rng: Rng::new(1),
             initiative_mode: InitiativeMode::Individual,
+            measure_anchor: None,
+            template_kind: TemplateKind::Burst,
+            template_size: 3,
+        }
+    }
+
+    /// The tiles the current area template covers, aimed at the hovered
+    /// tile from the anchor. Empty unless in Measure mode with an anchor.
+    pub fn template_preview(&self) -> std::collections::HashSet<TileCoord> {
+        if self.mode != EditMode::Measure {
+            return std::collections::HashSet::new();
+        }
+        let Some(anchor) = self.measure_anchor else {
+            return std::collections::HashSet::new();
+        };
+        let toward = self.hover_tile.unwrap_or(anchor);
+        template_tiles(&self.map, anchor, self.template_kind, self.template_size, toward)
+    }
+
+    /// The measured distance from the anchor to the hovered tile, if both
+    /// are set (Measure mode).
+    pub fn measured_distance(&self) -> Option<u32> {
+        match (self.measure_anchor, self.hover_tile) {
+            (Some(a), Some(h)) => Some(distance(a, h)),
+            _ => None,
         }
     }
 
@@ -470,8 +504,14 @@ impl UiState {
     /// state update.
     pub fn hover_needs_update(&self, cursor: (f32, f32)) -> Option<Option<TileCoord>> {
         let t = self.tile_at_cursor(cursor);
-        (t != self.hover_tile && self.mode == EditMode::Play && !self.reach.is_empty())
-            .then_some(t)
+        if t == self.hover_tile {
+            return None;
+        }
+        // Play mode redraws for the path preview; Measure mode for the
+        // template + distance readout once an anchor is set.
+        let play = self.mode == EditMode::Play && !self.reach.is_empty();
+        let measure = self.mode == EditMode::Measure && self.measure_anchor.is_some();
+        (play || measure).then_some(t)
     }
 
     /// Pan by whole tiles: one step is half a tile footprint on each
@@ -647,16 +687,23 @@ impl UiState {
 
     /// The editor entry point: a click (or paint-drag) on tile `at`.
     pub fn click_tile(&mut self, at: TileCoord) {
-        // Editing is offline (Local) work; in a session only Play and
-        // Select act on a click.
+        // Editing is offline (Local) work; in a session only Play,
+        // Select, and Measure act on a click (Measure is purely local).
         if self.net_mode == NetMode::Remote
-            && !matches!(self.mode, EditMode::Play | EditMode::Select)
+            && !matches!(
+                self.mode,
+                EditMode::Play | EditMode::Select | EditMode::Measure
+            )
         {
             return;
         }
         match self.mode {
             EditMode::Select => {
                 self.selected = Some(at);
+            }
+            EditMode::Measure => {
+                self.measure_anchor = Some(at);
+                self.status = format!("anchor ({}, {})", at.0, at.1);
             }
             EditMode::Token => {
                 if let Some(id) = self.token_at(at) {
