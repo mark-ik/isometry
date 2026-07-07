@@ -99,6 +99,27 @@ pub fn board_css() -> String {
    pre-translate by the width to land the reflection back in the box. */
 .token-flip { transform: translateX(24px) scaleX(-1); }
 
+/* Character-sheet overlay: a panel in the board pane. */
+.sheet {
+    position: absolute;
+    left: 16px;
+    top: 16px;
+    width: 240px;
+    padding: 12px;
+    background-color: #1b1e27;
+    border: 1px solid #3d4666;
+    color: #cfd3dd;
+    font-size: 13px;
+}
+.sheet-header { display: flex; margin-bottom: 8px; }
+.sheet-title { flex: 1; font-size: 16px; font-weight: bold; color: #e8ebf2; }
+.sheet-row { display: flex; margin-bottom: 3px; }
+.sheet-field { flex: 1; }
+.sheet-heading { color: #8b91a0; font-size: 11px; margin-top: 8px; margin-bottom: 4px; }
+.sheet-mods { display: flex; flex-wrap: wrap; }
+.sheet-mod { width: 76px; font-size: 12px; margin-bottom: 2px; }
+.sheet-actions { display: flex; flex-wrap: wrap; }
+
 .pane {
     position: relative;
     flex: 1;

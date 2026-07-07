@@ -46,6 +46,10 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Eve
             }
             Ok(())
         }
+        GameEvent::SheetSet { token, sheet } => {
+            state.map.set_sheet(*token, sheet.clone());
+            Ok(())
+        }
     }
 }
 

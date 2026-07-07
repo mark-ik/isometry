@@ -11,6 +11,7 @@ description = "Isometry's serval desktop host: winit window + netrender present 
 isometry-core = { workspace = true }
 isometry-views = { workspace = true }
 isometry-net = { workspace = true, features = ["iroh"] }
+isometry-system = { workspace = true }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time"] }
 xilem-serval = { workspace = true }
 layout-dom-api = { workspace = true }

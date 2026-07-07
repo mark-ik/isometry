@@ -1,4 +1,4 @@
-use isometry_core::{MapDocument, RollRecord, SessionEvent, TokenId, TurnList};
+use isometry_core::{MapDocument, RollRecord, SessionEvent, SheetData, TokenId, TurnList};
 use serde::{Deserialize, Serialize};
 
 /// A peer's identity within a session. For the iroh transport this wraps
@@ -39,6 +39,8 @@ pub enum GameEvent {
     TurnSetOrder(Vec<TokenId>),
     /// A resolved dice roll to append to the shared log.
     Rolled(RollRecord),
+    /// Bind or replace a token's character sheet.
+    SheetSet { token: TokenId, sheet: SheetData },
 }
 
 /// One message on the wire. The host is the authority: clients send

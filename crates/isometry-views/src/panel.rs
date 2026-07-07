@@ -317,6 +317,13 @@ pub fn side_panel(ui: &UiState) -> UiChild {
             .attr("class", "btn-row"),
         ),
         init_controls(ui),
+        Box::new(
+            el(
+                "div",
+                (action_button("Sheet", true, |ui| ui.open_or_bind_sheet()),),
+            )
+            .attr("class", "btn-row"),
+        ),
         Box::new(el("div", text("Dice")).attr("class", "side-heading")),
         Box::new(
             el(

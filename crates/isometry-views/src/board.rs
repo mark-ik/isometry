@@ -213,19 +213,21 @@ pub fn board_root(ui: &UiState) -> UiChild {
             .map(|t| token_el(ui, t)),
     );
     let (camx, camy) = ui.camera;
+    let mut pane_children: Vec<UiChild> = vec![Box::new(
+        el("div", layers).attr("class", "board").attr(
+            "style",
+            format!("left: {camx}px; top: {camy}px;"),
+        ),
+    )];
+    if let Some(overlay) = crate::sheet::sheet_overlay(ui) {
+        pane_children.push(overlay);
+    }
     Box::new(
         el(
             "div",
             (
                 side_panel(ui),
-                el(
-                    "div",
-                    el("div", layers).attr("class", "board").attr(
-                        "style",
-                        format!("left: {camx}px; top: {camy}px;"),
-                    ),
-                )
-                .attr("class", "pane"),
+                el("div", pane_children).attr("class", "pane"),
             ),
         )
         .attr("class", "app"),

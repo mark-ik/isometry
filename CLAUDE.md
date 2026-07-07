@@ -40,7 +40,8 @@ See `design_docs/PROJECT_DESCRIPTION.md` for the product description and
 - **campaign**: maps, tilesets, sheets, and system choice bundled as a
   distributable pack.
 - **system plugin**: a game system: character/item schemas plus scripted
-  rules (rhai). 5e SRD and Pathfinder 2e are the first-party candidates.
+  rules (Lua, via piccolo). 5e SRD and Pathfinder 2e are the first-party
+  candidates.
 - **session**: a hosted play instance: the DM's app is the authority,
   players replicate an ordered event log over p2p (iroh).
 

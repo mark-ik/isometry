@@ -23,9 +23,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use isometry_net::GameSnapshot;
+use isometry_core::FieldValue;
+use isometry_net::{GameEvent, GameSnapshot};
+use isometry_system::{srd_5e, System};
 use isometry_views::{
-    board_css, board_root, demo_map, synth_map, NetMode, UiChild, UiState, PANEL_W,
+    board_css, board_root, demo_map, synth_map, NetMode, SheetSchema, UiChild, UiState, PANEL_W,
 };
 
 mod net;
@@ -89,6 +91,11 @@ struct App {
     /// Session start instant, for the self-test delay.
     started: Option<Instant>,
     selftest_fired: bool,
+    /// The loaded game system (owns the Lua interpreter); character
+    /// sheets evaluate through it.
+    system: Option<System>,
+    /// Last open sheet, so derived stats recompute only on change.
+    last_sheet_open: Option<isometry_core::TokenId>,
 }
 
 /// Parsed session role from the command line.
@@ -338,6 +345,7 @@ impl App {
             window.request_redraw();
         }
         self.pump_net();
+        self.pump_sheets();
     }
 
     /// In networked mode: ship the UI's queued game events to the
@@ -398,6 +406,103 @@ impl App {
                     window.request_redraw();
                 }
             }
+        }
+    }
+
+    /// Drain the UI's sheet requests (bind / edit / action) and evaluate
+    /// them through the game system: bind a default sheet, apply a field
+    /// edit, or roll an action; then recompute the open sheet's derived
+    /// stats. Cheap-checks first so a normal frame does no work.
+    fn pump_sheets(&mut self) {
+        if self.system.is_none() {
+            return;
+        }
+        let (bind, edit, action, open) = match self.runner.as_ref() {
+            Some(r) => {
+                let s = r.state();
+                (
+                    s.bind_sheet_request,
+                    s.sheet_edit.clone(),
+                    s.sheet_action.clone(),
+                    s.open_sheet,
+                )
+            }
+            None => return,
+        };
+        let open_changed = open != self.last_sheet_open;
+        if bind.is_none() && edit.is_none() && action.is_none() && !open_changed {
+            return;
+        }
+        self.last_sheet_open = open;
+        let system = self.system.as_mut().expect("system present");
+        let Some(runner) = self.runner.as_mut() else {
+            return;
+        };
+
+        // Bind a fresh default sheet.
+        if let Some(tok) = bind {
+            let sheet = system.default_sheet();
+            runner.update(|ui| {
+                ui.bind_sheet_request = None;
+                ui.map.set_sheet(tok, sheet.clone());
+                if ui.net_mode == NetMode::Remote {
+                    ui.net_outbox
+                        .push(GameEvent::SheetSet { token: tok, sheet: sheet.clone() });
+                }
+            });
+        }
+
+        // Apply a field edit (clamped non-negative), then replicate.
+        if let Some((tok, key, delta)) = edit {
+            let mut updated = None;
+            runner.update(|ui| {
+                ui.sheet_edit = None;
+                if let Some(sheet) = ui.map.sheets.get_mut(&tok) {
+                    let cur = sheet.int(&key).unwrap_or(0);
+                    sheet.set_int(&key, (cur + delta).max(0));
+                    updated = Some(sheet.clone());
+                }
+            });
+            if let Some(sheet) = updated {
+                runner.update(|ui| {
+                    if ui.net_mode == NetMode::Remote {
+                        ui.net_outbox
+                            .push(GameEvent::SheetSet { token: tok, sheet });
+                    }
+                });
+            }
+        }
+
+        // Roll an action: evaluate its dice expression against the sheet.
+        if let Some((tok, key)) = action {
+            let sheet = runner.state().map.sheet(tok).cloned();
+            if let Some(sheet) = sheet {
+                if let Some(expr) = system.action_expr(&key, &sheet) {
+                    let by = sheet.text("name").unwrap_or("?").to_owned();
+                    let label = system
+                        .actions
+                        .iter()
+                        .find(|a| a.key == key)
+                        .map(|a| a.label.clone())
+                        .unwrap_or(key);
+                    runner.update(|ui| {
+                        ui.sheet_action = None;
+                        ui.roll_labeled(&by, &label, &expr);
+                    });
+                }
+            }
+        }
+
+        // Recompute derived stats for the open sheet.
+        if let Some(tok) = open {
+            let sheet = runner.state().map.sheet(tok).cloned();
+            if let Some(sheet) = sheet {
+                let derived = system.derived(&sheet);
+                runner.update(|ui| ui.sheet_derived = derived);
+            }
+        }
+        if let Some(window) = self.window.as_ref() {
+            window.request_redraw();
         }
     }
 
@@ -600,6 +705,12 @@ impl ApplicationHandler for App {
             .unwrap_or(1);
         ui.reseed(seed);
 
+        // Load the game system (5e SRD) and hand the view its schema so it
+        // can render sheets without knowing any rules.
+        let system = srd_5e();
+        ui.sheet_schema = schema_of(&system);
+        self.system = Some(system);
+
         let dom = Rc::new(RefCell::new(ScriptedDom::new()));
         let runner = Runner::new(dom, board_root as fn(&UiState) -> UiChild, ui);
         self.window = Some(window);
@@ -613,6 +724,7 @@ impl ApplicationHandler for App {
         if self.net.is_some() {
             self.maybe_selftest();
             self.pump_net();
+            self.pump_sheets();
             event_loop
                 .set_control_flow(ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(100)));
         }
@@ -712,6 +824,34 @@ fn parse_net_intent() -> Option<NetIntent> {
     }
 }
 
+/// The view-facing schema (plain labels) for a loaded system, so the
+/// board renders a sheet without depending on isometry-system.
+fn schema_of(system: &System) -> SheetSchema {
+    SheetSchema {
+        fields: system
+            .fields
+            .iter()
+            .map(|f| {
+                (
+                    f.key.clone(),
+                    f.label.clone(),
+                    matches!(f.default, FieldValue::Int(_)),
+                )
+            })
+            .collect(),
+        derived: system
+            .derived
+            .iter()
+            .map(|d| (d.key.clone(), d.label.clone()))
+            .collect(),
+        actions: system
+            .actions
+            .iter()
+            .map(|a| (a.key.clone(), a.label.clone()))
+            .collect(),
+    }
+}
+
 /// Parse `--as <player>` from the command line.
 fn parse_viewer() -> Option<String> {
     let args: Vec<String> = std::env::args().collect();
@@ -746,6 +886,8 @@ fn main() {
         net_selftest: std::env::var_os("ISOMETRY_NET_SELFTEST").is_some(),
         started: None,
         selftest_fired: false,
+        system: None,
+        last_sheet_open: None,
     };
     event_loop.run_app(&mut app).expect("run app");
 }

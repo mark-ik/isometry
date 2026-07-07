@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use isometry_core::{
     apply, distance, reachable, roll, template_tiles, visible_tiles, Facing, IsoGeometry, Layer,
@@ -17,6 +17,19 @@ const MOVE_BUDGET: u32 = 5;
 /// Default token sight radius until system plugins supply per-token
 /// senses. Configurable via [`UiState::sight_radius`].
 const SIGHT_RADIUS: u32 = 6;
+
+/// The system's sheet schema as plain data, so the view renders a sheet
+/// without knowing any rules. The host (which owns the system plugin)
+/// fills this in; the view stays system-agnostic.
+#[derive(Clone, Debug, Default)]
+pub struct SheetSchema {
+    /// Editable fields: `(key, label, is_int)`.
+    pub fields: Vec<(String, String, bool)>,
+    /// Derived display stats: `(key, label)`.
+    pub derived: Vec<(String, String)>,
+    /// Rollable actions: `(key, label)`.
+    pub actions: Vec<(String, String)>,
+}
 
 /// How initiative builds the turn order (a system choice over the same
 /// turn list; `advance` just walks whatever order results).
@@ -189,6 +202,15 @@ pub struct UiState {
     /// Connected player names the DM can whisper to (set by the host
     /// bridge). Empty solo.
     pub connected_players: Vec<String>,
+    /// Character sheets: the schema (host-supplied), which token's sheet
+    /// is open, its precomputed derived stats (host-supplied), and the
+    /// one-shot requests the host drains to bind/edit/roll.
+    pub sheet_schema: SheetSchema,
+    pub open_sheet: Option<TokenId>,
+    pub sheet_derived: BTreeMap<String, i64>,
+    pub bind_sheet_request: Option<TokenId>,
+    pub sheet_edit: Option<(TokenId, String, i64)>,
+    pub sheet_action: Option<(TokenId, String)>,
     /// Sprite the Token mode places.
     pub token_sprite: String,
     /// Play state: the substrate turn order.
@@ -239,6 +261,69 @@ impl UiState {
             whisper_target: None,
             whisper_outbox: Vec::new(),
             connected_players: Vec::new(),
+            sheet_schema: SheetSchema::default(),
+            open_sheet: None,
+            sheet_derived: BTreeMap::new(),
+            bind_sheet_request: None,
+            sheet_edit: None,
+            sheet_action: None,
+        }
+    }
+
+    /// Open the selected token's sheet, requesting the host bind a fresh
+    /// one first if it has none.
+    pub fn open_or_bind_sheet(&mut self) {
+        let Some(id) = self.selected_token.or_else(|| self.turns.active()) else {
+            self.status = "select a token first".to_owned();
+            return;
+        };
+        if self.map.sheet(id).is_none() {
+            self.bind_sheet_request = Some(id);
+        }
+        self.open_sheet = Some(id);
+    }
+
+    pub fn close_sheet(&mut self) {
+        self.open_sheet = None;
+    }
+
+    /// Queue a field edit (a stepper on the open sheet); the host applies
+    /// and replicates it.
+    pub fn request_sheet_edit(&mut self, key: &str, delta: i64) {
+        if let Some(id) = self.open_sheet {
+            self.sheet_edit = Some((id, key.to_owned(), delta));
+        }
+    }
+
+    /// Queue an action roll; the host evaluates it against the system.
+    pub fn request_action(&mut self, key: &str) {
+        if let Some(id) = self.open_sheet {
+            self.sheet_action = Some((id, key.to_owned()));
+        }
+    }
+
+    /// Roll `expr`, logging it under `by` with `label` (the shared-log
+    /// path the host uses for a system action; solo appends locally).
+    pub fn roll_labeled(&mut self, by: &str, label: &str, expr: &str) {
+        let Some((total, dice)) = roll(expr, &mut self.rng) else {
+            self.status = format!("bad roll: {expr}");
+            return;
+        };
+        let record = RollRecord {
+            by: by.to_owned(),
+            expr: label.to_owned(),
+            dice,
+            total,
+        };
+        self.status = format!("{by} {label} = {total}");
+        if self.net_mode == NetMode::Remote {
+            self.net_outbox.push(GameEvent::Rolled(record));
+        } else {
+            self.roll_log.push(record);
+            let overflow = self.roll_log.len().saturating_sub(ROLL_LOG_CAP);
+            if overflow > 0 {
+                self.roll_log.drain(0..overflow);
+            }
         }
     }
 
@@ -441,26 +526,8 @@ impl UiState {
     /// snapshot; solo it appends to the local log. Bad expressions set a
     /// status and do nothing.
     pub fn roll_dice(&mut self, expr: &str) {
-        let Some((total, dice)) = roll(expr, &mut self.rng) else {
-            self.status = format!("bad roll: {expr}");
-            return;
-        };
-        let record = RollRecord {
-            by: self.roller_name(),
-            expr: expr.to_owned(),
-            dice,
-            total,
-        };
-        self.status = format!("{} rolled {} = {}", record.by, record.expr, record.total);
-        if self.net_mode == NetMode::Remote {
-            self.net_outbox.push(GameEvent::Rolled(record));
-        } else {
-            self.roll_log.push(record);
-            let overflow = self.roll_log.len().saturating_sub(ROLL_LOG_CAP);
-            if overflow > 0 {
-                self.roll_log.drain(0..overflow);
-            }
-        }
+        let by = self.roller_name();
+        self.roll_labeled(&by, expr, expr);
     }
 
     /// Whether fog of war is being applied (a viewer is set).

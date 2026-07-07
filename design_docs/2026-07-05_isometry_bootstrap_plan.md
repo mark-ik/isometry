@@ -1,16 +1,21 @@
 # Isometry bootstrap plan
 
 **Date:** 2026-07-05
-**Status:** active plan. I0-I5 landed 2026-07-05/06 (probes verified,
+**Status:** active plan. I0-I6 landed 2026-07-05/07 (probes verified,
 receipts in Findings). I4 = DM-authority sessions over iroh (replication
 core, real-QUIC loopback, windowed `--host`/`--join`, per-player fog).
 I5 = table furniture: dice roller, initiative modes, measurement + area
 templates, GM whispers (four committed pieces; receipts in
 scry-shots/2026-07-06_isometry_{dice,init,measure,whisper}_*.png).
+I6 = system plugins: schema-driven character sheets plus Lua (piccolo)
+rules, 5e SRD first; the substrate/system split proven end to end
+(receipts in
+scry-shots/2026-07-07_isometry_{sheet_open,attack_rng,str14_attack}.png).
 Residue: a "new empty map" entry point; drag-to-reorder on the turn
 list; serval `.side` wheel-scroll (taller window meanwhile);
-cross-machine run (unavailable here). I6 (system plugins: schema + rhai)
-is next and the phase that makes a full encounter run end to end.
+cross-machine run (unavailable here). The bootstrap arc is complete;
+isometry-web (browser player client) and campaign packs are the next
+horizons, each their own plan.
 **Thesis:** a pixel-art isometric P2P VTT is buildable on the Strophos
 stack with the woodshed consumer pattern, and the GBA tactics aesthetic
 (fixed camera, battle-scale maps) keeps every known engine risk inside
@@ -54,8 +59,8 @@ session.
    two. Battle-scale maps (15x15 to 30x30) are the design center.
 6. **Substrate/system split.** Substrate: tiles, tokens, turn list,
    facing, elevation, area templates, fog, dice mechanics as rollers.
-   System plugin: schemas for characters and items plus rhai scripts for
-   derived stats and roll formulas. Whether elevation grants a bonus is
+   System plugin: schemas for characters and items plus Lua scripts
+   (piccolo) for derived stats and roll formulas. Whether elevation grants a bonus is
    the plugin's business; that it exists and renders is the substrate's.
 7. **Licensing lane.** 5e SRD is CC-BY-4.0, Pathfinder 2e is ORC; both
    are shippable as first-party system plugins with attribution. No
@@ -184,12 +189,28 @@ log). The mechanical furniture for a 5e encounter is present; the rules
 that consume it (HP, AC, hit resolution) are system-plugin work in I6, so
 "end to end" completes when a system lands.
 
-### I6: system plugins
+### I6: system plugins (landed 2026-07-07)
 
-Schema plus rhai plugin architecture; one system first (pick 5e SRD or
-PF2e at phase start, not now). Character sheets render from schema;
-rolls use plugin formulas. **Done when** a character sheet for the chosen
-system is created, bound to a token, and drives its rolls in a session.
+Schema plus Lua (piccolo) plugin architecture; one system first (5e SRD
+chosen). Character sheets render from schema; rolls use plugin formulas.
+**Done when** a character sheet for the chosen system is created, bound to
+a token, and drives its rolls in a session. Landed as a new
+`isometry-system` crate holding the plugin lane: a `System` bundles
+field/derived/action schemas with a sandboxed `piccolo::Lua`
+(`Lua::core()`, no io/os); the 5e SRD system is data plus a Lua script
+(`ab_mod`, `m_str`..`m_cha`, `a_attack`). Core stays rules-free:
+`SheetData` (a system-tagged `FieldValue` map) lives in `isometry-core`,
+binds to tokens on the `MapDocument`, and replicates as
+`GameEvent::SheetSet`. Views render a system-agnostic sheet overlay from a
+plain `SheetSchema` plus host-precomputed derived stats; the host
+(`pump_sheets`) owns the Lua and keeps it off the render path (derived
+recompute on edit, action formulas evaluated on click, all via
+`runner.update`). Receipts: a 5e sheet bound to a token shows Lua-derived
+modifiers and rolls its Attack action
+(`scry-shots/2026-07-07_isometry_sheet_open.png`); rolls vary over five
+clicks (`_attack_rng.png`); bumping STR 10->14 via the stepper re-derives
+`STR mod +0 -> +2` and shifts Attack from 1d20+2 to 1d20+4
+(`_str14_attack.png`) -- the full edit -> Lua re-derive -> action loop.
 
 ## Design space on file (alternatives and open questions)
 
@@ -223,6 +244,24 @@ system is created, bound to a token, and drives its rolls in a session.
 
 ## Findings
 
+- 2026-07-07 (I6 system plugins): the substrate/system split holds under a
+  real scripting engine. Rules live in a new `isometry-system` crate; the
+  core learns only `SheetData` (a system-tagged `FieldValue` map on the
+  `MapDocument`, replicated as `GameEvent::SheetSet`) and never what a
+  modifier means. piccolo (pure-Rust Lua, `Lua::core()` sandbox: no io/os)
+  fits the woodshed posture: no C toolchain, no runtime deps. Two engine
+  facts worth recording: (1) piccolo's `//` truncates toward zero rather
+  than flooring (Lua 5.4 floors), so `ab_mod` normalizes the remainder by
+  hand to stay correct for negative modifiers; (2) the `try_enter` closure
+  is higher-ranked (`for<'gc>`), so no method-lifetime borrow may cross
+  into it: the Rust->Lua boundary copies the sheet into an owned `Vec` and
+  interns every key as a `'gc` Lua string before `table.set`. The layering
+  earned its keep: views stay rules-blind, rendering the sheet overlay from
+  a plain `SheetSchema` plus host-precomputed derived stats, while the host
+  (`pump_sheets`) owns the `Lua` and evaluates off the render path (derived
+  on edit, actions on click, via `runner.update`). The int-only Rust<->Lua
+  boundary (build a table, call a global, read an `i64`) keeps the seam
+  small.
 - 2026-07-06 (I5 shape): the table furniture reused the seams the earlier
   phases established. Randomness is data, not shared state: the roller
   resolves a roll with its own Rng and the RESULT crosses the wire (a
@@ -396,6 +435,21 @@ system is created, bound to a token, and drives its rolls in a session.
 
 ## Progress
 
+- 2026-07-07 (I6): system plugins landed. New `isometry-system` crate
+  (`System` = field/derived/action schemas + a sandboxed `piccolo::Lua`;
+  `srd_5e()` builds the 5e SRD system as data plus a Lua script). Core:
+  `SheetData`/`FieldValue` + `MapDocument` sheet binding (1 test). Net:
+  `GameEvent::SheetSet` replication. Views: system-agnostic sheet overlay
+  (fields with steppers, Lua-derived modifiers, action buttons),
+  `open_or_bind_sheet` / `request_sheet_edit` / `request_action`,
+  `roll_labeled`. Serval: host loads `srd_5e()`, hands views a
+  `SheetSchema`, and `pump_sheets` binds/edits/rolls and recomputes derived
+  via Lua off the render path; dice reseeded with clock entropy. +3 system,
+  +1 core tests. Receipts in
+  scry-shots/2026-07-07_isometry_{sheet_open,attack_rng,str_mid,str14_attack}.png:
+  a 5e sheet bound to knight 1 rolls Attack (1d20+2), rolls vary over five
+  clicks, and STR 10->14 re-derives STR mod +0->+2 and shifts Attack to
+  1d20+4.
 - 2026-07-06 (I5): table furniture landed as four committed pieces.
   Dice (core `dice`: Rng + roller; net `Rolled` + shared roll log;
   panel dice buttons + log). Initiative (`TurnList::set_order`,
