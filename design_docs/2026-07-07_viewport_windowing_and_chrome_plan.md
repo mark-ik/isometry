@@ -5,8 +5,9 @@
 next-horizons landscape ([2026-07-07_next_horizons_landscape.md](2026-07-07_next_horizons_landscape.md),
 sequence items 1 and 2). All phases are app-side with no serval or external
 dependency, and reuse capabilities the engine already ships. Done-conditions,
-not time estimates. **W1 (viewport windowing) landed 2026-07-07** (see
-Progress); W2-W4 (wheel scroll, pointer drag, overlay chrome) remain.
+not time estimates. **W1 (viewport windowing) and W2 (board wheel-pan) landed
+2026-07-07**; W3-W4 (pointer drag, overlay chrome) remain. W2's panel-scroll
+half is deferred (see Phase W2).
 
 ## Why this lane first
 
@@ -49,14 +50,20 @@ in `main.rs` has arms for CursorMoved/MouseInput/KeyboardInput/Resized but
 no MouseWheel arm, so the `.side` panel cannot wheel-scroll (the I5 fix was
 a taller 820 window as a workaround).
 
-- Add a `MouseWheel` arm that routes the delta to `scroll_at` on the hovered
-  scroll container.
-- Once scrolling works, revert the height-bump workaround if it is no longer
-  load-bearing (or keep it and note why).
+**Landed 2026-07-07 as board wheel-pan; panel-scroll deferred.** A
+`MouseWheel` arm now routes by region. Over the board pane it snap-pans the
+board (`pan_tiles`, the tactics-canvas wheel-is-pan convention); the region
+gate keeps it from document-scrolling the chrome. Verified before/after
+(testing/isometry/images/2026-07-07_isometry_w2_board_pan.png): the board
+pans, the panel stays put.
 
-**Done when:** the side panel scrolls with the mouse wheel over any content
-height; the taller-window workaround is reverted or explicitly retained with
-a reason.
+Panel-scroll was the original intent, but `scroll_at` over a near-full panel
+chains through `.side` into the whole-document viewport (dragging the board),
+and serval has no `overscroll-behavior` to contain it (only a WPT
+expectations entry). Since the panel fits the retained 820 window, panel-wheel
+is left inert rather than shipping that jank. **Deferred:** true panel-scroll
+for short windows, blocked on serval scroll-isolation (`overscroll-behavior:
+contain` or an equivalent container fix).
 
 ## Phase W3: pointer-drag interactions
 

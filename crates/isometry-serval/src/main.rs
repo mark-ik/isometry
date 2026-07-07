@@ -41,13 +41,20 @@ use serval_layout::{
 use serval_scripted_dom::{NodeId, ScriptedDom};
 use serval_winit_host::SurfaceHost;
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, KeyEvent as WinitKeyEvent, MouseButton, WindowEvent};
+use winit::event::{
+    ElementState, KeyEvent as WinitKeyEvent, MouseButton, MouseScrollDelta, WindowEvent,
+};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey as WinitNamedKey};
 use winit::window::{Window, WindowId};
 use xilem_serval::{PointerClick, Propagation, ServalAppRunner};
 
 type Runner = ServalAppRunner<UiState, fn(&UiState) -> UiChild, UiChild>;
+
+/// Logical px per wheel notch, used to normalize trackpad pixel deltas.
+const WHEEL_NOTCH_PX: f32 = 48.0;
+/// Board pan in diagonal tile steps per wheel notch (over the board pane).
+const WHEEL_BOARD_TILES: f32 = 2.0;
 
 struct App {
     window: Option<Arc<Window>>,
@@ -221,6 +228,23 @@ impl App {
                 t_scene.as_secs_f64() * 1000.0,
                 t1.elapsed().as_secs_f64() * 1000.0,
             );
+        }
+    }
+
+    /// A wheel notch over the board pane snap-pans the board (wheel = pan,
+    /// the tactics-canvas convention). Over the side panel it is inert: the
+    /// panel fits the default window, and serval has no `overscroll-behavior`
+    /// to keep a near-full panel's scroll from chaining into the whole-
+    /// document viewport (which would drag the board), so true panel-scroll
+    /// for short windows is a follow-on. `nx`/`ny` are wheel notches.
+    fn wheel(&mut self, nx: f32, ny: f32) {
+        if self.cursor.0 <= PANEL_W {
+            return;
+        }
+        if let Some(runner) = self.runner.as_mut() {
+            runner.update(|ui| {
+                ui.pan_tiles(-nx * WHEEL_BOARD_TILES, -ny * WHEEL_BOARD_TILES)
+            });
         }
     }
 
@@ -766,6 +790,24 @@ impl ApplicationHandler for App {
             }
             WindowEvent::ModifiersChanged(mods) => {
                 self.modifiers = mods.state();
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let (nx, ny) = match delta {
+                    MouseScrollDelta::LineDelta(x, y) => (x, y),
+                    // Trackpad pixel deltas: approximate notches off the same
+                    // per-notch px the panel scrolls by.
+                    MouseScrollDelta::PixelDelta(p) => {
+                        let s = self.scale_factor() as f32;
+                        (
+                            p.x as f32 / s / WHEEL_NOTCH_PX,
+                            p.y as f32 / s / WHEEL_NOTCH_PX,
+                        )
+                    }
+                };
+                self.wheel(nx, ny);
+                if let Some(window) = self.window.as_ref() {
+                    window.request_redraw();
+                }
             }
             WindowEvent::CursorMoved { position, .. } => {
                 let scale = self.scale_factor();
