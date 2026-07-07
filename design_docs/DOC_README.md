@@ -23,6 +23,7 @@ any other index and is updated in the same session as any doc change.
 | [2026-07-07_next_horizons_landscape.md](2026-07-07_next_horizons_landscape.md) | Post-bootstrap landscape: six lanes (Lua docs, map scales/traversal, isometry-web, rulesets/licensing, generators/commands, serval GUI), recommended sequence, open forks |
 | [2026-07-07_viewport_windowing_and_chrome_plan.md](2026-07-07_viewport_windowing_and_chrome_plan.md) | Active plan: viewport windowing (raise the ~30-40 board ceiling) + cheap GUI bundle (wheel scroll, drag, overlays) |
 | [2026-07-07_optional_intelligence_vision.md](2026-07-07_optional_intelligence_vision.md) | Vision (post-keystone): optional DM-loaded models/agents; the DM-in-the-loop dialog system, conversation economy, inference architecture, and the dynamic-content opportunity catalog |
+| [2026-07-07_board_to_text_narration_plan.md](2026-07-07_board_to_text_narration_plan.md) | Active plan: deterministic board-to-text serializer (`narrate` module); N1 scene + N2 viewer-relative/fog-aware landed, N3 model fluency deferred |
 
 ## Archive
 
