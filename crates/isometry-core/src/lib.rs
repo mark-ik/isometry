@@ -12,11 +12,13 @@ mod grid;
 mod iso;
 mod map;
 mod path;
+mod sheet;
 mod template;
 mod turn;
 mod visibility;
 
 pub use dice::{roll, Rng, RollRecord};
+pub use sheet::{FieldValue, SheetData};
 pub use template::{distance, template_tiles, TemplateKind};
 pub use event::{EventError, SessionEvent, apply};
 pub use grid::TileGrid;

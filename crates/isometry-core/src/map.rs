@@ -1,7 +1,10 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::grid::TileGrid;
 use crate::iso::TileCoord;
+use crate::sheet::SheetData;
 
 /// Index into the map's tileset vocabulary (`MapDocument::tile_kinds`).
 /// Kind 0 is always "empty" by convention.
@@ -60,6 +63,10 @@ pub struct MapDocument {
     /// Height units per tile; renders via `IsoGeometry::elev_step`.
     pub elevation: TileGrid<u8>,
     pub tokens: Vec<Token>,
+    /// Character sheets bound to tokens (system-agnostic data; a system
+    /// plugin interprets them). `serde(default)` so older saves load.
+    #[serde(default)]
+    pub sheets: BTreeMap<TokenId, SheetData>,
 }
 
 impl MapDocument {
@@ -72,7 +79,16 @@ impl MapDocument {
             props: TileGrid::new(width, height, TileKindId(0)),
             elevation: TileGrid::new(width, height, 0),
             tokens: Vec::new(),
+            sheets: BTreeMap::new(),
         }
+    }
+
+    pub fn sheet(&self, id: TokenId) -> Option<&SheetData> {
+        self.sheets.get(&id)
+    }
+
+    pub fn set_sheet(&mut self, id: TokenId, sheet: SheetData) {
+        self.sheets.insert(id, sheet);
     }
 
     /// Register a tile kind, returning its id; existing names are reused.
