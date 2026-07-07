@@ -659,6 +659,40 @@ impl UiState {
         self.map.ground.in_bounds(at.0, at.1).then_some(at)
     }
 
+    /// The token a left-press at `cursor` would start dragging: a token
+    /// under the cursor while in Select mode (free-move; Play movement stays
+    /// the gated click-a-reach-tile path). `None` otherwise.
+    pub fn token_drag_candidate(&self, cursor: (f32, f32)) -> Option<TokenId> {
+        if self.mode != EditMode::Select {
+            return None;
+        }
+        let tile = self.tile_at_cursor(cursor)?;
+        self.map.tokens.iter().find(|t| t.at == tile).map(|t| t.id)
+    }
+
+    /// Free-move token `id` to `to` (the Select-mode drag release): emits a
+    /// `TokenMoved` (replicated in Remote, applied and undoable locally). A
+    /// no-op if `to` is out of bounds, unchanged, or already occupied.
+    pub fn drag_move_token(&mut self, id: TokenId, to: TileCoord) {
+        if !self.map.ground.in_bounds(to.0, to.1) {
+            return;
+        }
+        match self.map.token(id).map(|t| t.at) {
+            Some(cur) if cur == to => return,
+            None => return,
+            _ => {}
+        }
+        if self.map.tokens.iter().any(|t| t.id != id && t.at == to) {
+            return; // tile occupied
+        }
+        let ev = SessionEvent::TokenMoved { id, to };
+        if self.net_emit(GameEvent::Map(ev.clone())) {
+            return;
+        }
+        self.apply_step(vec![ev]);
+        self.recompute_reach();
+    }
+
     /// Whether the hovered tile changed in a way the board renders (the
     /// path preview): the host calls this read-only before paying for a
     /// state update.
@@ -1036,6 +1070,50 @@ mod tests {
         // The move is undoable (one step: move + facing).
         ui.select_token(TokenId(1));
         assert!(!ui.may_move(TokenId(1)) || ui.turns.active() == Some(TokenId(1)));
+    }
+
+    #[test]
+    fn drag_move_relocates_a_token_and_is_undoable() {
+        use isometry_core::TokenId;
+        let mut ui = UiState::new(demo_map());
+        let start = ui.map.token(TokenId(1)).unwrap().at; // (10, 14)
+        ui.drag_move_token(TokenId(1), (5, 5));
+        assert_eq!(ui.map.token(TokenId(1)).unwrap().at, (5, 5));
+        // Occupied (goblin 2 at (15, 8)) and out-of-bounds are no-ops.
+        ui.drag_move_token(TokenId(1), (15, 8));
+        ui.drag_move_token(TokenId(1), (999, 999));
+        assert_eq!(ui.map.token(TokenId(1)).unwrap().at, (5, 5));
+        // The one real move undoes back to the start.
+        ui.undo();
+        assert_eq!(ui.map.token(TokenId(1)).unwrap().at, start);
+    }
+
+    #[test]
+    fn drag_move_routes_out_in_remote_mode() {
+        use isometry_core::TokenId;
+        let mut ui = UiState::new(demo_map());
+        ui.net_mode = NetMode::Remote;
+        let before = ui.map.token(TokenId(1)).unwrap().at;
+        ui.drag_move_token(TokenId(1), (5, 5));
+        // Session mode emits an intent and leaves the local map untouched.
+        assert_eq!(ui.map.token(TokenId(1)).unwrap().at, before);
+        assert_eq!(ui.net_outbox.len(), 1);
+    }
+
+    #[test]
+    fn token_drag_candidate_finds_a_token_in_select_mode_only() {
+        use isometry_core::TokenId;
+        let mut ui = UiState::new(demo_map());
+        // Cursor over knight 1's tile (10, 14); default camera is (0, 0).
+        let (sx, sy) = ui.geo.tile_to_screen((10, 14), 0);
+        let on_token = (sx + PANEL_W + ui.camera.0, sy + ui.camera.1);
+        assert_eq!(ui.mode, EditMode::Select);
+        assert_eq!(ui.token_drag_candidate(on_token), Some(TokenId(1)));
+        // An empty tile, or any non-Select mode, yields nothing.
+        let (ex, ey) = ui.geo.tile_to_screen((0, 0), 0);
+        assert_eq!(ui.token_drag_candidate((ex + PANEL_W, ey)), None);
+        ui.mode = EditMode::Play;
+        assert_eq!(ui.token_drag_candidate(on_token), None);
     }
 
     #[test]

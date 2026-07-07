@@ -73,6 +73,9 @@ struct App {
     /// Opaque id of the last element a held drag dispatched to, so one
     /// tile gets one application per crossing, not one per pixel.
     last_drag: Option<u64>,
+    /// A token grabbed by a left-press (Select mode); the release moves it
+    /// to the tile under the cursor. `None` when no token drag is active.
+    drag_token: Option<isometry_core::TokenId>,
     last_hover: Option<u64>,
     last_focus: Option<u64>,
     profile: bool,
@@ -856,6 +859,12 @@ impl ApplicationHandler for App {
             } => {
                 self.lmb_down = true;
                 self.click();
+                // A press on a token (Select mode) starts a drag; the
+                // release moves it to the tile under the cursor.
+                self.drag_token = self
+                    .runner
+                    .as_ref()
+                    .and_then(|r| r.state().token_drag_candidate(self.cursor));
             }
             WindowEvent::MouseInput {
                 state: ElementState::Released,
@@ -864,6 +873,21 @@ impl ApplicationHandler for App {
             } => {
                 self.lmb_down = false;
                 self.last_drag = None;
+                if let Some(id) = self.drag_token.take() {
+                    // Move the grabbed token to the release tile if it moved.
+                    let to = self.runner.as_ref().and_then(|r| {
+                        let ui = r.state();
+                        let cur = ui.map.token(id)?.at;
+                        let to = ui.tile_at_cursor(self.cursor)?;
+                        (to != cur).then_some(to)
+                    });
+                    if let Some(to) = to {
+                        if let Some(runner) = self.runner.as_mut() {
+                            runner.update(|ui| ui.drag_move_token(id, to));
+                        }
+                        self.after_dispatch();
+                    }
+                }
             }
             WindowEvent::KeyboardInput { event, .. } => self.key(&event),
             WindowEvent::RedrawRequested => self.redraw(),
@@ -935,6 +959,7 @@ fn main() {
         modifiers: ModifiersState::empty(),
         lmb_down: false,
         last_drag: None,
+        drag_token: None,
         last_hover: None,
         last_focus: None,
         profile: std::env::var_os("ISOMETRY_PROFILE").is_some(),

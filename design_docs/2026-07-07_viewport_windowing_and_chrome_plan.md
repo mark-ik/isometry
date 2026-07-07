@@ -5,9 +5,9 @@
 next-horizons landscape ([2026-07-07_next_horizons_landscape.md](2026-07-07_next_horizons_landscape.md),
 sequence items 1 and 2). All phases are app-side with no serval or external
 dependency, and reuse capabilities the engine already ships. Done-conditions,
-not time estimates. **W1 (viewport windowing) and W2 (board wheel-pan) landed
-2026-07-07**; W3-W4 (pointer drag, overlay chrome) remain. W2's panel-scroll
-half is deferred (see Phase W2).
+not time estimates. **W1 (windowing), W2 (board wheel-pan), and W3 (token
+drag-move) landed 2026-07-07**; W4 (overlay chrome) remains. W2's panel-scroll
+and W3's turn-reorder halves are deferred (see the phases).
 
 ## Why this lane first
 
@@ -66,6 +66,25 @@ for short windows, blocked on serval scroll-isolation (`overscroll-behavior:
 contain` or an equivalent container fix).
 
 ## Phase W3: pointer-drag interactions
+
+**Landed 2026-07-07 as token drag-move (Select mode); turn-reorder deferred.**
+A left-press on a token in Select mode grabs it
+(`UiState::token_drag_candidate`); the release free-moves it to the tile under
+the cursor (`UiState::drag_move_token`, the same `TokenMoved` path a click
+uses, so replication and undo are unchanged; occupied and out-of-bounds
+releases are no-ops). Host wiring lives in the MouseInput down/up arms, using
+the existing `tile_at_cursor`. Done at the host level, not via `on_pointer`,
+because `on_pointer` reports element-local coords and a board drag needs the
+target *tile*, which the host already hit-tests. Verified by unit tests (13
+views tests green): move, occupancy, out-of-bounds, undo, Remote-routing, and
+Select-only candidate detection. The in-app synthetic drag was not driven to a
+capture: synthetic OS pointer input proved unreliable here (intermittent
+delivery plus a coordinate-click hazard), so the thin host wiring is inspected
+rather than captured. **Deferred:** drag-to-reorder turns (the click-toggle
+in/out stays) and Play-mode gated drag (Play movement stays click-a-reach-
+tile).
+
+The original spec:
 
 `on_pointer` (Down/Move/Up with pointer capture, local coords, element size)
 already ships. Wire two drags:
