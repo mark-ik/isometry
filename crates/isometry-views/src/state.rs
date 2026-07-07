@@ -151,6 +151,11 @@ pub struct UiState {
     /// whole tile steps (the tactics references scroll in steps; the
     /// smooth-pan lane waits on the netrender camera-offset composite).
     pub camera: (f32, f32),
+    /// The board pane's logical size in px, set by the host on init and
+    /// resize. Drives viewport culling in `board_root`. `(0, 0)` means the
+    /// host has not reported it yet, in which case culling is skipped (emit
+    /// everything, the safe pre-windowing behavior).
+    pub viewport: (f32, f32),
     pub selected: Option<TileCoord>,
     pub mode: EditMode,
     /// Palette selection painted by `PaintGround` / `PaintProp` / `Fill`.
@@ -230,6 +235,7 @@ impl UiState {
             map,
             geo: IsoGeometry::default(),
             camera: (0.0, 0.0),
+            viewport: (0.0, 0.0),
             selected: None,
             mode: EditMode::Select,
             brush: TileKindId(1),

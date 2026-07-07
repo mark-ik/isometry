@@ -81,13 +81,14 @@ pub fn demo_map() -> MapDocument {
     map
 }
 
-/// The probe P2 synthetic: a 30x30 board with every layer loaded
-/// (ground everywhere, props on a third of the tiles, elevation over
-/// half the board) plus 20 tokens, roughly 2,700 elements once the
-/// elevation columns render. `ISOMETRY_SYNTH=1` loads it.
-pub fn synth_map() -> MapDocument {
-    let (w, h) = (30u32, 30u32);
-    let mut map = MapDocument::new("Synthetic 30x30x3", w, h);
+/// A synthetic stress board: `w` x `h` with every layer loaded (ground
+/// everywhere, props on a third of the tiles, elevation over the lower
+/// half) plus 20 scattered tokens. At 30x30 this is the ~2,700-element
+/// probe P2 board; larger sizes exercise viewport windowing (the emitted
+/// element count should stay bounded by the pane, not the board).
+/// `ISOMETRY_SYNTH=<n>` loads an n x n board (n>1; default 30).
+pub fn synth_map(w: u32, h: u32) -> MapDocument {
+    let mut map = MapDocument::new(format!("Synthetic {w}x{h}"), w, h);
     let grass = map.intern_tile_kind("grass");
     let water = map.intern_tile_kind("water");
     let stone = map.intern_tile_kind("stone");
@@ -103,7 +104,7 @@ pub fn synth_map() -> MapDocument {
             if (col * 3 + row * 7) % 3 == 0 {
                 map.props.set(col, row, tree);
             }
-            if row >= 15 {
+            if row >= h / 2 {
                 map.elevation.set(col, row, ((col + row) % 4) as u8);
             }
         }
@@ -111,7 +112,7 @@ pub fn synth_map() -> MapDocument {
     for i in 0..20u32 {
         map.tokens.push(Token {
             id: TokenId(i + 1),
-            at: ((i % 10) as i32 * 3, (i / 10) as i32 * 9 + 3),
+            at: (((i * 7) % w) as i32, ((i * 13) % h) as i32),
             facing: Facing::South,
             sprite: if i % 2 == 0 { "knight" } else { "goblin" }.to_owned(),
             owner: None,

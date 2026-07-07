@@ -5,7 +5,8 @@
 next-horizons landscape ([2026-07-07_next_horizons_landscape.md](2026-07-07_next_horizons_landscape.md),
 sequence items 1 and 2). All phases are app-side with no serval or external
 dependency, and reuse capabilities the engine already ships. Done-conditions,
-not time estimates.
+not time estimates. **W1 (viewport windowing) landed 2026-07-07** (see
+Progress); W2-W4 (wheel scroll, pointer drag, overlay chrome) remain.
 
 ## Why this lane first
 
@@ -131,4 +132,21 @@ gating this lane:
 
 ## Progress
 
-- (none yet)
+- 2026-07-07 (W1 landed): viewport windowing. `UiState` gains a `viewport`
+  field (pane logical px); the serval host seeds it from the window size and
+  keeps it current on resize; `board.rs` culls both whole-grid emitters
+  (`ground_tiles`, `prop_tiles`) through `in_view`, with generous asymmetric
+  margins so elevation columns and standing sprites are never clipped, and an
+  "emit all" fallback until the host reports a size. `synth_map` is now
+  parametric (`ISOMETRY_SYNTH=<n>` for an n x n stress board), and a
+  profile-gated line reports the emitted element count. Verified: emission is
+  bounded by the viewport, not the board. A size sweep at the default camera
+  gave 60x60 -> 5361 elements, 100x100 -> 4249, 200x200 -> 3718 (a 200x200
+  board of 40k tiles emits fewer elements and costs less than a 60x60, so
+  cost is O(viewport) not O(board); before windowing a 200x200 would emit
+  ~50k+ and take seconds). The 24x24 demo renders pixel-identical (nothing
+  visible clipped); 100x100 windows to a correct pane-full region. Receipts:
+  scry-shots/2026-07-07_isometry_w1_{demo,100}.png. Note: the absolute cost
+  of a full dense pane (~4-5k elements, ~80ms release) is a separate raster
+  concern (the camera-offset composite and tile caching in the follow-ons),
+  not a scaling one.

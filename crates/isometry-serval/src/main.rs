@@ -647,18 +647,28 @@ impl ApplicationHandler for App {
             },
         )
         .expect("boot serval host");
-        // `ISOMETRY_SYNTH=1` loads the probe P2 stress board instead of
-        // the demo skirmish.
-        let map = if std::env::var_os("ISOMETRY_SYNTH").is_some() {
-            synth_map()
-        } else {
-            demo_map()
+        // `ISOMETRY_SYNTH=<n>` loads an n x n synthetic stress board (n>1,
+        // default 30 = the probe P2 board) instead of the demo skirmish;
+        // large n exercises viewport windowing.
+        let map = match std::env::var("ISOMETRY_SYNTH") {
+            Ok(v) => {
+                let n = v.trim().parse::<u32>().ok().filter(|&n| n > 1).unwrap_or(30);
+                synth_map(n, n)
+            }
+            Err(_) => demo_map(),
         };
         let mut ui = UiState::new(map);
         // Start with the board roughly centered in the pane, and every
         // token in the turn order (a skirmish ready to play; drop
         // tokens out via the panel for free movement).
         ui.camera = (420.0, 140.0);
+        // Seed the pane size so the view can window tile emission to the
+        // viewport (the host keeps it current on resize).
+        let scale = window.scale_factor() as f32;
+        ui.viewport = (
+            (size.width as f32 / scale - PANEL_W).max(0.0),
+            size.height as f32 / scale,
+        );
         let ids: Vec<_> = ui.map.tokens.iter().map(|t| t.id).collect();
         for id in ids {
             ui.turns.add(id);
@@ -736,6 +746,14 @@ impl ApplicationHandler for App {
             WindowEvent::Resized(size) => {
                 if let Some(host) = self.host.as_mut() {
                     host.resize(size.width.max(1), size.height.max(1));
+                }
+                // Keep the view's pane size current so windowing culls to
+                // the actual viewport.
+                let scale = self.scale_factor() as f32;
+                let vw = (size.width as f32 / scale - PANEL_W).max(0.0);
+                let vh = size.height as f32 / scale;
+                if let Some(runner) = self.runner.as_mut() {
+                    runner.update(|ui| ui.viewport = (vw, vh));
                 }
                 if let Some(window) = self.window.as_ref() {
                     window.request_redraw();

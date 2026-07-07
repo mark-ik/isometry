@@ -41,6 +41,37 @@ fn kind_name(map: &MapDocument, kind: TileKindId) -> &str {
         .unwrap_or("empty")
 }
 
+/// Viewport culling margins (logical px). A tile is kept when its diamond,
+/// elevation column, or standing sprite can still touch the pane, so the
+/// margins are generous and asymmetric: a tile above the pane only pokes
+/// down by half a diamond, while a tile below the pane can poke up by a
+/// full elevation column plus a sprite. Over-emitting a thin ring is cheap;
+/// clipping a visible tile is a bug.
+const CULL_MARGIN_X: f32 = 32.0;
+const CULL_MARGIN_ABOVE: f32 = 24.0;
+const CULL_MARGIN_BELOW: f32 = 176.0;
+
+/// Whether tile `at` can touch the board pane under the current camera, so
+/// the whole-grid emitters only build elements the viewport can show. Until
+/// the host reports a viewport (`(0, 0)`), this returns `true`, so an unset
+/// viewport degrades to the pre-windowing "emit everything" behavior.
+/// Battle-to-region scale is the design center; a pathologically tall tile
+/// (elevation past ~18) below the pane edge is the one case the fixed bottom
+/// margin does not cover, and that is outside the aesthetic.
+fn in_view(ui: &UiState, at: TileCoord) -> bool {
+    let (vw, vh) = ui.viewport;
+    if vw <= 0.0 || vh <= 0.0 {
+        return true;
+    }
+    let (bx, by) = ui.geo.tile_to_screen(at, 0);
+    let px = bx + ui.camera.0;
+    let py = by + ui.camera.1;
+    px >= -CULL_MARGIN_X
+        && px <= vw + CULL_MARGIN_X
+        && py >= -CULL_MARGIN_ABOVE
+        && py <= vh + CULL_MARGIN_BELOW
+}
+
 /// The ground layer: a column of filler diamonds up to the tile's
 /// elevation, then the top diamond carrying the kind class. In Play
 /// mode the selected token's reach tints blue and the hovered path
@@ -63,6 +94,9 @@ fn ground_tiles(ui: &UiState) -> Vec<UiChild> {
             continue;
         }
         let at: TileCoord = (col as i32, row as i32);
+        if !in_view(ui, at) {
+            continue; // outside the pane: windowing skips the emit
+        }
         let fog = ui.fog_level(at);
         if fog == FogLevel::Hidden {
             continue; // unexplored: the dark pane shows through
@@ -119,6 +153,9 @@ fn prop_tiles(ui: &UiState) -> Vec<UiChild> {
             continue;
         }
         let at: TileCoord = (col as i32, row as i32);
+        if !in_view(ui, at) {
+            continue;
+        }
         if ui.fog_level(at) == FogLevel::Hidden {
             continue;
         }
@@ -212,6 +249,12 @@ pub fn board_root(ui: &UiState) -> UiChild {
             .filter(|t| ui.token_visible(t))
             .map(|t| token_el(ui, t)),
     );
+    // Windowing metric: with `ISOMETRY_PROFILE` on, report how many
+    // elements the viewport emits. It should stay bounded by the pane, not
+    // grow with the board (see the windowing plan).
+    if std::env::var_os("ISOMETRY_PROFILE").is_some() {
+        eprintln!("[isometry] board elements emitted: {}", layers.len());
+    }
     let (camx, camy) = ui.camera;
     let mut pane_children: Vec<UiChild> = vec![Box::new(
         el("div", layers).attr("class", "board").attr(
