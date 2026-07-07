@@ -48,7 +48,11 @@ winit = "0.30"
 # graph needs; patches are per-workspace-root and do NOT inherit through
 # a git dep. Copied from the woodshed root (the maintained model).
 [patch.crates-io]
-stylo = { git = "https://github.com/servo/stylo", rev = "8bde0e96db888b7f188830bea261e72b2006fd73" }
-stylo_atoms = { git = "https://github.com/servo/stylo", rev = "8bde0e96db888b7f188830bea261e72b2006fd73" }
+# stylo is the mark-ik fork (servo-media-features branch). serval-layout
+# pulls it via git dep, so stylo_taffy's crates.io `stylo` must patch to the
+# same source or the two copies collide on the `servo_style_crate` native
+# link. Track the branch, not a rev, so it follows the fork.
+stylo = { git = "https://github.com/mark-ik/stylo", branch = "mark-ik/servo-media-features" }
+stylo_atoms = { git = "https://github.com/mark-ik/stylo", branch = "mark-ik/servo-media-features" }
 taffy = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
 ipc-channel = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
