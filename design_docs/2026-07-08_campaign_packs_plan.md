@@ -7,10 +7,11 @@ appearance as a voxel-sourced recipe, and (maintainer, 2026-07-08) the
 fixed camera downgraded to the 2D mode of a lens ladder rather than a
 permanent invariant (decision 11). Landed: the bake proved soulful (CPU
 spike, Findings) and `isometry-voxel` is founded (baker + recipe, 2D
-mode, 5 tests, commit 1e03825). Next: board wiring, then the compendium
-slice. This is the "campaign packs" horizon the bootstrap plan deferred
-to its own plan (2026-07-05_isometry_bootstrap_plan.md, closing
-paragraph).
+mode, 6 tests), and voxel tokens now render on the live board with
+palette-swap (receipt scry-shots/2026-07-08_isometry_voxel_tokens.png).
+Next: dot_vox ingest, then the compendium slice. This is the "campaign
+packs" horizon the bootstrap plan deferred to its own plan
+(2026-07-05_isometry_bootstrap_plan.md, closing paragraph).
 
 **Thesis:** a campaign is a bundle of modules, and every module is data
 that teaches by example. Rules content (the SRD), character appearance
@@ -208,3 +209,9 @@ alongside.
   tests; commit 1e03825; ecosystem grep confirmed no existing piece).
   Maintainer amended the camera to a lens mode (decision 11); bootstrap #5
   pointer added. Next: board wiring (P1), then the compendium slice (P2).
+- 2026-07-08: board wiring landed (commit c449bd2). `isometry-voxel` gained
+  a dependency-free PNG/base64 encoder; `board_css` bakes the demo rig into
+  `.token-knight` and a recoloured `.token-goblin`. Headed receipt shows
+  voxel tokens on the live board with palette-swap (knight red, goblin
+  green): scry-shots/2026-07-08_isometry_voxel_tokens.png. P1 remaining:
+  `dot_vox` ingest of a real MagicaVoxel file. Then P2 (compendium).
