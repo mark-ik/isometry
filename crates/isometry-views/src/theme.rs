@@ -120,6 +120,19 @@ pub fn board_css() -> String {
 .sheet-mod { width: 76px; font-size: 12px; margin-bottom: 2px; }
 .sheet-actions { display: flex; flex-wrap: wrap; }
 
+/* Right-click token context menu: a small card at the click position. */
+.context-menu {
+    position: absolute;
+    min-width: 100px;
+    padding: 4px;
+    background-color: #1b1e27;
+    border: 1px solid #3d4666;
+    z-index: 100000;
+}
+.menu-title { color: #8b91a0; font-size: 11px; padding: 2px 6px 4px; }
+.menu-item { padding: 4px 8px; color: #cfd3dd; font-size: 13px; }
+.menu-item:hover { background-color: #323949; }
+
 .pane {
     position: relative;
     flex: 1;

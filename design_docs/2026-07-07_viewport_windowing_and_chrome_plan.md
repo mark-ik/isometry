@@ -5,9 +5,10 @@
 next-horizons landscape ([2026-07-07_next_horizons_landscape.md](2026-07-07_next_horizons_landscape.md),
 sequence items 1 and 2). All phases are app-side with no serval or external
 dependency, and reuse capabilities the engine already ships. Done-conditions,
-not time estimates. **W1 (windowing), W2 (board wheel-pan), and W3 (token
-drag-move) landed 2026-07-07**; W4 (overlay chrome) remains. W2's panel-scroll
-and W3's turn-reorder halves are deferred (see the phases).
+not time estimates. **W1-W4 all landed 2026-07-07**: windowing, board
+wheel-pan, token drag-move, token context menu. Deferred halves, tracked in
+their phases: W2 panel-scroll, W3 turn-reorder + Play-gated drag, W4 hover
+tooltip + tile menus.
 
 ## Why this lane first
 
@@ -102,6 +103,24 @@ respected in Play); dragging a turn row reorders initiative. Receipt: a
 before/after capture of each.
 
 ## Phase W4: overlay chrome
+
+**Landed 2026-07-07 as the token context menu; tooltip deferred.**
+Right-clicking a token opens a menu at the cursor: `UiState::open_context_menu`
+selects the token and stores its pane position, and the host's right
+MouseInput arm resolves the token via `tile_at_cursor`. The menu is an
+absolutely-positioned card (the sheet-overlay pattern, `context_menu_overlay`
+in `board.rs`, `.context-menu` CSS) titled by the token, with Sheet / End turn
+/ Remove / Close; each action reuses an existing method plus
+`close_context_menu`, and a left-click off the menu dismisses it.
+`remove_token` drops the token from the map, turn order, and selection
+(replicated, undoable). Verified: the menu-state and remove logic by unit test
+(14 views tests green), and the render by a seeded-state capture
+(testing/isometry/images/2026-07-07_isometry_w4_context_menu.png), since
+synthetic right-click input was as unreliable here as the W3 drag. Placement
+is a plain cursor anchor, not `overlay_at`/`anchor_point_clamped`; edge-clamp
+is a follow-on. **Deferred:** the hover tooltip and tile (non-token) menus.
+
+The original spec:
 
 `overlay_at` + `anchor_point_clamped` (overflow-aware flip and clamp) already
 ship. Add:

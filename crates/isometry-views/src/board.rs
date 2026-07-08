@@ -9,7 +9,7 @@
 use std::collections::HashSet;
 
 use isometry_core::{depth_key, path_to, MapDocument, TileCoord, TileKindId, Token};
-use xilem_serval::{clickable, el, AnyView, ServalCtx, ServalElement};
+use xilem_serval::{clickable, el, text, AnyView, ServalCtx, ServalElement};
 
 use crate::panel::side_panel;
 use crate::state::{EditMode, FogLevel, UiState};
@@ -223,6 +223,46 @@ fn marker_el(ui: &UiState, token_id: isometry_core::TokenId, class: &str) -> Opt
     )))
 }
 
+/// The right-click context menu, or `None` when closed. An absolutely-
+/// positioned card at the click position (pane-local px) with token actions.
+fn context_menu_overlay(ui: &UiState) -> Option<UiChild> {
+    let (id, (mx, my)) = ui.context_menu?;
+    let token = ui.map.token(id)?;
+    let title = format!("{} {}", token.sprite, id.0);
+    Some(Box::new(
+        el(
+            "div",
+            (
+                el("div", text(title)).attr("class", "menu-title"),
+                clickable(
+                    el("div", text("Sheet")).attr("class", "menu-item"),
+                    |ui: &mut UiState, _| {
+                        ui.open_or_bind_sheet();
+                        ui.close_context_menu();
+                    },
+                ),
+                clickable(
+                    el("div", text("End turn")).attr("class", "menu-item"),
+                    |ui: &mut UiState, _| {
+                        ui.end_turn();
+                        ui.close_context_menu();
+                    },
+                ),
+                clickable(
+                    el("div", text("Remove")).attr("class", "menu-item"),
+                    move |ui: &mut UiState, _| ui.remove_token(id),
+                ),
+                clickable(
+                    el("div", text("Close")).attr("class", "menu-item"),
+                    |ui: &mut UiState, _| ui.close_context_menu(),
+                ),
+            ),
+        )
+        .attr("class", "context-menu")
+        .attr("style", format!("left: {mx}px; top: {my}px;")),
+    ))
+}
+
 /// The screen root the runner diffs.
 pub fn board_root(ui: &UiState) -> UiChild {
     let mut layers: Vec<UiChild> = ground_tiles(ui);
@@ -264,6 +304,9 @@ pub fn board_root(ui: &UiState) -> UiChild {
     )];
     if let Some(overlay) = crate::sheet::sheet_overlay(ui) {
         pane_children.push(overlay);
+    }
+    if let Some(menu) = context_menu_overlay(ui) {
+        pane_children.push(menu);
     }
     Box::new(
         el(

@@ -227,6 +227,9 @@ pub struct UiState {
     pub reach: HashMap<TileCoord, TileCoord>,
     /// Tile under the cursor (path preview follows it in Play mode).
     pub hover_tile: Option<TileCoord>,
+    /// Right-click context menu: the token it targets and the pane-space
+    /// position (logical px) to anchor it at. `None` when closed.
+    pub context_menu: Option<(TokenId, (f32, f32))>,
 }
 
 impl UiState {
@@ -249,6 +252,7 @@ impl UiState {
             selected_token: None,
             reach: HashMap::new(),
             hover_tile: None,
+            context_menu: None,
             net_mode: NetMode::Local,
             net_outbox: Vec::new(),
             viewer: None,
@@ -693,6 +697,33 @@ impl UiState {
         self.recompute_reach();
     }
 
+    /// Open the right-click context menu on token `id`, anchored at pane
+    /// position `at` (logical px). Right-click also selects the token so the
+    /// menu's actions operate on it.
+    pub fn open_context_menu(&mut self, id: TokenId, at: (f32, f32)) {
+        self.select_token(id);
+        self.context_menu = Some((id, at));
+    }
+
+    /// Close the context menu (a click elsewhere, or after an action).
+    pub fn close_context_menu(&mut self) {
+        self.context_menu = None;
+    }
+
+    /// Remove a token (a context-menu action): drops it from the map, the
+    /// turn order, and selection. Replicated in Remote, undoable locally.
+    pub fn remove_token(&mut self, id: TokenId) {
+        if !self.net_emit(GameEvent::Map(SessionEvent::TokenRemoved { id })) {
+            self.apply_step(vec![SessionEvent::TokenRemoved { id }]);
+        }
+        self.turns.remove(id);
+        if self.selected_token == Some(id) {
+            self.selected_token = None;
+            self.reach.clear();
+        }
+        self.context_menu = None;
+    }
+
     /// Whether the hovered tile changed in a way the board renders (the
     /// path preview): the host calls this read-only before paying for a
     /// state update.
@@ -1114,6 +1145,27 @@ mod tests {
         assert_eq!(ui.token_drag_candidate((ex + PANEL_W, ey)), None);
         ui.mode = EditMode::Play;
         assert_eq!(ui.token_drag_candidate(on_token), None);
+    }
+
+    #[test]
+    fn context_menu_opens_selects_and_removes() {
+        use isometry_core::TokenId;
+        let mut ui = UiState::new(demo_map());
+        let n = ui.map.tokens.len();
+        ui.open_context_menu(TokenId(1), (50.0, 60.0));
+        assert_eq!(ui.context_menu, Some((TokenId(1), (50.0, 60.0))));
+        assert_eq!(ui.selected_token, Some(TokenId(1)), "right-click selects");
+        ui.close_context_menu();
+        assert!(ui.context_menu.is_none());
+        // Remove drops the token from the map, turn order, and selection.
+        ui.turns.add(TokenId(1));
+        ui.open_context_menu(TokenId(1), (0.0, 0.0));
+        ui.remove_token(TokenId(1));
+        assert_eq!(ui.map.tokens.len(), n - 1);
+        assert!(ui.map.token(TokenId(1)).is_none());
+        assert!(!ui.turns.contains(TokenId(1)));
+        assert!(ui.selected_token.is_none());
+        assert!(ui.context_menu.is_none());
     }
 
     #[test]

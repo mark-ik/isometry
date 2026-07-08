@@ -859,6 +859,20 @@ impl ApplicationHandler for App {
             } => {
                 self.lmb_down = true;
                 self.click();
+                // A left-click off the menu dismisses it (a menu item's own
+                // handler already closed it; this catches clicks elsewhere).
+                if self
+                    .runner
+                    .as_ref()
+                    .is_some_and(|r| r.state().context_menu.is_some())
+                {
+                    if let Some(runner) = self.runner.as_mut() {
+                        runner.update(|ui| ui.close_context_menu());
+                    }
+                    if let Some(window) = self.window.as_ref() {
+                        window.request_redraw();
+                    }
+                }
                 // A press on a token (Select mode) starts a drag; the
                 // release moves it to the tile under the cursor.
                 self.drag_token = self
@@ -887,6 +901,25 @@ impl ApplicationHandler for App {
                         }
                         self.after_dispatch();
                     }
+                }
+            }
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Right,
+                ..
+            } => {
+                // Right-click a token opens its context menu at the cursor.
+                let target = self.runner.as_ref().and_then(|r| {
+                    let ui = r.state();
+                    let tile = ui.tile_at_cursor(self.cursor)?;
+                    ui.map.tokens.iter().find(|t| t.at == tile).map(|t| t.id)
+                });
+                if let Some(id) = target {
+                    let pos = (self.cursor.0 - PANEL_W, self.cursor.1);
+                    if let Some(runner) = self.runner.as_mut() {
+                        runner.update(|ui| ui.open_context_menu(id, pos));
+                    }
+                    self.after_dispatch();
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => self.key(&event),
