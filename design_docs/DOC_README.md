@@ -24,6 +24,7 @@ any other index and is updated in the same session as any doc change.
 | [2026-07-07_viewport_windowing_and_chrome_plan.md](2026-07-07_viewport_windowing_and_chrome_plan.md) | Active plan: viewport windowing (raise the ~30-40 board ceiling) + cheap GUI bundle (wheel scroll, drag, overlays) |
 | [2026-07-07_optional_intelligence_vision.md](2026-07-07_optional_intelligence_vision.md) | Vision (post-keystone): optional DM-loaded models/agents; the DM-in-the-loop dialog system, conversation economy, inference architecture, and the dynamic-content opportunity catalog |
 | [2026-07-07_board_to_text_narration_plan.md](2026-07-07_board_to_text_narration_plan.md) | Active plan: deterministic board-to-text serializer (`narrate` module); N1 scene + N2 viewer-relative/fog-aware landed, N3 model fluency deferred |
+| [2026-07-08_campaign_packs_plan.md](2026-07-08_campaign_packs_plan.md) | Active plan: campaign packs as modules. SRD compendium wiki (Fork A, 5e-database), voxel-sourced token appearance (`isometry-voxel` baker, recipe not image), emotes/procgen, LOD scale ladder. Voxel bake proved soulful (CPU spike). Open forks: fixed-camera lens, facing count, art source |
 
 ## Archive
 
