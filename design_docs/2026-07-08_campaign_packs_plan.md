@@ -1,12 +1,16 @@
 # Campaign packs: content, compendium, and voxel appearance
 
 **Date:** 2026-07-08
-**Status:** plan (new). Direction decided in the 2026-07-08 session: SRD
+**Status:** plan, in progress. Direction decided 2026-07-08: SRD
 compendium as a wiki (Fork A), 5e-database as the first dataset, token
-appearance as a voxel-sourced recipe. The voxel bake proved soulful in a
-CPU spike (see Findings). No repo code has landed yet. This is the
-"campaign packs" horizon the bootstrap plan deferred to its own plan
-(2026-07-05_isometry_bootstrap_plan.md, closing paragraph).
+appearance as a voxel-sourced recipe, and (maintainer, 2026-07-08) the
+fixed camera downgraded to the 2D mode of a lens ladder rather than a
+permanent invariant (decision 11). Landed: the bake proved soulful (CPU
+spike, Findings) and `isometry-voxel` is founded (baker + recipe, 2D
+mode, 5 tests, commit 1e03825). Next: board wiring, then the compendium
+slice. This is the "campaign packs" horizon the bootstrap plan deferred
+to its own plan (2026-07-05_isometry_bootstrap_plan.md, closing
+paragraph).
 
 **Thesis:** a campaign is a bundle of modules, and every module is data
 that teaches by example. Rules content (the SRD), character appearance
@@ -19,11 +23,13 @@ mountain.
 
 ## Relation to prior docs
 
-- **Refines** bootstrap decision #5 (aesthetic contract): the facing model
-  moves from "two mirrored to four" toward "four mirrored to eight, target
-  full iso-facing," motivated by flanking as a real mechanic. The fixed
-  camera and locked angle are unchanged; this is token facing, not camera
-  rotation. Reconcile #5's facing sentence against this when next edited.
+- **Amends** bootstrap decision #5 (aesthetic contract) in two ways. Facing:
+  the model moves from "two mirrored to four" toward "four mirrored to eight,
+  target full iso-facing," motivated by flanking. Camera (maintainer,
+  2026-07-08): the fixed camera is downgraded to the **2D mode** of a lens
+  ladder, no longer a permanent invariant (decision 11). The rest of #5 (2:1
+  tiles, quantized height, low-res nearest-neighbor pixel look, battle-scale)
+  stands. A dated pointer is added at #5; reconcile its text when next edited.
 - **Honors** bootstrap decision #4 (tileset-as-stylesheet): the voxel
   baker produces the sprite sheets a tileset references; appearance still
   binds through the CSS class vocabulary.
@@ -92,6 +98,17 @@ mountain.
     technique only, per the graphshell posture. A baker is a fresh
     MIT/Apache crate on our own wgpu stack (graft/weld/scry/netrender give
     more depth than that prototype had).
+11. **The camera is a lens mode, not a fixed law (maintainer, 2026-07-08).**
+    Bootstrap decision #5's "rotation permanently out of scope" is amended.
+    The locked isometric angle is the **2D mode**, one rung of a 2D / 2.5D /
+    3D ladder: 2.5D is an adjustable-pitch live render of the voxel model, 3D
+    a free camera. The voxel model is the single source of truth; the mode is
+    a lens over it. The rest of #5 (2:1 tiles, quantized height, low-res
+    nearest-neighbor look, battle-scale) stands; only camera fixity relaxes.
+    Near-term path is unchanged, 2D baked sprites first. Synthesis: the cost
+    #5 feared from rotation, multiplying facing art, is exactly what a voxel
+    3D source dissolves, since live modes render any angle without per-facing
+    art; the residual cost is runtime depth re-sort, not art.
 
 ## New crate: `isometry-voxel`
 
@@ -114,6 +131,7 @@ Maintainer sequence 2026-07-08: doc, then baker (P1), then wiki (P2)
 alongside.
 
 ### P1 Voxel appearance baker promotion
+
 - Found `isometry-voxel` (after the ecosystem grep); move the spike's
   splatter in as tested library code. *Done:* crate builds, a unit test
   bakes a procedural figure to a deterministic sheet.
@@ -126,6 +144,7 @@ alongside.
 - `dot_vox` ingest of a real MagicaVoxel file. *Done:* a `.vox` bakes.
 
 ### P2 SRD content pack + compendium (Fork A)
+
 - Vendor 5e-database SRD JSON; a pack-import transform into isometry
   content types, Monsters first, attribution recorded. *Done:* a Monsters
   pack loads from vendored data.
@@ -137,11 +156,13 @@ alongside.
   monster becomes a token on the board.
 
 ### P3 Creator + clips (later)
+
 - Creator pane: chisel `Swatch` palette, preset cards, a live animated
   preview leaf (Path-B). Clip state machine with Lua emote/action triggers
   (decision #7).
 
 ### P4 Procgen and scale ladder (vision)
+
 - Part grammars, rules-coupled drops, WFC maps, world-map/region LOD
   documents linked by "enter here."
 
@@ -163,13 +184,13 @@ alongside.
 
 ## Open forks (maintainer call)
 
-1. **Fixed-camera lens.** The 2D/2.5D/3D hotswitch discussed in-session
-   conflicts with decision #5 ("rotation permanently out of scope").
-   Reconciliation: baked sprites at the locked angle honor #5; a live voxel
-   render *at the locked angle* also honors it (a render-technique choice);
-   an adjustable or free camera does not and would reopen #5. Recommendation:
-   keep the locked angle, treat "live render" as an optional technique, do
-   not build camera freedom without revisiting #5.
+1. **Fixed-camera lens. Resolved 2026-07-08 (decision 11):** the fixed camera
+   is the 2D mode, camera freedom is in scope via the ladder. The live
+   2.5D/3D renderer is future wgpu work. Open sub-question: how the pixel soul
+   and clip animation carry into a live render. Render-to-low-res plus
+   nearest-neighbor and palette snap keeps the look (the "3D rendered as pixel
+   art" technique); sprite clips versus live posing may diverge, so the
+   Appearance recipe drives both while the animation representation may fork.
 2. **Final facing count.** Four versus eight (decision #6). Flanking argues
    eight; art and sort cost argue four-then-mirror. Confirm before art
    volume begins.
@@ -183,3 +204,7 @@ alongside.
 - 2026-07-08: plan created; voxel bake spike verified (Findings). Next per
   maintainer sequence: P1 (found `isometry-voxel`, ecosystem grep first),
   then P2 (wiki slice) alongside.
+- 2026-07-08: `isometry-voxel` founded (baker + Appearance recipe, 2D mode; 5
+  tests; commit 1e03825; ecosystem grep confirmed no existing piece).
+  Maintainer amended the camera to a lens mode (decision 11); bootstrap #5
+  pointer added. Next: board wiring (P1), then the compendium slice (P2).

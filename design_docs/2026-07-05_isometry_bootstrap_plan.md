@@ -57,6 +57,10 @@ session.
    height steps. Low internal resolution integer-scaled with
    nearest-neighbor. Sprites draw two facings and mirror for the other
    two. Battle-scale maps (15x15 to 30x30) are the design center.
+   **Amended 2026-07-08** (see 2026-07-08_campaign_packs_plan.md, decision
+   11): the fixed camera is now the 2D mode of a 2D/2.5D/3D lens ladder, not
+   a permanent invariant, and facings move toward eight (flanking). The rest
+   of this contract stands.
 6. **Substrate/system split.** Substrate: tiles, tokens, turn list,
    facing, elevation, area templates, fog, dice mechanics as rollers.
    System plugin: schemas for characters and items plus Lua scripts
