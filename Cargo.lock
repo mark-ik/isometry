@@ -2999,6 +2999,7 @@ version = "0.1.0"
 dependencies = [
  "isometry-core",
  "isometry-net",
+ "isometry-voxel",
  "xilem-serval",
 ]
 

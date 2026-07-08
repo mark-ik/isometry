@@ -5,7 +5,7 @@
 
 /// The whole app sheet: chrome plus the placeholder tileset.
 pub fn board_css() -> String {
-    r#"
+    let mut css = r#"
 .app {
     width: 100%;
     height: 100%;
@@ -198,8 +198,40 @@ pub fn board_css() -> String {
     background-size: 100% 100%;
     image-rendering: pixelated;
 }
-.token-knight { background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAMCAYAAABfnvydAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABOSURBVChTY2BAAgpKOv9BGFkMDkASj5+9B2OsivAqAAn8v54GVwBioyhC1o1hCoiRV9ICFkCWhIkRVoDNGgxHElSAbCRO4wkqQBZA5gMAHtiM9x/Mi9QAAAAASUVORK5CYII="); }
-.token-goblin { background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAMCAYAAABfnvydAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABASURBVChTY2AgBigo6fzHKwbiIAug88EC/d47wILIbBRJbBisCKbg//U0uASMjaIAG8ZrDfGOJFoBsgA6Hy8AAJSac/fEyk0mAAAAAElFTkSuQmCC"); }
 "#
-    .to_owned()
+    .to_owned();
+    // Voxel-baked pixel tileset: the pixel sprites this sheet was waiting for
+    // (design_docs/2026-07-08_campaign_packs_plan.md). Knight is the demo rig;
+    // goblin is the same rig recoloured, proving palette-swap on the board.
+    css.push_str(&voxel_token_css());
+    css
+}
+
+/// Bake the demo voxel rig to `.token-*` sprite rules (data-URI PNGs), called
+/// once from [`board_css`]. `background-size: contain` plus a bottom anchor
+/// stands the sprite in the 24x36 token box with its feet at the tile.
+fn voxel_token_css() -> String {
+    use isometry_voxel::{BakeParams, Palette, bake_facing, demo};
+    let p = BakeParams { half_w: 2, cube_h: 2, facings: 4, margin: 2 };
+    let (rig, skin) = demo::hero();
+    let knight = bake_facing(&rig, &skin, 0, &p).to_png_data_uri();
+    // Goblin: same silhouette, recoloured (skin -> green, shirt -> moss).
+    let goblin_pal = Palette::new(
+        skin.0
+            .iter()
+            .enumerate()
+            .map(|(i, c)| match i {
+                0 => [140, 165, 110],
+                1 => [72, 110, 60],
+                _ => *c,
+            })
+            .collect(),
+    );
+    let goblin = bake_facing(&rig, &goblin_pal, 0, &p).to_png_data_uri();
+    format!(
+        ".token-knight {{ background-image: url(\"{knight}\"); \
+         background-size: contain; background-position: bottom center; }}\n\
+         .token-goblin {{ background-image: url(\"{goblin}\"); \
+         background-size: contain; background-position: bottom center; }}\n"
+    )
 }

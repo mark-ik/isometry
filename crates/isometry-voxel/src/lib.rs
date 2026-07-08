@@ -15,6 +15,7 @@
 //! touching its silhouette.
 
 mod bake;
+mod png;
 mod recipe;
 mod voxel;
 
@@ -57,6 +58,23 @@ mod tests {
         let b = bake_facing(&hero, &recolor, 0, &p);
         assert_eq!(a.alpha_mask(), b.alpha_mask(), "recolour must not move the silhouette");
         assert!(a.rgba != b.rgba, "recolour must change pixels");
+    }
+
+    #[test]
+    fn png_data_uri_is_wellformed() {
+        let (hero, pal) = demo::hero();
+        let sheet = bake_facing(&hero, &pal, 0, &BakeParams::default());
+        let png = sheet.to_png();
+        // PNG signature.
+        assert_eq!(&png[..8], &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+        // IHDR width (offset 16 = 8 sig + 4 len + 4 type) matches the sheet.
+        let w = u32::from_be_bytes([png[16], png[17], png[18], png[19]]);
+        assert_eq!(w as i32, sheet.w);
+        // Ends with IEND.
+        assert_eq!(&png[png.len() - 8..png.len() - 4], b"IEND");
+        let uri = sheet.to_png_data_uri();
+        assert!(uri.starts_with("data:image/png;base64,"));
+        assert!(uri.len() > 100);
     }
 
     #[test]
