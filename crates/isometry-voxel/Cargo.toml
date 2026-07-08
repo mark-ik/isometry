@@ -1,0 +1,14 @@
+[package]
+name = "isometry-voxel"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Isometry's voxel appearance pipeline: palette-indexed voxel volumes baked to isometric pixel sprites at the locked angle. Asset production feeding tilesets; no engine deps."
+
+[dependencies]
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
