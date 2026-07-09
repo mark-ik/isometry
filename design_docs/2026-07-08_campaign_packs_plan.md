@@ -358,3 +358,20 @@ alongside.
   by the active stack, so an absolute-coord clip double-applies), and gate on
   the headed board capture. This wants a dedicated serval+netrender pass, not
   more inline iteration.
+- 2026-07-09: **serval grid-clip fix landed** (serval c88fa8320c2), headed
+  every step. The root cause was not the clip's coordinate space but its cost:
+  in netrender a clip is a scene layer, and the board paints every tile and
+  token as an absolutely-placed lifted layer (~2740), so re-applying the pane
+  clip to each one made ~2740 nested scene layers and the rasterizer produced a
+  black frame. The fix carries, per lifted layer, only the containing-block
+  clips its own box actually spills; an in-bounds tile keeps none, so the board
+  adds zero clip-layers, while a scrolled compendium row keeps its clip and is
+  bounded to the pane body. Folds in the earlier real bug (clip based at
+  `child_origin`, not the parent `origin`) and the CB gate (only a non-static
+  ancestor clips its abs descendants, CSS 2.1 s11.1.2). 269 serval-layout tests
+  plus two new clip tests (clipped-by-positioned, escapes-static) green.
+  Verified headed: the default board renders (Code/testing/isometry/images/
+  2026-07-09_isometry_board_committed.png) and the deep-scrolled compendium
+  clips its rows to the pane body while the board renders behind it
+  (2026-07-09_isometry_serval_clip_fix.png). The known gap noted on the P2
+  entries is now closed: a scrolled data_grid window is viewport-clipped.
