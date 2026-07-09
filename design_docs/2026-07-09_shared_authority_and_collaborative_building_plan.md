@@ -123,6 +123,24 @@ hidden layer from the unsealed seed.
 Shared authority is not only about running sessions; the same machinery
 lets the table *author* together. Two modes, one mechanism.
 
+**The creative/survival frame (2026-07-09).** The compact way to say all of
+the below: today's model is already one player in creative mode (the DM
+authors freely: editor, secrets, commits) while everyone else plays
+survival (priced, validated moves only). Collaborative building generalizes
+who holds creative permissions, over which channels, and when:
+
+- The mode is **per-channel and per-player**, not global: survival on the
+  battle map while the world journal is creative; one player creative over
+  their own home village. "Mode" is a permission preset over event channels
+  (map edits, facts, drafts, storylet proposals), configured by pack/table
+  policy, not hardcoded.
+- **Survival authoring** is creation with a price and a gate (the
+  plugin-priced declaration below); **creative authoring** is the same
+  event with price and gate turned off. One vocabulary, one dial.
+- **Mode flips are logged events**, thrown by the DM (tier 1) or a vote
+  (tier 3), so "a creative window during downtime, survival in the dungeon"
+  replays correctly. Downtime-as-creative-window is the expected rhythm.
+
 ### Prep-time: co-authoring the campaign pack
 
 - **The preview table goes multiplayer.** The worldbuilding plan's
