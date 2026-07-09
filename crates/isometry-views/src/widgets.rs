@@ -30,6 +30,43 @@ pub fn tab_strip(
     Box::new(el::<_, UiState, ()>("div", items).attr("class", "tab-strip"))
 }
 
+/// A floating titled panel over the board: a header (title plus action
+/// buttons) above a body, positioned by `panel_class`. The compendium and the
+/// character sheet are both instances.
+pub fn overlay_panel(
+    panel_class: &'static str,
+    title: String,
+    actions: Vec<UiChild>,
+    body: Vec<UiChild>,
+) -> UiChild {
+    let header = el::<_, UiState, ()>(
+        "div",
+        (
+            el::<_, UiState, ()>("span", text(title)).attr("class", "overlay-title"),
+            el::<_, UiState, ()>("div", actions).attr("class", "overlay-actions"),
+        ),
+    )
+    .attr("class", "overlay-header");
+    let mut kids: Vec<UiChild> = vec![Box::new(header)];
+    kids.extend(body);
+    Box::new(el::<_, UiState, ()>("div", kids).attr("class", panel_class))
+}
+
+/// A titled record: an entry name, an optional subtitle, then sections. The
+/// compendium's monster/spell/item pages are the consumers.
+pub fn record_card(name: &str, subtitle: &str, sections: Vec<UiChild>) -> UiChild {
+    let mut kids: Vec<UiChild> = vec![Box::new(
+        el::<_, UiState, ()>("div", text(name.to_owned())).attr("class", "entry-name"),
+    )];
+    if !subtitle.is_empty() {
+        kids.push(Box::new(
+            el::<_, UiState, ()>("div", text(subtitle.to_owned())).attr("class", "entry-sub"),
+        ));
+    }
+    kids.extend(sections);
+    Box::new(el::<_, UiState, ()>("div", kids))
+}
+
 /// A filter box showing the current `query` (or a hint) with a clear button.
 /// Keys route to the query at the host, so this only displays; the compendium
 /// is the first consumer, a list-heavy chrome surface the second.

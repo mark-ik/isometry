@@ -222,7 +222,10 @@ const COMPENDIUM_CSS: &str = r#"
 .grid-cell { display: flex; align-items: center; padding-left: 6px; box-sizing: border-box; overflow: hidden; }
 .compendium-link { color: #9fd48a; cursor: pointer; white-space: nowrap; }
 .compendium-actions { display: flex; gap: 6px; }
-.monster-sub { font-size: 12px; color: #8a90a0; font-style: italic; margin-bottom: 10px; }
+.overlay-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.overlay-title { font-size: 16px; font-weight: bold; color: #e8ebf2; }
+.overlay-actions { display: flex; gap: 6px; }
+.entry-sub { font-size: 12px; color: #8a90a0; font-style: italic; margin-bottom: 10px; }
 .monster-stats { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-bottom: 12px; }
 .stat-row { font-size: 13px; }
 .stat-label { color: #8a90a0; margin-right: 5px; }

@@ -60,18 +60,6 @@ pub fn compendium_overlay(ui: &UiState) -> Option<UiChild> {
         (None, CompendiumTab::Items) => item_index(ui),
     };
 
-    let mut children: Vec<UiChild> = vec![top_bar(ui), nav];
-    if ui.compendium_selected.is_none() {
-        children.push(crate::widgets::search_field(&ui.compendium_search));
-    }
-    children.push(body);
-    Some(Box::new(
-        el::<_, UiState, ()>("div", children).attr("class", "compendium"),
-    ))
-}
-
-/// The overlay's title row: a back button when a page is open, always a close.
-fn top_bar(ui: &UiState) -> UiChild {
     let mut actions: Vec<UiChild> = Vec::new();
     if ui.compendium_selected.is_some() {
         actions.push(Box::new(clickable(
@@ -83,16 +71,18 @@ fn top_bar(ui: &UiState) -> UiChild {
         el::<_, UiState, ()>("span", text("close")).attr("class", "btn btn-mini"),
         |ui: &mut UiState, _| ui.close_compendium(),
     )));
-    Box::new(
-        el::<_, UiState, ()>(
-            "div",
-            (
-                el::<_, UiState, ()>("span", text("Compendium")).attr("class", "compendium-title"),
-                el::<_, UiState, ()>("div", actions).attr("class", "compendium-actions"),
-            ),
-        )
-        .attr("class", "compendium-header"),
-    )
+
+    let mut body_children: Vec<UiChild> = vec![nav];
+    if ui.compendium_selected.is_none() {
+        body_children.push(crate::widgets::search_field(&ui.compendium_search));
+    }
+    body_children.push(body);
+    Some(crate::widgets::overlay_panel(
+        "compendium",
+        "Compendium".to_owned(),
+        actions,
+        body_children,
+    ))
 }
 
 // ---------- shared cell + grid helpers ----------
@@ -259,14 +249,6 @@ fn item_index(ui: &UiState) -> UiChild {
 
 // ---------- pages ----------
 
-fn entry_name(name: &str) -> UiChild {
-    Box::new(el::<_, UiState, ()>("div", text(name.to_owned())).attr("class", "entry-name"))
-}
-
-fn subtitle(s: String) -> UiChild {
-    Box::new(el::<_, UiState, ()>("div", text(s)).attr("class", "monster-sub"))
-}
-
 fn desc(s: String) -> UiChild {
     Box::new(el::<_, UiState, ()>("div", text(s)).attr("class", "compendium-desc"))
 }
@@ -300,7 +282,8 @@ fn monster_page(m: &MonsterRow) -> UiChild {
             ) as UiChild
         })
         .collect();
-    let ability_row = el::<_, UiState, ()>("div", abilities).attr("class", "monster-abilities");
+    let ability_row: UiChild =
+        Box::new(el::<_, UiState, ()>("div", abilities).attr("class", "monster-abilities"));
 
     let actions: Vec<UiChild> = m
         .actions
@@ -322,25 +305,20 @@ fn monster_page(m: &MonsterRow) -> UiChild {
             ) as UiChild
         })
         .collect();
-    let actions_block = el::<_, UiState, ()>("div", actions).attr("class", "monster-actions");
+    let actions_block: UiChild =
+        Box::new(el::<_, UiState, ()>("div", actions).attr("class", "monster-actions"));
 
     let key = m.key.clone();
-    let spawn = clickable(
+    let spawn: UiChild = Box::new(clickable(
         el::<_, UiState, ()>("div", text("Spawn onto board")).attr("class", "btn spawn-btn"),
         move |ui: &mut UiState, _| ui.spawn_monster(&key),
-    );
+    ));
 
-    Box::new(el::<_, UiState, ()>(
-        "div",
-        (
-            entry_name(&m.name),
-            subtitle(format!("{} {}, {}", m.size, m.kind, m.alignment)),
-            stats,
-            ability_row,
-            actions_block,
-            spawn,
-        ),
-    ))
+    crate::widgets::record_card(
+        &m.name,
+        &format!("{} {}, {}", m.size, m.kind, m.alignment),
+        vec![stats, ability_row, actions_block, spawn],
+    )
 }
 
 fn spell_page(s: &SpellRow) -> UiChild {
@@ -358,10 +336,7 @@ fn spell_page(s: &SpellRow) -> UiChild {
         ],
         "monster-stats",
     );
-    Box::new(el::<_, UiState, ()>(
-        "div",
-        (entry_name(&s.name), subtitle(sub), stats, desc(s.desc.clone())),
-    ))
+    crate::widgets::record_card(&s.name, &sub, vec![stats, desc(s.desc.clone())])
 }
 
 fn item_page(it: &ItemRow) -> UiChild {
@@ -373,13 +348,5 @@ fn item_page(it: &ItemRow) -> UiChild {
         pairs.push(("".to_owned(), it.detail.clone()));
     }
     let stats = stat_list(pairs, "monster-stats");
-    Box::new(el::<_, UiState, ()>(
-        "div",
-        (
-            entry_name(&it.name),
-            subtitle(it.category.clone()),
-            stats,
-            desc(it.desc.clone()),
-        ),
-    ))
+    crate::widgets::record_card(&it.name, &it.category, vec![stats, desc(it.desc.clone())])
 }

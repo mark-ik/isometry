@@ -17,22 +17,9 @@ pub fn sheet_overlay(ui: &UiState) -> Option<UiChild> {
     let schema = &ui.sheet_schema;
     let name = sheet.text("name").unwrap_or("Character").to_owned();
 
-    let mut children: Vec<UiChild> = Vec::new();
-    children.push(Box::new(
-        el(
-            "div",
-            (
-                el("span", text(format!("{name}"))).attr("class", "sheet-title"),
-                clickable(
-                    el("span", text("close")).attr("class", "btn btn-mini"),
-                    |ui: &mut UiState, _| ui.close_sheet(),
-                ),
-            ),
-        )
-        .attr("class", "sheet-header"),
-    ));
+    let mut body: Vec<UiChild> = Vec::new();
 
-    // Editable fields (name shown in the header). Int fields get steppers.
+    // Editable fields (name shown in the panel title). Int fields get steppers.
     for (key, label, is_int) in &schema.fields {
         if key == "name" {
             continue;
@@ -67,12 +54,12 @@ pub fn sheet_overlay(ui: &UiState) -> Option<UiChild> {
         } else {
             Box::new(el("div", text(format!("{label}: {val}"))).attr("class", "sheet-row"))
         };
-        children.push(row);
+        body.push(row);
     }
 
     // Derived stats (system-agnostic: whatever the schema declares).
     if !schema.derived.is_empty() {
-        children.push(Box::new(
+        body.push(Box::new(
             el("div", text("Modifiers")).attr("class", "sheet-heading"),
         ));
         let pairs: Vec<(String, String)> = schema
@@ -82,12 +69,12 @@ pub fn sheet_overlay(ui: &UiState) -> Option<UiChild> {
                 ui.sheet_derived.get(k).map(|v| (label.clone(), format!("{v:+}")))
             })
             .collect();
-        children.push(crate::widgets::stat_list(pairs, "sheet-mods"));
+        body.push(crate::widgets::stat_list(pairs, "sheet-mods"));
     }
 
     // Actions: each rolls through the system.
     if !schema.actions.is_empty() {
-        children.push(Box::new(
+        body.push(Box::new(
             el("div", text("Actions")).attr("class", "sheet-heading"),
         ));
         let actions: Vec<UiChild> = schema
@@ -101,8 +88,12 @@ pub fn sheet_overlay(ui: &UiState) -> Option<UiChild> {
                 )) as UiChild
             })
             .collect();
-        children.push(Box::new(el("div", actions).attr("class", "sheet-actions")));
+        body.push(Box::new(el("div", actions).attr("class", "sheet-actions")));
     }
 
-    Some(Box::new(el("div", children).attr("class", "sheet")))
+    let close: Vec<UiChild> = vec![Box::new(clickable(
+        el("span", text("close")).attr("class", "btn btn-mini"),
+        |ui: &mut UiState, _| ui.close_sheet(),
+    ))];
+    Some(crate::widgets::overlay_panel("sheet", name, close, body))
 }
