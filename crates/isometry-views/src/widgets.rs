@@ -30,6 +30,27 @@ pub fn tab_strip(
     Box::new(el::<_, UiState, ()>("div", items).attr("class", "tab-strip"))
 }
 
+/// A filter box showing the current `query` (or a hint) with a clear button.
+/// Keys route to the query at the host, so this only displays; the compendium
+/// is the first consumer, a list-heavy chrome surface the second.
+pub fn search_field(query: &str) -> UiChild {
+    let mut kids: Vec<UiChild> = Vec::new();
+    if query.is_empty() {
+        kids.push(Box::new(
+            el::<_, UiState, ()>("span", text("type to filter...")).attr("class", "search-hint"),
+        ));
+    } else {
+        kids.push(Box::new(
+            el::<_, UiState, ()>("span", text(query.to_owned())).attr("class", "search-text"),
+        ));
+        kids.push(Box::new(clickable(
+            el::<_, UiState, ()>("span", text("clear")).attr("class", "search-clear"),
+            |ui: &mut UiState, _| ui.clear_compendium_search(),
+        )));
+    }
+    Box::new(el::<_, UiState, ()>("div", kids).attr("class", "search-field"))
+}
+
 /// One read-only labeled value: a muted label beside an emphasised value
 /// ("AC 13", "Reflex +2").
 pub fn stat_row(label: &str, value: impl Into<String>) -> UiChild {

@@ -589,6 +589,31 @@ impl App {
             self.after_dispatch();
             return;
         }
+        // While the compendium is open, keys filter the index.
+        if runner.state().compendium_open {
+            match &event.logical_key {
+                WinitKey::Named(WinitNamedKey::Escape) => {
+                    runner.update(|ui| ui.compendium_escape());
+                }
+                WinitKey::Named(WinitNamedKey::Backspace) => {
+                    runner.update(|ui| ui.search_backspace());
+                }
+                WinitKey::Named(WinitNamedKey::Space) => {
+                    runner.update(|ui| ui.search_char(' '));
+                }
+                WinitKey::Character(c) => {
+                    let s = c.to_string();
+                    runner.update(|ui| {
+                        for ch in s.chars() {
+                            ui.search_char(ch);
+                        }
+                    });
+                }
+                _ => {}
+            }
+            self.after_dispatch();
+            return;
+        }
         match &event.logical_key {
             WinitKey::Character(c) if c.as_str() == "w" && !self.modifiers.control_key() => {
                 runner.update(|ui| ui.start_compose());

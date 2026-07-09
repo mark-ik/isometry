@@ -242,6 +242,10 @@ const COMPENDIUM_CSS: &str = r#"
 .tab-active { color: #eef1f7; background-color: #31527a; }
 .entry-name { font-size: 16px; font-weight: bold; color: #e8ebf2; margin-bottom: 2px; }
 .compendium-desc { font-size: 12px; color: #cfd3dd; line-height: 1.45; }
+.search-field { display: flex; align-items: center; justify-content: space-between; background-color: #232734; border: 1px solid #2c3347; border-radius: 3px; padding: 5px 9px; margin-bottom: 8px; font-size: 12px; }
+.search-hint { color: #6a7080; font-style: italic; }
+.search-text { color: #e8ebf2; }
+.search-clear { color: #8a90a0; cursor: pointer; }
 "#;
 
 /// Bake the demo voxel rig to `.token-*` sprite rules (data-URI PNGs), called

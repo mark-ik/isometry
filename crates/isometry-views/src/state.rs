@@ -316,6 +316,8 @@ pub struct UiState {
     pub compendium_sort: (usize, bool),
     /// The compendium's open entry page (its key), or `None` for the index.
     pub compendium_selected: Option<String>,
+    /// Current filter text for the compendium index (name substring).
+    pub compendium_search: String,
     /// Which compendium namespace is showing.
     pub compendium_tab: CompendiumTab,
     /// Host-supplied compendium content for the Spells and Items tabs.
@@ -373,6 +375,7 @@ impl UiState {
             compendium_scroll: 0.0,
             compendium_sort: (0, false),
             compendium_selected: None,
+            compendium_search: String::new(),
             compendium_tab: CompendiumTab::Monsters,
             spells: Vec::new(),
             items: Vec::new(),
@@ -403,6 +406,34 @@ impl UiState {
 
     pub fn close_compendium(&mut self) {
         self.compendium_open = false;
+        self.compendium_search.clear();
+    }
+
+    /// Append a character to the compendium filter.
+    pub fn search_char(&mut self, c: char) {
+        self.compendium_search.push(c);
+        self.compendium_scroll = 0.0;
+    }
+
+    /// Delete the last filter character.
+    pub fn search_backspace(&mut self) {
+        self.compendium_search.pop();
+        self.compendium_scroll = 0.0;
+    }
+
+    /// Clear the compendium filter.
+    pub fn clear_compendium_search(&mut self) {
+        self.compendium_search.clear();
+        self.compendium_scroll = 0.0;
+    }
+
+    /// Escape in the compendium: from a page back to the index, else close.
+    pub fn compendium_escape(&mut self) {
+        if self.compendium_selected.is_some() {
+            self.back_to_index();
+        } else {
+            self.close_compendium();
+        }
     }
 
     /// Sort the compendium by a column: the same column toggles direction, a
@@ -427,6 +458,7 @@ impl UiState {
         self.compendium_selected = None;
         self.compendium_sort = (0, false);
         self.compendium_scroll = 0.0;
+        self.compendium_search.clear();
     }
 
     /// Scroll the compendium grid by wheel `dy`, clamped to `max`.

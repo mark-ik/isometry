@@ -60,8 +60,13 @@ pub fn compendium_overlay(ui: &UiState) -> Option<UiChild> {
         (None, CompendiumTab::Items) => item_index(ui),
     };
 
+    let mut children: Vec<UiChild> = vec![top_bar(ui), nav];
+    if ui.compendium_selected.is_none() {
+        children.push(crate::widgets::search_field(&ui.compendium_search));
+    }
+    children.push(body);
     Some(Box::new(
-        el::<_, UiState, ()>("div", (top_bar(ui), nav, body)).attr("class", "compendium"),
+        el::<_, UiState, ()>("div", children).attr("class", "compendium"),
     ))
 }
 
@@ -125,7 +130,10 @@ fn grid(spec: &GridSpec, total: usize, scroll: f32, cell: impl Fn(usize, usize) 
 
 fn monster_index(ui: &UiState) -> UiChild {
     let (col, desc) = ui.compendium_sort;
-    let mut order: Vec<usize> = (0..ui.bestiary.len()).collect();
+    let q = ui.compendium_search.to_lowercase();
+    let mut order: Vec<usize> = (0..ui.bestiary.len())
+        .filter(|&i| q.is_empty() || ui.bestiary[i].name.to_lowercase().contains(&q))
+        .collect();
     order.sort_by(|&a, &b| {
         let (x, y) = (&ui.bestiary[a], &ui.bestiary[b]);
         let o = match col {
@@ -167,7 +175,10 @@ fn monster_index(ui: &UiState) -> UiChild {
 
 fn spell_index(ui: &UiState) -> UiChild {
     let (col, desc) = ui.compendium_sort;
-    let mut order: Vec<usize> = (0..ui.spells.len()).collect();
+    let q = ui.compendium_search.to_lowercase();
+    let mut order: Vec<usize> = (0..ui.spells.len())
+        .filter(|&i| q.is_empty() || ui.spells[i].name.to_lowercase().contains(&q))
+        .collect();
     order.sort_by(|&a, &b| {
         let (x, y) = (&ui.spells[a], &ui.spells[b]);
         let o = match col {
@@ -206,7 +217,10 @@ fn spell_index(ui: &UiState) -> UiChild {
 
 fn item_index(ui: &UiState) -> UiChild {
     let (col, desc) = ui.compendium_sort;
-    let mut order: Vec<usize> = (0..ui.items.len()).collect();
+    let q = ui.compendium_search.to_lowercase();
+    let mut order: Vec<usize> = (0..ui.items.len())
+        .filter(|&i| q.is_empty() || ui.items[i].name.to_lowercase().contains(&q))
+        .collect();
     order.sort_by(|&a, &b| {
         let (x, y) = (&ui.items[a], &ui.items[b]);
         let o = match col {
