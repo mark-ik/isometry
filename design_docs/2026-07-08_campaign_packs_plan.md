@@ -306,3 +306,11 @@ alongside.
   scry-shots/2026-07-08_isometry_{monster_page,spawn_monsters}.png. **P2 core
   complete**; remaining is the full 5e-database vendor (P2b), then
   `search_field`/`tab_strip` as the list grows.
+- 2026-07-08: `stat_list` extracted (commit 60a3d14; shared by monster page +
+  sheet, first extract-on-second-use). **Spells + Items namespaces landed**
+  (content 4e67f5b, view 49c8594): a `tab_strip` (first sibling beside
+  `data_grid`) switches Monsters/Spells/Items; `data_grid` now serves three
+  indexes with distinct columns; spell/item pages reuse entry_name +
+  stat_list + prose. Receipts:
+  scry-shots/2026-07-08_isometry_{spell_page,items_index}.png. Next: full
+  5e-database vendor (P2b).
