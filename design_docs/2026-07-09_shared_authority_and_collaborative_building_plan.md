@@ -137,6 +137,9 @@ data; both run through the same intent/commit pipeline.
   battle map while the journal is in a creative round; one trusted player
   granted edit over their own home village. A mode is a permission-plus-
   rulebook preset over event channels, configured by pack/table policy.
+  The same preset shape covers **playing a faction** instead of or beside
+  a PC (worldbuilding rung 7's participant upgrade): a faction player
+  holds survival-mode permissions over the faction-turn channel.
 - **Mode flips are logged events**, thrown by the DM (tier 1) or a vote
   (tier 3), so "a creative round during downtime, survival in the dungeon"
   replays correctly. Downtime-as-creative-window is the expected rhythm.

@@ -328,6 +328,42 @@ Nothing here is real-time; the tick runs when the DM asks for it.
 2-4 faction events the DM can edit and commit, at least one of which changes
 a storylet's eligibility or a region-map fact.
 
+**Expanded 2026-07-09: factions as participants, not just a tick.**
+
+- **Time-coupled turns ("meanwhile...").** The tick is proportional to
+  in-world time the table spent in the local map. Needs a world clock the
+  substrate lacks: v1 is the host stamping elapsed world time on scene
+  exit; factions **bank** that time and spend it on their turn. Banking
+  keeps turns batched (nothing ticks mid-scene), proportional, and inside
+  the no-real-time doctrine. Committed moves present as a "meanwhile"
+  interstitial via the board-to-text narration lane before the next map.
+- **A faction sheet is just a sheet.** `SheetData` is system-agnostic, so a
+  faction is a sheet at a different scale: resources, people, assets,
+  goals. Guild-scale is the expected norm (fighters/mages/thieves/bards/
+  artisan guilds, cults, churches, companies), not nations.
+- **Abilities are projections.** What a faction can do on its turn derives
+  from resources + people + its history events (decision 4 applied to
+  mechanics): lose the harbor in a war event, lose fleet actions until it
+  is retaken, and the log says why.
+- **Radiant quests are faction demand.** The creative-mode prompt engine
+  pointed at faction resource deficits: the mages guild lacks lodestone, so
+  a delivery/heist/negotiation storylet proposal spawns with the guild cast
+  as patron (decision 9 casting). Faction demand is quest supply, which
+  makes "why would my character fetch this" diegetic, and gives members a
+  standing reason to bring things home to their faction.
+- **Factions can be played.** Blades in the Dark's crew sheet is the proof:
+  a shared faction-PC advancing beside the characters, clocks ticking in
+  downtime. A player (or the table) playing a faction instead of or beside
+  a PC is a per-channel permission in the shared-authority doc's terms.
+  Prior art: BitD crew + faction clocks, Reign's company rules, Pendragon's
+  winter phase (time-coupled world advance), Skyrim's radiant quests (the
+  generative loop this borrows its name from), SWN factions (the base tick).
+
+**Also done when (participant upgrade):** a session that spends stamped
+world time in a local map yields a proportional faction turn whose committed
+moves render as a "meanwhile" interstitial, and at least one faction deficit
+generates a storylet proposal with that faction cast as patron.
+
 ## World laws and custom magic
 
 World laws are where custom magic becomes more than a spell list. They are
@@ -563,3 +599,9 @@ final encounter, all inspectable before commit.
   crate, widened `FieldValue`, `GameEvent::Fact` + journal, host-only
   fact commit, and the no-secret-bytes replication guard. Next: W1
   (hidden item modifiers as the first concrete consumer).
+- 2026-07-09: Rung 7 expanded from a DM-triggered tick to factions as
+  participants: time-coupled "meanwhile" turns banked from stamped scene
+  time, faction sheets as ordinary `SheetData`, abilities as history
+  projections, radiant quests from faction deficits, and factions as
+  playable entities (BitD crew shape; permissions per the shared-authority
+  doc).
