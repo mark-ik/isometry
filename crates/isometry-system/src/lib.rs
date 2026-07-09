@@ -19,6 +19,9 @@ use std::collections::BTreeMap;
 use isometry_core::{FieldValue, SheetData};
 use piccolo::{Closure, Executor, IntoValue, Lua, Table, Value};
 
+mod bestiary;
+pub use bestiary::{Monster, MonsterAction, srd_bestiary};
+
 /// A schema field: an editable value on the sheet.
 pub struct FieldDef {
     pub key: String,

@@ -9,6 +9,10 @@ description = "Isometry's system-plugin lane: a game system is a schema plus Lua
 
 [dependencies]
 isometry-core = { workspace = true }
+serde = { workspace = true }
 # Pure-Rust Lua VM: the system-plugin scripting engine, sandboxed
 # (no io/os), wasm-friendly, and the tabletop modding lingua franca.
 piccolo = "0.3"
+
+[dev-dependencies]
+serde_json = { workspace = true }
