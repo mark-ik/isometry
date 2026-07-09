@@ -237,6 +237,11 @@ const COMPENDIUM_CSS: &str = r#"
 .action-name { font-size: 13px; color: #e8ebf2; font-weight: bold; }
 .action-desc { font-size: 11px; color: #cfd3dd; }
 .spawn-btn { display: inline-block; background-color: #2c6e49; color: #eaffea; padding: 7px 14px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 13px; }
+.tab-strip { display: flex; gap: 4px; margin-bottom: 8px; }
+.tab { font-size: 12px; color: #8a90a0; background-color: #232734; padding: 4px 11px; border-radius: 3px; cursor: pointer; }
+.tab-active { color: #eef1f7; background-color: #31527a; }
+.entry-name { font-size: 16px; font-weight: bold; color: #e8ebf2; margin-bottom: 2px; }
+.compendium-desc { font-size: 12px; color: #cfd3dd; line-height: 1.45; }
 "#;
 
 /// Bake the demo voxel rig to `.token-*` sprite rules (data-URI PNGs), called

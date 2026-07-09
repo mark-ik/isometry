@@ -25,10 +25,10 @@ use std::time::{Duration, Instant};
 
 use isometry_core::FieldValue;
 use isometry_net::{GameEvent, GameSnapshot};
-use isometry_system::{srd_5e, srd_bestiary, System};
+use isometry_system::{srd_5e, srd_bestiary, srd_items, srd_spells, System};
 use isometry_views::{
-    board_css, board_root, demo_map, synth_map, ActionRow, MonsterRow, NetMode, SheetSchema,
-    UiChild, UiState, PANEL_W,
+    board_css, board_root, demo_map, synth_map, ActionRow, ItemRow, MonsterRow, NetMode,
+    SheetSchema, SpellRow, UiChild, UiState, PANEL_W,
 };
 
 mod net;
@@ -748,6 +748,8 @@ impl ApplicationHandler for App {
         let system = srd_5e();
         ui.sheet_schema = schema_of(&system);
         ui.bestiary = bestiary_of();
+        ui.spells = spells_of();
+        ui.items = items_of();
         self.system = Some(system);
 
         let dom = Rc::new(RefCell::new(ScriptedDom::new()));
@@ -977,6 +979,42 @@ fn bestiary_of() -> Vec<MonsterRow> {
                     .collect(),
                 sprite: m.sprite,
             }
+        })
+        .collect()
+}
+
+fn spells_of() -> Vec<SpellRow> {
+    srd_spells()
+        .into_iter()
+        .map(|s| {
+            let level_label = s.level_label();
+            SpellRow {
+                key: s.key,
+                name: s.name,
+                level: s.level,
+                level_label,
+                school: s.school,
+                casting_time: s.casting_time,
+                range: s.range,
+                components: s.components,
+                duration: s.duration,
+                desc: s.desc,
+            }
+        })
+        .collect()
+}
+
+fn items_of() -> Vec<ItemRow> {
+    srd_items()
+        .into_iter()
+        .map(|i| ItemRow {
+            key: i.key,
+            name: i.name,
+            category: i.category,
+            cost: i.cost,
+            weight: i.weight,
+            detail: i.detail,
+            desc: i.desc,
         })
         .collect()
 }

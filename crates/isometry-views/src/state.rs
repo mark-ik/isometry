@@ -173,6 +173,52 @@ pub struct MonsterRow {
     pub sprite: String,
 }
 
+/// Which compendium namespace is showing.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CompendiumTab {
+    Monsters,
+    Spells,
+    Items,
+}
+
+impl CompendiumTab {
+    pub const ALL: [CompendiumTab; 3] = [Self::Monsters, Self::Spells, Self::Items];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Monsters => "Monsters",
+            Self::Spells => "Spells",
+            Self::Items => "Items",
+        }
+    }
+}
+
+/// A compendium spell row (host-supplied, view-side).
+#[derive(Clone)]
+pub struct SpellRow {
+    pub key: String,
+    pub name: String,
+    pub level: u8,
+    pub level_label: String,
+    pub school: String,
+    pub casting_time: String,
+    pub range: String,
+    pub components: String,
+    pub duration: String,
+    pub desc: String,
+}
+
+/// A compendium item row (host-supplied, view-side).
+#[derive(Clone)]
+pub struct ItemRow {
+    pub key: String,
+    pub name: String,
+    pub category: String,
+    pub cost: String,
+    pub weight: String,
+    pub detail: String,
+    pub desc: String,
+}
+
 /// Runner state: the substrate document plus view-layer concerns
 /// (camera, selection, editor).
 pub struct UiState {
@@ -268,8 +314,13 @@ pub struct UiState {
     pub compendium_open: bool,
     pub compendium_scroll: f32,
     pub compendium_sort: (usize, bool),
-    /// The compendium's open monster page (its key), or `None` for the index.
+    /// The compendium's open entry page (its key), or `None` for the index.
     pub compendium_selected: Option<String>,
+    /// Which compendium namespace is showing.
+    pub compendium_tab: CompendiumTab,
+    /// Host-supplied compendium content for the Spells and Items tabs.
+    pub spells: Vec<SpellRow>,
+    pub items: Vec<ItemRow>,
 }
 
 impl UiState {
@@ -322,6 +373,9 @@ impl UiState {
             compendium_scroll: 0.0,
             compendium_sort: (0, false),
             compendium_selected: None,
+            compendium_tab: CompendiumTab::Monsters,
+            spells: Vec::new(),
+            items: Vec::new(),
         }
     }
 
@@ -362,9 +416,17 @@ impl UiState {
         self.compendium_scroll = 0.0;
     }
 
-    /// Open a monster's page in the compendium.
-    pub fn open_monster(&mut self, key: String) {
+    /// Open an entry's page in the current compendium tab.
+    pub fn open_entry(&mut self, key: String) {
         self.compendium_selected = Some(key);
+    }
+
+    /// Switch the compendium namespace, returning to that tab's index.
+    pub fn set_compendium_tab(&mut self, tab: CompendiumTab) {
+        self.compendium_tab = tab;
+        self.compendium_selected = None;
+        self.compendium_sort = (0, false);
+        self.compendium_scroll = 0.0;
     }
 
     /// Back from a monster page to the index.

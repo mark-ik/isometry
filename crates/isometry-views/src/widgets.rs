@@ -3,10 +3,32 @@
 //! there is one implementation. View compositions, host-agnostic; promote to
 //! the cross-repo catalog only when another repo needs them.
 
-use xilem_serval::{el, text};
+use xilem_serval::{clickable, el, text};
 
 use crate::board::UiChild;
 use crate::state::UiState;
+
+/// A segmented namespace nav: one clickable tab per `(label, active)`, firing
+/// `on_select(index)`. The compendium's Monsters/Spells/Items nav; a second
+/// consumer (roster tabs) can share it later.
+pub fn tab_strip(
+    tabs: Vec<(String, bool)>,
+    on_select: impl Fn(&mut UiState, usize) + Clone + 'static,
+) -> UiChild {
+    let items: Vec<UiChild> = tabs
+        .into_iter()
+        .enumerate()
+        .map(|(i, (label, active))| {
+            let class = if active { "tab tab-active" } else { "tab" };
+            let sel = on_select.clone();
+            Box::new(clickable(
+                el::<_, UiState, ()>("div", text(label)).attr("class", class),
+                move |ui: &mut UiState, _| sel(ui, i),
+            )) as UiChild
+        })
+        .collect();
+    Box::new(el::<_, UiState, ()>("div", items).attr("class", "tab-strip"))
+}
 
 /// One read-only labeled value: a muted label beside an emphasised value
 /// ("AC 13", "Reflex +2").

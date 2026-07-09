@@ -18,7 +18,7 @@ mod widgets;
 pub use board::{board_root, UiChild};
 pub use demo::{demo_map, synth_map};
 pub use state::{
-    ActionRow, EditMode, FogLevel, InitiativeMode, MonsterRow, NetMode, SheetSchema, UiState,
-    PANEL_W,
+    ActionRow, CompendiumTab, EditMode, FogLevel, InitiativeMode, ItemRow, MonsterRow, NetMode,
+    SheetSchema, SpellRow, UiState, PANEL_W,
 };
 pub use theme::board_css;
