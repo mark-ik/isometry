@@ -123,23 +123,73 @@ hidden layer from the unsealed seed.
 Shared authority is not only about running sessions; the same machinery
 lets the table *author* together. Two modes, one mechanism.
 
-**The creative/survival frame (2026-07-09).** The compact way to say all of
-the below: today's model is already one player in creative mode (the DM
-authors freely: editor, secrets, commits) while everyone else plays
-survival (priced, validated moves only). Collaborative building generalizes
-who holds creative permissions, over which channels, and when:
+**The three modes (2026-07-09, revised from a two-mode draft).** Edit mode,
+creative mode, survival mode. Today's model is one player in **edit mode**
+(the DM authors freely: editor, secrets, commits) while everyone else plays
+**survival** (priced, validated moves only). **Creative mode is not "edit
+for everyone"**: it keeps the turn-based structure and makes a *game* of
+building the world together, with its own rulebook. The symmetry that makes
+this cheap: survival mode validates moves against game rules; creative mode
+validates contributions against **world-shape rules**. Both are pack/plugin
+data; both run through the same intent/commit pipeline.
 
-- The mode is **per-channel and per-player**, not global: survival on the
-  battle map while the world journal is creative; one player creative over
-  their own home village. "Mode" is a permission preset over event channels
-  (map edits, facts, drafts, storylet proposals), configured by pack/table
-  policy, not hardcoded.
-- **Survival authoring** is creation with a price and a gate (the
-  plugin-priced declaration below); **creative authoring** is the same
-  event with price and gate turned off. One vocabulary, one dial.
+- Modes are **per-channel and per-player**, not global: survival on the
+  battle map while the journal is in a creative round; one trusted player
+  granted edit over their own home village. A mode is a permission-plus-
+  rulebook preset over event channels, configured by pack/table policy.
 - **Mode flips are logged events**, thrown by the DM (tier 1) or a vote
-  (tier 3), so "a creative window during downtime, survival in the dungeon"
+  (tier 3), so "a creative round during downtime, survival in the dungeon"
   replays correctly. Downtime-as-creative-window is the expected rhythm.
+
+### Creative mode as a graph-tending game
+
+The failure mode of "everybody edit freely" is mush: isolated characters,
+orphaned plotlines, items nothing cares about. The best collaborative
+worldbuilding games solve this with turn structure plus **attachment
+rules**, and Isometry's node/edge world state can enforce them mechanically.
+
+Prior art (adapt, don't copy):
+
+- **Fiasco (setup phase):** the purest no-isolated-nodes mechanic shipped:
+  every authored element (relationship, need, object, location) *is* an
+  edge between two players; unattached things cannot exist.
+- **Microscope:** nesting-as-connectivity (add only inside/adjacent to
+  existing history), a per-round **focus** bounding contributions to a
+  neighborhood, and the **palette** (agreed yes/no content lists: decorum
+  as data).
+- **Dawn of Worlds:** a costed action menu per turn (points economy for
+  create-race / raise-mountain / found-city): creation priced *inside*
+  creative play.
+- **The Quiet Year:** prompt-driven turns; **contempt tokens** ritualize
+  disagreement instead of blocking it.
+- **Dresden Files city creation / Ex Novo / street magic:** attachment
+  quotas (every location gets a face, every face a want).
+
+The mechanic, composed for Isometry:
+
+1. **Attachment rule (floor):** a contribution lands with at least one
+   edge to existing content; cast-before-create (worldbuilding decision 9)
+   already biases reuse. New nodes arrive via relationships.
+2. **Shape constraints per kind (rules):** pack-authored min-connectivity
+   schemas: a *significant* NPC needs a place, a stake, and a hook; an
+   item needs an origin and a holder; a secret needs a reachable reveal
+   condition. Checkable by the substrate exactly like movement range.
+   Significance is the threshold; background extras need nothing.
+3. **Gaps become the prompt deck (fun):** the app surfaces under-connected
+   nodes, dormant storylet requirements, and dangling secrets as turn
+   prompts ("the eel cult and the salt tax have never met: what does one
+   think of the other?"). Satisfying a dormant requirement lights an arc
+   up visibly: the game is making the world load-bearing, not just bigger.
+4. **Rounds, focus, palette, veto (decorum):** turn order from the
+   existing turn system; a declared focus bounds each round's
+   neighborhood; the palette constrains players and generators alike (the
+   same constraint data world laws already are); tombstones are the
+   X-card floor beneath a contempt-style gesture.
+
+Connectivity is not aesthetic. An unconnected fact is unreachable by
+storylet requirements, invisible to the prompt engine, and dead weight in
+play; the attachment rules are what make co-authored content *reachable*
+by the machinery that pays it off later.
 
 ### Prep-time: co-authoring the campaign pack
 
