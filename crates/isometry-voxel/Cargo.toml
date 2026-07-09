@@ -9,6 +9,7 @@ description = "Isometry's voxel appearance pipeline: palette-indexed voxel volum
 
 [dependencies]
 serde = { workspace = true }
+dot_vox = "5"
 
 [dev-dependencies]
 serde_json = { workspace = true }

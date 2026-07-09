@@ -17,12 +17,14 @@
 mod bake;
 mod png;
 mod recipe;
+mod vox;
 mod voxel;
 
 pub mod demo;
 
 pub use bake::{BakeParams, Sheet, bake_facing, bake_strip};
 pub use recipe::{Appearance, Clip, Palette, compose};
+pub use vox::load_vox;
 pub use voxel::{Rgb, Voxels};
 
 #[cfg(test)]
@@ -75,6 +77,52 @@ mod tests {
         let uri = sheet.to_png_data_uri();
         assert!(uri.starts_with("data:image/png;base64,"));
         assert!(uri.len() > 100);
+    }
+
+    // Build a spec-valid `.vox` in memory: MAIN { SIZE, XYZI, RGBA }.
+    fn synth_vox() -> Vec<u8> {
+        fn chunk(id: &[u8; 4], content: &[u8], children: &[u8]) -> Vec<u8> {
+            let mut c = Vec::new();
+            c.extend_from_slice(id);
+            c.extend_from_slice(&(content.len() as u32).to_le_bytes());
+            c.extend_from_slice(&(children.len() as u32).to_le_bytes());
+            c.extend_from_slice(content);
+            c.extend_from_slice(children);
+            c
+        }
+        let mut size = Vec::new();
+        for d in [2u32, 2, 3] {
+            size.extend_from_slice(&d.to_le_bytes()); // mv x=2, y=2, z=3 (up)
+        }
+        let voxels = [(0u8, 0u8, 0u8, 1u8), (1, 1, 2, 2)];
+        let mut xyzi = (voxels.len() as u32).to_le_bytes().to_vec();
+        for (x, y, z, i) in voxels {
+            xyzi.extend_from_slice(&[x, y, z, i]);
+        }
+        let mut rgba = vec![0u8; 256 * 4];
+        rgba[0..4].copy_from_slice(&[220, 60, 60, 255]); // palette slot for index 1
+        rgba[4..8].copy_from_slice(&[60, 200, 90, 255]); // palette slot for index 2
+        let mut children = chunk(b"SIZE", &size, &[]);
+        children.extend(chunk(b"XYZI", &xyzi, &[]));
+        children.extend(chunk(b"RGBA", &rgba, &[]));
+        let mut out = b"VOX ".to_vec();
+        out.extend_from_slice(&150u32.to_le_bytes());
+        out.extend(chunk(b"MAIN", &[], &children));
+        out
+    }
+
+    #[test]
+    fn loads_and_bakes_a_vox_model() {
+        let (vox, pal) = load_vox(&synth_vox()).expect("parse .vox");
+        // mv 2x2x3 (Z up) remaps to ours dx=2, dy=3 (height), dz=2 (depth).
+        assert_eq!((vox.dx, vox.dy, vox.dz), (2, 3, 2));
+        assert_eq!(vox.filled(), 2);
+        // Index 1 resolves to the red we placed at file slot 0 (MagicaVoxel's
+        // i -> palette[i-1], handled by the rotate in load_vox).
+        assert_eq!(pal.color(1), [220, 60, 60]);
+        assert_eq!(pal.color(2), [60, 200, 90]);
+        let sheet = bake_facing(&vox, &pal, 0, &BakeParams::default());
+        assert!(sheet.opaque_pixels() > 0, "a .vox bakes");
     }
 
     #[test]
