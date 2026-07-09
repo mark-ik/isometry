@@ -142,9 +142,18 @@ pub enum NetMode {
     Remote,
 }
 
-/// A compendium row: a monster reduced to what the index shows and the board
-/// spawns. The host fills these from the system's bestiary, so the view names
-/// no rules (mirroring how [`SheetSchema`] is host-supplied).
+/// One monster action, view-side.
+#[derive(Clone)]
+pub struct ActionRow {
+    pub name: String,
+    pub to_hit: Option<i32>,
+    pub damage: Option<String>,
+    pub desc: String,
+}
+
+/// A compendium row: a monster reduced to what the index shows, the page
+/// displays, and the board spawns. The host fills these from the system's
+/// bestiary, so the view names no rules (like [`SheetSchema`]).
 #[derive(Clone)]
 pub struct MonsterRow {
     pub key: String,
@@ -152,8 +161,15 @@ pub struct MonsterRow {
     pub cr: f32,
     pub cr_label: String,
     pub kind: String,
+    pub size: String,
+    pub alignment: String,
     pub hp: i32,
+    pub hit_dice: String,
     pub ac: i32,
+    pub speed_ft: i32,
+    pub xp: i32,
+    pub abilities: [i32; 6],
+    pub actions: Vec<ActionRow>,
     pub sprite: String,
 }
 
@@ -252,6 +268,8 @@ pub struct UiState {
     pub compendium_open: bool,
     pub compendium_scroll: f32,
     pub compendium_sort: (usize, bool),
+    /// The compendium's open monster page (its key), or `None` for the index.
+    pub compendium_selected: Option<String>,
 }
 
 impl UiState {
@@ -303,6 +321,7 @@ impl UiState {
             compendium_open: false,
             compendium_scroll: 0.0,
             compendium_sort: (0, false),
+            compendium_selected: None,
         }
     }
 
@@ -341,6 +360,51 @@ impl UiState {
             self.compendium_sort = (col, false);
         }
         self.compendium_scroll = 0.0;
+    }
+
+    /// Open a monster's page in the compendium.
+    pub fn open_monster(&mut self, key: String) {
+        self.compendium_selected = Some(key);
+    }
+
+    /// Back from a monster page to the index.
+    pub fn back_to_index(&mut self) {
+        self.compendium_selected = None;
+    }
+
+    /// Spawn a bestiary monster as a token on the board (a Local editor
+    /// action, reusing the token-placement path). Places on the selected tile
+    /// if free, else the nearest free tile, then closes the compendium so the
+    /// new token is visible.
+    pub fn spawn_monster(&mut self, key: &str) {
+        let Some(m) = self.bestiary.iter().find(|m| m.key == key) else {
+            return;
+        };
+        let (sprite, name) = (m.sprite.clone(), m.name.clone());
+        let at = self.free_spawn_tile();
+        self.apply_step(vec![SessionEvent::TokenPlaced(Token {
+            id: self.next_token_id(),
+            at,
+            facing: Facing::South,
+            sprite,
+            owner: None,
+        })]);
+        self.status = format!("spawned {name}");
+        self.compendium_open = false;
+        self.compendium_selected = None;
+    }
+
+    /// A free tile to spawn onto: the selection if empty, else scanning a
+    /// small block outward from it.
+    fn free_spawn_tile(&self) -> TileCoord {
+        let start = self.selected.unwrap_or((2, 2));
+        for d in 0..64 {
+            let at = (start.0 + (d % 8), start.1 + (d / 8));
+            if self.token_at(at).is_none() {
+                return at;
+            }
+        }
+        start
     }
 
     /// Queue a field edit (a stepper on the open sheet); the host applies

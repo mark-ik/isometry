@@ -220,6 +220,23 @@ const COMPENDIUM_CSS: &str = r#"
 .grid-row-even { background-color: #1e222c; }
 .grid-row-odd { background-color: #232734; }
 .grid-cell { display: flex; align-items: center; padding-left: 6px; box-sizing: border-box; overflow: hidden; }
+.compendium-link { color: #9fd48a; cursor: pointer; }
+.compendium-actions { display: flex; gap: 6px; }
+.monster-sub { font-size: 12px; color: #8a90a0; font-style: italic; margin-bottom: 10px; }
+.monster-stats { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-bottom: 12px; }
+.stat-row { font-size: 13px; }
+.stat-label { color: #8a90a0; margin-right: 5px; }
+.stat-val { color: #e8ebf2; font-weight: bold; }
+.monster-abilities { display: flex; gap: 6px; margin-bottom: 12px; }
+.abil { flex: 1; background-color: #232734; border-radius: 3px; padding: 5px 0; text-align: center; }
+.abil-name { font-size: 10px; color: #8a90a0; }
+.abil-score { font-size: 15px; color: #e8ebf2; font-weight: bold; }
+.abil-mod { font-size: 11px; color: #9fd48a; }
+.monster-actions { display: block; margin-bottom: 12px; }
+.monster-action { margin-bottom: 7px; }
+.action-name { font-size: 13px; color: #e8ebf2; font-weight: bold; }
+.action-desc { font-size: 11px; color: #cfd3dd; }
+.spawn-btn { display: inline-block; background-color: #2c6e49; color: #eaffea; padding: 7px 14px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 13px; }
 "#;
 
 /// Bake the demo voxel rig to `.token-*` sprite rules (data-URI PNGs), called
@@ -228,25 +245,37 @@ const COMPENDIUM_CSS: &str = r#"
 fn voxel_token_css() -> String {
     use isometry_voxel::{BakeParams, Palette, bake_facing, demo};
     let p = BakeParams { half_w: 2, cube_h: 2, facings: 4, margin: 2 };
-    let (rig, skin) = demo::hero();
-    let knight = bake_facing(&rig, &skin, 0, &p).to_png_data_uri();
-    // Goblin: same silhouette, recoloured (skin -> green, shirt -> moss).
-    let goblin_pal = Palette::new(
-        skin.0
-            .iter()
-            .enumerate()
-            .map(|(i, c)| match i {
-                0 => [140, 165, 110],
-                1 => [72, 110, 60],
-                _ => *c,
-            })
-            .collect(),
-    );
-    let goblin = bake_facing(&rig, &goblin_pal, 0, &p).to_png_data_uri();
-    format!(
-        ".token-knight {{ background-image: url(\"{knight}\"); \
-         background-size: contain; background-position: bottom center; }}\n\
-         .token-goblin {{ background-image: url(\"{goblin}\"); \
-         background-size: contain; background-position: bottom center; }}\n"
-    )
+    let (rig, base) = demo::hero();
+    // Palette-swap the one rig into per-monster recolours (skin index 0, shirt
+    // index 1). Proves recolour across the starter bestiary; per-monster voxel
+    // models arrive with parts packs (P3).
+    let recolor = |skin: [u8; 3], shirt: [u8; 3]| -> Palette {
+        Palette::new(
+            base.0
+                .iter()
+                .enumerate()
+                .map(|(i, c)| match i {
+                    0 => skin,
+                    1 => shirt,
+                    _ => *c,
+                })
+                .collect(),
+        )
+    };
+    let variants: [(&str, Palette); 5] = [
+        ("knight", base.clone()),
+        ("goblin", recolor([140, 165, 110], [72, 110, 60])),
+        ("orc", recolor([120, 140, 95], [92, 70, 55])),
+        ("skeleton", recolor([226, 223, 211], [198, 194, 180])),
+        ("wolf", recolor([150, 150, 158], [92, 92, 100])),
+    ];
+    let mut css = String::new();
+    for (class, pal) in &variants {
+        let uri = bake_facing(&rig, pal, 0, &p).to_png_data_uri();
+        css.push_str(&format!(
+            ".token-{class} {{ background-image: url(\"{uri}\"); \
+             background-size: contain; background-position: bottom center; }}\n"
+        ));
+    }
+    css
 }

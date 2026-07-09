@@ -27,8 +27,8 @@ use isometry_core::FieldValue;
 use isometry_net::{GameEvent, GameSnapshot};
 use isometry_system::{srd_5e, srd_bestiary, System};
 use isometry_views::{
-    board_css, board_root, demo_map, synth_map, MonsterRow, NetMode, SheetSchema, UiChild, UiState,
-    PANEL_W,
+    board_css, board_root, demo_map, synth_map, ActionRow, MonsterRow, NetMode, SheetSchema,
+    UiChild, UiState, PANEL_W,
 };
 
 mod net;
@@ -957,8 +957,24 @@ fn bestiary_of() -> Vec<MonsterRow> {
                 cr: m.challenge_rating,
                 cr_label,
                 kind: m.kind,
+                size: m.size,
+                alignment: m.alignment,
                 hp: m.hit_points,
+                hit_dice: m.hit_dice,
                 ac: m.armor_class,
+                speed_ft: m.speed_ft,
+                xp: m.xp,
+                abilities: m.abilities,
+                actions: m
+                    .actions
+                    .into_iter()
+                    .map(|a| ActionRow {
+                        name: a.name,
+                        to_hit: a.to_hit,
+                        damage: a.damage,
+                        desc: a.desc,
+                    })
+                    .collect(),
                 sprite: m.sprite,
             }
         })
