@@ -10,9 +10,10 @@ spike, Findings) and `isometry-voxel` is founded (baker + recipe, 2D
 mode, 6 tests), and voxel tokens now render on the live board with
 palette-swap (receipt scry-shots/2026-07-08_isometry_voxel_tokens.png),
 and `.vox` ingest works. P1 (the appearance lane) is complete, and the P2
-compendium landed end to end (sortable index, monster page, and
-spawn-to-board, where the compendium meets the voxel pipeline); P2 remaining
-is the full 5e-database vendor (P2b). This is the "campaign packs" horizon the
+compendium is complete: a sortable index, monster/spell/item pages,
+spawn-to-board, Monsters/Spells/Items namespaces, and the full 5e-database
+vendored (334 monsters, 319 spells, 237 items). This is the "campaign packs"
+horizon the
 bootstrap plan deferred to its own plan
 (2026-07-05_isometry_bootstrap_plan.md, closing paragraph).
 
@@ -314,3 +315,12 @@ alongside.
   stat_list + prose. Receipts:
   scry-shots/2026-07-08_isometry_{spell_page,items_index}.png. Next: full
   5e-database vendor (P2b).
+- 2026-07-08: **5e-database vendored (P2b); P2 complete** (commit 149c6bb).
+  334 monsters, 319 spells, 237 items transformed from 5e-database into our
+  trimmed format (data/*.json, ~695KB vs 3.3MB raw), loaded via serde
+  include_str; the compendium browses the full SRD, virtualized, with wheel
+  scroll. Receipt: scry-shots/2026-07-08_isometry_vendored_bestiary.png.
+  Known gap: serval does not clip the grid body's overflow:hidden on
+  absolutely-placed rows, so a scrolled window is not viewport-clipped (the
+  DOM still virtualizes) - a serval-side follow-up. `search_field` is the
+  next sibling now that lists are hundreds long.
