@@ -9,8 +9,10 @@ permanent invariant (decision 11). Landed: the bake proved soulful (CPU
 spike, Findings) and `isometry-voxel` is founded (baker + recipe, 2D
 mode, 6 tests), and voxel tokens now render on the live board with
 palette-swap (receipt scry-shots/2026-07-08_isometry_voxel_tokens.png),
-and `.vox` ingest works. P1 (the appearance lane) is complete; next is
-the compendium slice (P2). This is the "campaign packs" horizon the
+and `.vox` ingest works. P1 (the appearance lane) is complete, and the P2
+compendium index landed as the first `data_grid` consumer; P2 remaining is
+the monster page, spawn-to-board, and the full 5e-database vendor. This is
+the "campaign packs" horizon the
 bootstrap plan deferred to its own plan
 (2026-07-05_isometry_bootstrap_plan.md, closing paragraph).
 
@@ -286,3 +288,11 @@ alongside.
   9). `data_grid` widget siblings catalogued (new section). Next: the Monsters
   index as a `data_grid` overlay (UiState + compendium overlay; conventions
   read, ready to build).
+- 2026-07-08: **Monsters compendium index landed** (commit b9048d2), the first
+  `data_grid` consumer: a fixed-width overlay (Name/CR/Type/HP/AC, sortable
+  header, zebra) toggled by a Bestiary button, host-fed view-side rows so
+  views stay system-agnostic. Headed receipt
+  scry-shots/2026-07-08_isometry_compendium_datagrid.png. The overlay pattern
+  now has two consumers (sheet + compendium), so `overlay_panel` is a real
+  extraction candidate. P2 remaining: monster page, spawn-to-board, and the
+  full 5e-database vendor (P2b).
