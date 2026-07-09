@@ -1,0 +1,14 @@
+[package]
+name = "isometry-campaign"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Isometry's campaign-state layer: generated objects, secret facts with reveal conditions, the public world-fact envelope, and the host-private campaign store. Pure data, no I/O; the substrate stores and displays, system plugins interpret."
+
+[dependencies]
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

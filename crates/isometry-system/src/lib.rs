@@ -127,6 +127,11 @@ impl System {
                             let ls = piccolo::String::from_slice(&ctx, s.as_bytes());
                             table.set(ctx, key, ls)?
                         }
+                        FieldValue::Float(f) => table.set(ctx, key, *f)?,
+                        // Nested values reach Lua with the W2 generator
+                        // ABI (worldbuilding plan); scalar rules don't
+                        // see them yet.
+                        FieldValue::List(_) | FieldValue::Map(_) => Value::Nil,
                     };
                 }
                 let fname = piccolo::String::from_slice(&ctx, func.as_bytes());

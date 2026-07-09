@@ -1,3 +1,4 @@
+use isometry_campaign::WorldFact;
 use isometry_core::{MapDocument, RollRecord, SessionEvent, SheetData, TokenId, TurnList};
 use serde::{Deserialize, Serialize};
 
@@ -17,6 +18,14 @@ pub struct GameSnapshot {
     /// [`ROLL_LOG_CAP`]. Everyone at the table sees every roll.
     #[serde(default)]
     pub roll_log: Vec<RollRecord>,
+    /// The campaign journal: every public [`WorldFact`] committed so far,
+    /// oldest first. Uncapped by design: entries are small text and each
+    /// is campaign state (a revealed secret, a history event), so
+    /// dropping old ones would silently delete facts, unlike the roll
+    /// log's noise. Only public faces ever land here; the GM layer lives
+    /// in the host's private `CampaignStore` (worldbuilding decision 8).
+    #[serde(default)]
+    pub journal: Vec<WorldFact>,
 }
 
 /// Rolls kept in the shared log; older ones drop off.
@@ -41,6 +50,11 @@ pub enum GameEvent {
     Rolled(RollRecord),
     /// Bind or replace a token's character sheet.
     SheetSet { token: TokenId, sheet: SheetData },
+    /// A public campaign fact committed to the journal: a revealed
+    /// secret, a generated object's public face, narration, a history
+    /// event. Host-committed only; the host rejects client intents of
+    /// this variant (the DM is the authority over what becomes true).
+    Fact(WorldFact),
 }
 
 /// One message on the wire. The host is the authority: clients send

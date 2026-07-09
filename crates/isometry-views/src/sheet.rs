@@ -28,6 +28,11 @@ pub fn sheet_overlay(ui: &UiState) -> Option<UiChild> {
             Some(FieldValue::Int(n)) => n.to_string(),
             Some(FieldValue::Text(s)) => s.clone(),
             Some(FieldValue::Bool(b)) => b.to_string(),
+            Some(FieldValue::Float(f)) => f.to_string(),
+            // Nested fields get real editors with the item/inventory
+            // views (worldbuilding W1); show a count until then.
+            Some(FieldValue::List(items)) => format!("{} entries", items.len()),
+            Some(FieldValue::Map(m)) => format!("{} entries", m.len()),
             None => "-".to_owned(),
         };
         let row: UiChild = if *is_int {

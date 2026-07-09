@@ -50,6 +50,10 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Eve
             state.map.set_sheet(*token, sheet.clone());
             Ok(())
         }
+        GameEvent::Fact(fact) => {
+            state.journal.push(fact.clone());
+            Ok(())
+        }
     }
 }
 
@@ -121,6 +125,16 @@ impl HostSession {
     /// misbehaving client cannot corrupt the authority).
     pub fn on_message(&mut self, from: PeerId, msg: NetMessage) -> Vec<Outbound> {
         match msg {
+            // Campaign facts are DM-committed only (`local_event`); a
+            // client cannot make something true by proposing it.
+            NetMessage::Intent {
+                event: GameEvent::Fact(_),
+            } => vec![(
+                Recipient::One(from),
+                NetMessage::Rejected {
+                    reason: "campaign facts are committed by the DM".to_owned(),
+                },
+            )],
             NetMessage::Intent { event } => match self.try_commit(event) {
                 Ok(out) => out,
                 Err(reason) => vec![(Recipient::One(from), NetMessage::Rejected { reason })],

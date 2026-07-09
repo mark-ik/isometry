@@ -33,6 +33,7 @@ fn snapshot() -> GameSnapshot {
         map,
         turns: TurnList::new(),
         roll_log: Vec::new(),
+        journal: Vec::new(),
     }
 }
 
@@ -182,5 +183,67 @@ fn move_and_facing_batch_orders_atomically() {
     );
     let t = sim.host.state().map.token(TokenId(1)).unwrap();
     assert_eq!((t.at, t.facing), ((2, 1), Facing::East));
+    assert_converged(&sim);
+}
+
+/// The W0 done-condition (worldbuilding plan, decision 8): a GM-only
+/// fact lives host-side only, a peer's snapshot bytes provably contain
+/// no unrevealed secret, a reveal publishes it to every journal as an
+/// ordinary logged event, and a client cannot fabricate a fact.
+#[test]
+fn secrets_stay_host_side_until_revealed() {
+    use isometry_campaign::{CampaignStore, RevealCondition, SecretFact};
+
+    const SECRET_TEXT: &str = "OATHBOUND-RIVER-SECRET";
+
+    // The GM layer: host-private, beside the session, never inside it.
+    let mut campaign = CampaignStore::new();
+    campaign.insert_secret(SecretFact {
+        id: "sword-01.curse".to_owned(),
+        text: SECRET_TEXT.to_owned(),
+        tags: vec!["item:sword-01".to_owned()],
+        reveal: RevealCondition::Identify,
+    });
+
+    let mut sim = Sim::new(HostSession::new(snapshot()));
+    sim.connect(PeerId(10));
+    sim.connect(PeerId(11));
+
+    // Unrevealed: no peer's replicated state carries the secret, byte-wise.
+    let needle = SECRET_TEXT.as_bytes();
+    for (peer, client) in &sim.clients {
+        let bytes = postcard::to_allocvec(client.state().unwrap()).unwrap();
+        assert!(
+            !bytes.windows(needle.len()).any(|w| w == needle),
+            "client {peer:?} snapshot bytes contain the unrevealed secret"
+        );
+        assert!(client.state().unwrap().journal.is_empty());
+    }
+
+    // A client cannot make something true by proposing it.
+    sim.client_intent(
+        PeerId(10),
+        GameEvent::Fact(isometry_campaign::WorldFact {
+            id: "forged".to_owned(),
+            kind: "reveal".to_owned(),
+            text: "the king owes me gold".to_owned(),
+            tags: Vec::new(),
+        }),
+    );
+    assert!(sim.host.state().journal.is_empty());
+    assert_converged(&sim);
+
+    // The DM reveals: the fact leaves the GM store and is committed as
+    // an ordinary event; every journal converges on the public face.
+    let fact = campaign.reveal("sword-01.curse").expect("secret exists");
+    assert!(campaign.is_empty(), "revealed fact left the GM layer");
+    sim.host_event(GameEvent::Fact(fact));
+
+    assert_eq!(sim.host.state().journal.len(), 1);
+    assert_eq!(sim.host.state().journal[0].text, SECRET_TEXT);
+    for client in sim.clients.values() {
+        assert_eq!(client.state().unwrap().journal.len(), 1);
+        assert_eq!(client.state().unwrap().journal[0].kind, "reveal");
+    }
     assert_converged(&sim);
 }

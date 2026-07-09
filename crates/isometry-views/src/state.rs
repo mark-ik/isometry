@@ -1409,6 +1409,7 @@ mod tests {
             map: snap_map,
             turns: ui.turns.clone(),
             roll_log: Vec::new(),
+            journal: Vec::new(),
         };
         ui.apply_snapshot(snap);
         assert_eq!(ui.map.token(TokenId(1)).unwrap().at, (before.0 + 1, before.1));

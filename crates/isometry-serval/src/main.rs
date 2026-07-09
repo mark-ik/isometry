@@ -737,6 +737,7 @@ impl ApplicationHandler for App {
                     map: ui.map.clone(),
                     turns: ui.turns.clone(),
                     roll_log: Vec::new(),
+                    journal: Vec::new(),
                 };
                 self.net = Some(NetBridge::spawn(Role::Host(snapshot)));
             }

@@ -12,8 +12,9 @@ and turn-based play substrate for D&D, Pathfinder, and other systems. The
 DM prepares maps ahead of time and hosts a session; players join over p2p
 and move through the maps in turns. The look and feel target is GBA-era
 tactics games (Tactics Ogre: The Knight of Lodis, Final Fantasy Tactics
-Advance): fixed camera, 2:1 diamond tiles, quantized height steps, low
-internal resolution integer-scaled with nearest-neighbor sampling.
+Advance): a locked isometric 2D lens first, 2:1 diamond tiles, quantized
+height steps, low internal resolution integer-scaled with nearest-neighbor
+sampling, and voxel-sourced appearance that keeps later 2.5D / 3D lenses open.
 
 The substrate knows tiles, tokens, turns, facing, elevation, and area
 templates. Game rules live in system plugins (schema plus scripts). The
@@ -37,6 +38,9 @@ See `design_docs/PROJECT_DESCRIPTION.md` for the product description and
 - **tileset**: a folder of sprites plus a manifest naming tile kinds.
   Appearance binds through CSS class vocabulary, so a campaign can reskin
   by swapping sheets.
+- **voxel appearance**: token, prop, and tile art can be sourced from
+  MagicaVoxel-style volumes and recipes, then baked to the locked isometric
+  pixel lens. Voxels are asset/generation substrate, not map storage.
 - **campaign**: maps, tilesets, sheets, and system choice bundled as a
   distributable pack.
 - **system plugin**: a game system: character/item schemas plus scripted
@@ -71,10 +75,17 @@ crates/
                     stylesheets). Host-agnostic.
   isometry-serval/  Native winit host: window, input, netrender present.
                     ISOMETRY_PROFILE=1 prints frame timers.
+  isometry-net/     DM-authority replication over a pure protocol seam, with
+                    iroh behind a feature.
+  isometry-system/  System plugin lane: schemas plus piccolo Lua rules, with
+                    the 5e SRD content pack.
+  isometry-voxel/   Voxel appearance pipeline: .vox ingest, recipes, palette
+                    swaps, and isometric sprite bakes.
 ```
 
-Planned (phase-gated, see the bootstrap plan): `isometry-net` (iroh
-transport), `isometry-web` (browser host).
+Planned (phase-gated, see the bootstrap and horizon plans): `isometry-web`
+(browser host), richer campaign packs, generator/worldbuilding tools, and
+later live 2.5D / 3D voxel lenses.
 
 Keep `isometry-core` pure: no `wgpu`, no `iroh`, no serval crates, no
 file I/O. Event log semantics live in core; transport lives in
@@ -100,7 +111,9 @@ file I/O. Event log semantics live in core; transport lives in
   deliberate simplification, revisit only through a plan.
 - Do not ship copyrighted game content. 5e SRD (CC-BY-4.0) and
   Pathfinder 2e (ORC) material only, with attribution.
-- Do not break the fixed-camera assumption. Rotation would multiply
-  sprite art and re-sorting costs; it is out of scope by design.
+- Do not treat camera freedom as a near-term rendering task. The locked
+  isometric angle is the shipped 2D lens; later 2.5D / 3D modes are allowed
+  because voxel source models dissolve the facing-art explosion, but they need
+  their own plan and render lane.
 - Do not add features beyond the active plan's current target without
   surfacing the scope change first.

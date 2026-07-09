@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/isometry-core",
+    "crates/isometry-campaign",
     "crates/isometry-views",
     "crates/isometry-serval",
     "crates/isometry-net",
@@ -19,6 +20,7 @@ rust-version = "1.80"
 [workspace.dependencies]
 # Internal crates
 isometry-core = { path = "crates/isometry-core", version = "0.1.0" }
+isometry-campaign = { path = "crates/isometry-campaign", version = "0.1.0" }
 isometry-voxel = { path = "crates/isometry-voxel", version = "0.1.0" }
 isometry-views = { path = "crates/isometry-views", version = "0.1.0" }
 isometry-net = { path = "crates/isometry-net", version = "0.1.0" }

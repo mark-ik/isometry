@@ -10,12 +10,19 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 /// One sheet field value. A small closed set the substrate can store and
-/// replicate; a system plugin decides what each field means.
+/// replicate; a system plugin decides what each field means. `List` and
+/// `Map` nest, so inventories, modifier stacks, and condition lists fit
+/// without a schema change (worldbuilding plan W0). New variants append
+/// at the end: postcard encodes the variant index, so inserting one
+/// would silently re-tag every later variant on the wire.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum FieldValue {
     Int(i64),
     Text(String),
     Bool(bool),
+    Float(f64),
+    List(Vec<FieldValue>),
+    Map(BTreeMap<String, FieldValue>),
 }
 
 impl FieldValue {
@@ -29,6 +36,27 @@ impl FieldValue {
     pub fn as_text(&self) -> Option<&str> {
         match self {
             FieldValue::Text(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn as_float(&self) -> Option<f64> {
+        match self {
+            FieldValue::Float(f) => Some(*f),
+            _ => None,
+        }
+    }
+
+    pub fn as_list(&self) -> Option<&[FieldValue]> {
+        match self {
+            FieldValue::List(items) => Some(items),
+            _ => None,
+        }
+    }
+
+    pub fn as_map(&self) -> Option<&BTreeMap<String, FieldValue>> {
+        match self {
+            FieldValue::Map(m) => Some(m),
             _ => None,
         }
     }
@@ -80,6 +108,32 @@ mod tests {
         assert_eq!(s.int("str"), Some(16));
         assert_eq!(s.text("name"), Some("Aldric"));
         assert_eq!(s.int("name"), None);
+        let json = serde_json::to_string(&s).unwrap();
+        let back: SheetData = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, s);
+    }
+
+    #[test]
+    fn nested_values_round_trip() {
+        let mut inventory = BTreeMap::new();
+        inventory.insert("weight".to_owned(), FieldValue::Float(3.5));
+        inventory.insert(
+            "items".to_owned(),
+            FieldValue::List(vec![
+                FieldValue::Text("longsword".to_owned()),
+                FieldValue::Text("rope".to_owned()),
+            ]),
+        );
+        let mut s = SheetData::new("5e-srd");
+        s.fields
+            .insert("inventory".to_owned(), FieldValue::Map(inventory));
+
+        let v = s.fields.get("inventory").unwrap();
+        let map = v.as_map().unwrap();
+        assert_eq!(map.get("weight").unwrap().as_float(), Some(3.5));
+        assert_eq!(map.get("items").unwrap().as_list().unwrap().len(), 2);
+        assert_eq!(v.as_int(), None);
+
         let json = serde_json::to_string(&s).unwrap();
         let back: SheetData = serde_json::from_str(&json).unwrap();
         assert_eq!(back, s);

@@ -2954,6 +2954,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "isometry-campaign"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "isometry-core"
 version = "0.1.0"
 dependencies = [
@@ -2967,6 +2975,7 @@ version = "0.1.0"
 dependencies = [
  "iroh",
  "iroh-tickets",
+ "isometry-campaign",
  "isometry-core",
  "postcard",
  "serde",
