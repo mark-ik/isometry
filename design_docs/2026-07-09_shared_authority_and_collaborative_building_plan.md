@@ -128,7 +128,25 @@ creative mode, survival mode. Today's model is one player in **edit mode**
 (the DM authors freely: editor, secrets, commits) while everyone else plays
 **survival** (priced, validated moves only). **Creative mode is not "edit
 for everyone"**: it keeps the turn-based structure and makes a *game* of
-building the world together, with its own rulebook. The symmetry that makes
+building the world together, with its own rulebook.
+
+**The definitional collapse (2026-07-09):** "the GM" is not a protocol
+role; **the GM is whoever is in edit mode, and that need not be one
+person.** Two consequences:
+
+- **Global view follows edit mode.** Only edit-mode holders see the GM
+  layer. With multiple simultaneous holders (co-DMs), the private
+  `CampaignStore` replicates among them over a directed channel, the
+  whisper shape, never the hashed public log. Decision 8 generalizes to
+  three replication rings: the public log (everyone, hash-converged), the
+  GM ring (edit-mode holders, directed sync), and whispers (pairs).
+  Players talk freely, as always; table talk was never consensus state.
+- **Edit mode and sequencing are separable.** Holding edit mode grants
+  authoring and the global view, not necessarily log ordering: tier 2's
+  rotating turn-leader can sequence while two edit-mode holders author.
+  Tier 1's "host handoff" decomposes into two transfers that usually but
+  not necessarily travel together: the sequencer role and edit-mode
+  membership. The symmetry that makes
 this cheap: survival mode validates moves against game rules; creative mode
 validates contributions against **world-shape rules**. Both are pack/plugin
 data; both run through the same intent/commit pipeline.
