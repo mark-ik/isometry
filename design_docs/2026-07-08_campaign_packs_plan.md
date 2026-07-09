@@ -331,3 +331,16 @@ alongside.
   scry-shots/2026-07-08_isometry_compendium_search.png. Three catalogued
   siblings realized this session (stat_list, tab_strip, search_field);
   overlay_panel and record_card are the next extract-on-demand candidates.
+- 2026-07-09: **overlay_panel + record_card extracted** (commit 2146762);
+  five catalogued siblings now realized (overlay_panel backs the compendium +
+  sheet; record_card backs the monster/spell/item pages). **Attempted the
+  serval grid-clip fix and reverted it.** The change (clip lifted layers by
+  their containing-block overflow, serval 0c248e5) passed isolated paint-list
+  unit tests (clip + escape; 269 serval-layout green) but **blanked the
+  isometry board**: every tile and token paints as an absolutely-placed lifted
+  layer, and the re-applied clip whited-out the whole frame (a coordinate-space
+  or clip-balance mismatch with the board's camera + pane the unit tests did
+  not catch). Reverted (serval 6f812c4) to keep the tree rendering. The clip
+  gap stays open; a rework needs board-level integration coverage (a headed
+  capture in the loop), not just paint-list unit tests. Lesson: a core-paint
+  change needs an app-level render check before it lands.
