@@ -10,9 +10,9 @@ spike, Findings) and `isometry-voxel` is founded (baker + recipe, 2D
 mode, 6 tests), and voxel tokens now render on the live board with
 palette-swap (receipt scry-shots/2026-07-08_isometry_voxel_tokens.png),
 and `.vox` ingest works. P1 (the appearance lane) is complete, and the P2
-compendium index landed as the first `data_grid` consumer; P2 remaining is
-the monster page, spawn-to-board, and the full 5e-database vendor. This is
-the "campaign packs" horizon the
+compendium landed end to end (sortable index, monster page, and
+spawn-to-board, where the compendium meets the voxel pipeline); P2 remaining
+is the full 5e-database vendor (P2b). This is the "campaign packs" horizon the
 bootstrap plan deferred to its own plan
 (2026-07-05_isometry_bootstrap_plan.md, closing paragraph).
 
@@ -296,3 +296,13 @@ alongside.
   now has two consumers (sheet + compendium), so `overlay_panel` is a real
   extraction candidate. P2 remaining: monster page, spawn-to-board, and the
   full 5e-database vendor (P2b).
+- 2026-07-08: **monster page + spawn-to-board landed** (commit 87e0cb3).
+  Clicking a name opens a record card + stat list + six-ability block +
+  actions + Spawn; spawn drops the monster via the `TokenPlaced` path
+  (undoable, joins the turn list), its sprite resolving to a per-monster
+  palette-swap of the rig (orc/skeleton/wolf as distinct voxel tokens; real
+  per-monster models are parts-pack work). First `record_card`/`stat_list`
+  siblings realised. Receipts:
+  scry-shots/2026-07-08_isometry_{monster_page,spawn_monsters}.png. **P2 core
+  complete**; remaining is the full 5e-database vendor (P2b), then
+  `search_field`/`tab_strip` as the list grows.
