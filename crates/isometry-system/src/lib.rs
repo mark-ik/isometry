@@ -20,7 +20,11 @@ use isometry_core::{FieldValue, SheetData};
 use piccolo::{Closure, Executor, IntoValue, Lua, Table, Value};
 
 mod bestiary;
+mod items;
+mod spells;
 pub use bestiary::{Monster, MonsterAction, srd_bestiary};
+pub use items::{Item, srd_items};
+pub use spells::{Spell, srd_spells};
 
 /// A schema field: an editable value on the sheet.
 pub struct FieldDef {
