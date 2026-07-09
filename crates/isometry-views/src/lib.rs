@@ -13,6 +13,7 @@ mod panel;
 mod sheet;
 mod state;
 mod theme;
+mod widgets;
 
 pub use board::{board_root, UiChild};
 pub use demo::{demo_map, synth_map};

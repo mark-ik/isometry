@@ -75,17 +75,14 @@ pub fn sheet_overlay(ui: &UiState) -> Option<UiChild> {
         children.push(Box::new(
             el("div", text("Modifiers")).attr("class", "sheet-heading"),
         ));
-        let derived: Vec<UiChild> = schema
+        let pairs: Vec<(String, String)> = schema
             .derived
             .iter()
             .filter_map(|(k, label)| {
-                ui.sheet_derived.get(k).map(|v| {
-                    Box::new(el("div", text(format!("{label}: {v:+}"))).attr("class", "sheet-mod"))
-                        as UiChild
-                })
+                ui.sheet_derived.get(k).map(|v| (label.clone(), format!("{v:+}")))
             })
             .collect();
-        children.push(Box::new(el("div", derived).attr("class", "sheet-mods")));
+        children.push(crate::widgets::stat_list(pairs, "sheet-mods"));
     }
 
     // Actions: each rolls through the system.

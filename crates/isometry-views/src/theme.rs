@@ -117,7 +117,7 @@ pub fn board_css() -> String {
 .sheet-field { flex: 1; }
 .sheet-heading { color: #8b91a0; font-size: 11px; margin-top: 8px; margin-bottom: 4px; }
 .sheet-mods { display: flex; flex-wrap: wrap; }
-.sheet-mod { width: 76px; font-size: 12px; margin-bottom: 2px; }
+.sheet-mods .stat-row { min-width: 72px; font-size: 12px; margin-bottom: 2px; }
 .sheet-actions { display: flex; flex-wrap: wrap; }
 
 /* Right-click token context menu: a small card at the click position. */

@@ -121,19 +121,6 @@ fn index_grid(ui: &UiState) -> UiChild {
     ))
 }
 
-fn stat(label: &'static str, val: String) -> UiChild {
-    Box::new(
-        el::<_, UiState, ()>(
-            "div",
-            (
-                el("span", text(label)).attr("class", "stat-label"),
-                el("span", text(val)).attr("class", "stat-val"),
-            ),
-        )
-        .attr("class", "stat-row"),
-    )
-}
-
 /// A monster's page: header, a stat list, the ability block, actions, and a
 /// spawn button.
 fn monster_page(m: &MonsterRow) -> UiChild {
@@ -165,16 +152,15 @@ fn monster_page(m: &MonsterRow) -> UiChild {
     )
     .attr("class", "monster-sub");
 
-    let stats = el::<_, UiState, ()>(
-        "div",
-        (
-            stat("AC", m.ac.to_string()),
-            stat("HP", format!("{} ({})", m.hp, m.hit_dice)),
-            stat("Speed", format!("{} ft", m.speed_ft)),
-            stat("CR", format!("{} ({} XP)", m.cr_label, m.xp)),
-        ),
-    )
-    .attr("class", "monster-stats");
+    let stats = crate::widgets::stat_list(
+        [
+            ("AC".to_owned(), m.ac.to_string()),
+            ("HP".to_owned(), format!("{} ({})", m.hp, m.hit_dice)),
+            ("Speed".to_owned(), format!("{} ft", m.speed_ft)),
+            ("CR".to_owned(), format!("{} ({} XP)", m.cr_label, m.xp)),
+        ],
+        "monster-stats",
+    );
 
     let abilities: Vec<UiChild> = (0..6)
         .map(|i| {
