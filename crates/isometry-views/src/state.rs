@@ -429,6 +429,11 @@ impl UiState {
         self.compendium_scroll = 0.0;
     }
 
+    /// Scroll the compendium grid by wheel `dy`, clamped to `max`.
+    pub fn scroll_compendium(&mut self, dy: f32, max: f32) {
+        self.compendium_scroll = (self.compendium_scroll + dy).clamp(0.0, max);
+    }
+
     /// Back from a monster page to the index.
     pub fn back_to_index(&mut self) {
         self.compendium_selected = None;

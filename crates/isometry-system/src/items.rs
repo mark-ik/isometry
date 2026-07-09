@@ -1,6 +1,8 @@
-//! SRD equipment (content pack). Hand-authored starter slice; the full set is
-//! vendored from 5e-database in P2b. SRD 5.1, used under CC-BY-4.0 with
-//! attribution (bootstrap decision #7).
+//! SRD equipment as content, loaded from the vendored pack.
+//!
+//! `../data/items.json` is the SRD 5.1 equipment list transformed from
+//! 5e-database (P2b), used under CC-BY-4.0 with attribution (bootstrap
+//! decision #7).
 
 use serde::{Deserialize, Serialize};
 
@@ -9,7 +11,7 @@ use serde::{Deserialize, Serialize};
 pub struct Item {
     pub key: String,
     pub name: String,
-    /// "Weapon", "Armor", "Gear".
+    /// "Weapon", "Armor", "Adventuring Gear", ...
     pub category: String,
     pub cost: String,
     pub weight: String,
@@ -18,46 +20,9 @@ pub struct Item {
     pub desc: String,
 }
 
-fn item(key: &str, name: &str, category: &str, cost: &str, weight: &str, detail: &str, desc: &str) -> Item {
-    Item {
-        key: key.into(),
-        name: name.into(),
-        category: category.into(),
-        cost: cost.into(),
-        weight: weight.into(),
-        detail: detail.into(),
-        desc: desc.into(),
-    }
-}
-
-/// The starter SRD equipment list (hand-authored; SRD 5.1, CC-BY-4.0).
+/// The SRD equipment list, vendored from 5e-database (SRD 5.1, CC-BY-4.0).
 pub fn srd_items() -> Vec<Item> {
-    vec![
-        item(
-            "dagger", "Dagger", "Weapon", "2 gp", "1 lb", "1d4 piercing",
-            "A simple melee weapon with finesse, light, and thrown (range 20/60).",
-        ),
-        item(
-            "longsword", "Longsword", "Weapon", "15 gp", "3 lb", "1d8 slashing",
-            "A martial melee weapon with the versatile property (1d10 when wielded in two hands).",
-        ),
-        item(
-            "longbow", "Longbow", "Weapon", "50 gp", "2 lb", "1d8 piercing",
-            "A martial ranged weapon: ammunition, heavy, two-handed, range 150/600.",
-        ),
-        item(
-            "shield", "Shield", "Armor", "10 gp", "6 lb", "+2 AC",
-            "A shield strapped to the arm raises Armor Class by 2 while wielded.",
-        ),
-        item(
-            "chain-mail", "Chain Mail", "Armor", "75 gp", "55 lb", "AC 16",
-            "Heavy armor (base AC 16). Requires Strength 13 and imposes disadvantage on Stealth checks.",
-        ),
-        item(
-            "potion-of-healing", "Potion of Healing", "Gear", "50 gp", "0.5 lb", "Regain 2d4+2 HP",
-            "Drinking or administering this potion as an action restores 2d4+2 hit points.",
-        ),
-    ]
+    serde_json::from_str(include_str!("../data/items.json")).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -65,11 +30,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn starter_items_are_listed() {
+    fn items_load_and_read() {
         let items = srd_items();
-        assert!(items.len() >= 6);
+        assert!(items.len() > 50, "vendored equipment should be the full SRD set");
         let sword = items.iter().find(|i| i.key == "longsword").unwrap();
         assert_eq!(sword.category, "Weapon");
-        assert_eq!(sword.detail, "1d8 slashing");
+        assert!(sword.detail.contains("1d8"));
     }
 }

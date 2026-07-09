@@ -10,7 +10,7 @@
 
 use std::rc::Rc;
 
-use xilem_serval::{GridColumn, GridSpec, clickable, data_grid, el, text};
+use xilem_serval::{GridColumn, GridSpec, clickable, data_grid, el, on_wheel, text};
 
 use crate::board::UiChild;
 use crate::state::{CompendiumTab, ItemRow, MonsterRow, SpellRow, UiState};
@@ -105,7 +105,7 @@ fn text_cell(s: String) -> UiChild {
 }
 
 fn grid(spec: &GridSpec, total: usize, scroll: f32, cell: impl Fn(usize, usize) -> UiChild) -> UiChild {
-    data_grid::<UiState, ()>(
+    let g = data_grid::<UiState, ()>(
         spec,
         total,
         300.0,
@@ -113,7 +113,12 @@ fn grid(spec: &GridSpec, total: usize, scroll: f32, cell: impl Fn(usize, usize) 
         cell,
         |ui: &mut UiState, col| ui.sort_compendium(col),
         |_r| None,
-    )
+    );
+    let max = spec.max_scroll(total, 300.0);
+    let wrapped = el::<_, UiState, ()>("div", g);
+    Box::new(on_wheel(wrapped, move |ui: &mut UiState, ev| {
+        ui.scroll_compendium(ev.delta.1, max)
+    }))
 }
 
 // ---------- indexes ----------
