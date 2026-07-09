@@ -305,6 +305,9 @@ pub fn board_root(ui: &UiState) -> UiChild {
     if let Some(overlay) = crate::sheet::sheet_overlay(ui) {
         pane_children.push(overlay);
     }
+    if let Some(overlay) = crate::compendium::compendium_overlay(ui) {
+        pane_children.push(overlay);
+    }
     if let Some(menu) = context_menu_overlay(ui) {
         pane_children.push(menu);
     }

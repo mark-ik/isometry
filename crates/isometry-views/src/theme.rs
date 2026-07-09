@@ -204,8 +204,23 @@ pub fn board_css() -> String {
     // (design_docs/2026-07-08_campaign_packs_plan.md). Knight is the demo rig;
     // goblin is the same rig recoloured, proving palette-swap on the board.
     css.push_str(&voxel_token_css());
+    css.push_str(COMPENDIUM_CSS);
     css
 }
+
+/// The compendium overlay + `data_grid` styling. The grid places its cells
+/// absolutely (inline geometry), so these rules only paint colour and type.
+const COMPENDIUM_CSS: &str = r#"
+.compendium { position: absolute; left: 232px; top: 36px; width: 372px; background-color: #1b1e27; border: 1px solid #2c3347; border-radius: 4px; padding: 10px 10px 12px; z-index: 500; box-shadow: 0 8px 28px rgba(0,0,0,0.55); }
+.compendium-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.compendium-title { font-size: 15px; font-weight: bold; color: #e8ebf2; }
+.compendium-cell { font-size: 12px; color: #cfd3dd; white-space: nowrap; }
+.grid { display: block; }
+.grid-header-cell { display: flex; align-items: center; font-size: 11px; color: #8a90a0; font-weight: bold; cursor: pointer; padding-left: 6px; box-sizing: border-box; }
+.grid-row-even { background-color: #1e222c; }
+.grid-row-odd { background-color: #232734; }
+.grid-cell { display: flex; align-items: center; padding-left: 6px; box-sizing: border-box; overflow: hidden; }
+"#;
 
 /// Bake the demo voxel rig to `.token-*` sprite rules (data-URI PNGs), called
 /// once from [`board_css`]. `background-size: contain` plus a bottom anchor

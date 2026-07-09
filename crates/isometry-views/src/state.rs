@@ -142,6 +142,21 @@ pub enum NetMode {
     Remote,
 }
 
+/// A compendium row: a monster reduced to what the index shows and the board
+/// spawns. The host fills these from the system's bestiary, so the view names
+/// no rules (mirroring how [`SheetSchema`] is host-supplied).
+#[derive(Clone)]
+pub struct MonsterRow {
+    pub key: String,
+    pub name: String,
+    pub cr: f32,
+    pub cr_label: String,
+    pub kind: String,
+    pub hp: i32,
+    pub ac: i32,
+    pub sprite: String,
+}
+
 /// Runner state: the substrate document plus view-layer concerns
 /// (camera, selection, editor).
 pub struct UiState {
@@ -230,6 +245,13 @@ pub struct UiState {
     /// Right-click context menu: the token it targets and the pane-space
     /// position (logical px) to anchor it at. `None` when closed.
     pub context_menu: Option<(TokenId, (f32, f32))>,
+    /// The SRD compendium (host-supplied view-side rows) and its overlay
+    /// state: the open flag, the grid's scroll offset, and the sort
+    /// (column index, descending).
+    pub bestiary: Vec<MonsterRow>,
+    pub compendium_open: bool,
+    pub compendium_scroll: f32,
+    pub compendium_sort: (usize, bool),
 }
 
 impl UiState {
@@ -277,6 +299,10 @@ impl UiState {
             bind_sheet_request: None,
             sheet_edit: None,
             sheet_action: None,
+            bestiary: Vec::new(),
+            compendium_open: false,
+            compendium_scroll: 0.0,
+            compendium_sort: (0, false),
         }
     }
 
@@ -295,6 +321,26 @@ impl UiState {
 
     pub fn close_sheet(&mut self) {
         self.open_sheet = None;
+    }
+
+    /// Open the SRD compendium overlay.
+    pub fn open_compendium(&mut self) {
+        self.compendium_open = true;
+    }
+
+    pub fn close_compendium(&mut self) {
+        self.compendium_open = false;
+    }
+
+    /// Sort the compendium by a column: the same column toggles direction, a
+    /// new column starts ascending. Resets scroll.
+    pub fn sort_compendium(&mut self, col: usize) {
+        if self.compendium_sort.0 == col {
+            self.compendium_sort.1 = !self.compendium_sort.1;
+        } else {
+            self.compendium_sort = (col, false);
+        }
+        self.compendium_scroll = 0.0;
     }
 
     /// Queue a field edit (a stepper on the open sheet); the host applies

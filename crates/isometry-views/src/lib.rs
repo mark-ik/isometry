@@ -7,6 +7,7 @@
 //! web host both drive [`board_root`].
 
 mod board;
+mod compendium;
 mod demo;
 mod panel;
 mod sheet;
@@ -16,6 +17,6 @@ mod theme;
 pub use board::{board_root, UiChild};
 pub use demo::{demo_map, synth_map};
 pub use state::{
-    EditMode, FogLevel, InitiativeMode, NetMode, SheetSchema, UiState, PANEL_W,
+    EditMode, FogLevel, InitiativeMode, MonsterRow, NetMode, SheetSchema, UiState, PANEL_W,
 };
 pub use theme::board_css;

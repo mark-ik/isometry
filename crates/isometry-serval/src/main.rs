@@ -25,9 +25,10 @@ use std::time::{Duration, Instant};
 
 use isometry_core::FieldValue;
 use isometry_net::{GameEvent, GameSnapshot};
-use isometry_system::{srd_5e, System};
+use isometry_system::{srd_5e, srd_bestiary, System};
 use isometry_views::{
-    board_css, board_root, demo_map, synth_map, NetMode, SheetSchema, UiChild, UiState, PANEL_W,
+    board_css, board_root, demo_map, synth_map, MonsterRow, NetMode, SheetSchema, UiChild, UiState,
+    PANEL_W,
 };
 
 mod net;
@@ -746,6 +747,7 @@ impl ApplicationHandler for App {
         // can render sheets without knowing any rules.
         let system = srd_5e();
         ui.sheet_schema = schema_of(&system);
+        ui.bestiary = bestiary_of();
         self.system = Some(system);
 
         let dom = Rc::new(RefCell::new(ScriptedDom::new()));
@@ -943,6 +945,26 @@ fn parse_net_intent() -> Option<NetIntent> {
 
 /// The view-facing schema (plain labels) for a loaded system, so the
 /// board renders a sheet without depending on isometry-system.
+/// Translate the system's bestiary into the view-side compendium rows.
+fn bestiary_of() -> Vec<MonsterRow> {
+    srd_bestiary()
+        .into_iter()
+        .map(|m| {
+            let cr_label = m.cr_label();
+            MonsterRow {
+                key: m.key,
+                name: m.name,
+                cr: m.challenge_rating,
+                cr_label,
+                kind: m.kind,
+                hp: m.hit_points,
+                ac: m.armor_class,
+                sprite: m.sprite,
+            }
+        })
+        .collect()
+}
+
 fn schema_of(system: &System) -> SheetSchema {
     SheetSchema {
         fields: system

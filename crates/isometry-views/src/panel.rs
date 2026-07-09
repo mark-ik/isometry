@@ -320,7 +320,10 @@ pub fn side_panel(ui: &UiState) -> UiChild {
         Box::new(
             el(
                 "div",
-                (action_button("Sheet", true, |ui| ui.open_or_bind_sheet()),),
+                (
+                    action_button("Sheet", true, |ui| ui.open_or_bind_sheet()),
+                    action_button("Bestiary", true, |ui| ui.open_compendium()),
+                ),
             )
             .attr("class", "btn-row"),
         ),
