@@ -324,3 +324,10 @@ alongside.
   absolutely-placed rows, so a scrolled window is not viewport-clipped (the
   DOM still virtualizes) - a serval-side follow-up. `search_field` is the
   next sibling now that lists are hundreds long.
+- 2026-07-08: **search_field landed** (commit 2fe91c6), the third `data_grid`
+  sibling. A filter box over the compendium (keys route via the host,
+  whisper-style) filters all three indexes by name substring; resets on tab
+  switch and close. The vendored 300+ lists are now navigable. Receipt:
+  scry-shots/2026-07-08_isometry_compendium_search.png. Three catalogued
+  siblings realized this session (stat_list, tab_strip, search_field);
+  overlay_panel and record_card are the next extract-on-demand candidates.
