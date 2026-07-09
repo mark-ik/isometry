@@ -128,6 +128,11 @@ for shape; adapt, don't copy.
    split: "filtered on the wire versus filtered at render is a
    session-policy choice above this module." This resolves open question 3:
    the answer is wire-culled by construction, not render-hidden.
+   *(Generalized 2026-07-09 by the [shared-authority doc](2026-07-09_shared_authority_and_collaborative_building_plan.md):
+   "host-private" means the GM ring, the set of edit-mode holders, which
+   may be more than one app; with co-DMs the `CampaignStore` syncs over a
+   directed whisper-shaped channel among them, still never the hashed log.
+   Three rings: public log, GM ring, whispers.)*
 9. **Cast before you create.** Generators that need an NPC, faction, or place
    fill role slots from the existing campaign pool first (Wildermyth's
    casting call), minting new entities only when no candidate matches the

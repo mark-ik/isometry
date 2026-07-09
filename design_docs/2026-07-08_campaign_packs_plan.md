@@ -132,7 +132,11 @@ mountain.
     ops. Peers replay the log, so a generated map the GM then tweaks is
     described correctly and for free. The DM is authority and **the op carries
     the generated result** (a tile grid is small), so peers never re-run
-    generation and cross-peer determinism is not required. Seed-only replay
+    generation and cross-peer determinism is not required. *(2026-07-09: "the
+    DM" = whoever holds edit mode, possibly several people; and in the
+    shared-authority doc's tier-3 no-DM mode, seed-only replay stops being
+    optional and becomes load-bearing, with this decision's determinism
+    discipline as the entry fee.)* Seed-only replay
     (ship the seed, regenerate locally) is an opt-in *bandwidth* optimization,
     allowed only for generators that pass determinism discipline: integer or
     fixed-point noise (no ambient float), a portable seeded RNG, no `HashMap`

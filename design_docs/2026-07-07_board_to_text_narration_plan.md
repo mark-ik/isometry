@@ -11,7 +11,9 @@ estimates.
 
 A deterministic serializer that turns board state into prose facts. It is
 the shared perception primitive: accessibility and text-only play, session
-recap, and a future model's grounding context all read the same facts. Pure
+recap, and a future model's grounding context all read the same facts.
+(2026-07-09: plus the "meanwhile" faction-turn interstitial, worldbuilding
+plan rung 7, which renders committed faction moves between local maps.) Pure
 substrate geometry, alongside `template` and `visibility`, so it lives in
 `isometry-core` and stays free of UI, I/O, and models. The world compass
 matches `Facing`: north is decreasing row, south increasing row, east

@@ -47,7 +47,9 @@ See `design_docs/PROJECT_DESCRIPTION.md` for the product description and
   rules (Lua, via piccolo). 5e SRD and Pathfinder 2e are the first-party
   candidates.
 - **session**: a hosted play instance: the DM's app is the authority,
-  players replicate an ordered event log over p2p (iroh).
+  players replicate an ordered event log over p2p (iroh). "The DM" means
+  whoever holds edit mode, not necessarily one person; see the
+  shared-authority design doc.
 
 Do not coin new names for these concepts mid-session.
 
@@ -108,7 +110,10 @@ file I/O. Event log semantics live in core; transport lives in
   belong in system plugins; the substrate stays geometry and turns.
 - Do not add rollback netcode, CRDTs, or real-time sync machinery. The
   session model is DM-authority plus an ordered event log; that is a
-  deliberate simplification, revisit only through a plan.
+  deliberate simplification, revisit only through a plan. (The revisit
+  plan exists: `design_docs/2026-07-09_shared_authority_and_collaborative_building_plan.md`.
+  Its conclusion: shared and DM-less authority still need no CRDTs; the
+  guardrail stands.)
 - Do not ship copyrighted game content. 5e SRD (CC-BY-4.0) and
   Pathfinder 2e (ORC) material only, with attribution.
 - Do not treat camera freedom as a near-term rendering task. The locked
