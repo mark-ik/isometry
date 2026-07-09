@@ -344,3 +344,17 @@ alongside.
   gap stays open; a rework needs board-level integration coverage (a headed
   capture in the loop), not just paint-list unit tests. Lesson: a core-paint
   change needs an app-level render check before it lands.
+- 2026-07-09: retried with a headed check in the loop. Diagnostics found and
+  fixed a real positional bug: the clip must use the node's own absolute origin
+  (`child_origin = origin + l.location`), not the parent `origin` (the pane
+  clip was landing at (0,0) instead of (228,0)). Verified the corrected clip is
+  the true pane box ((228,0)..(1100,820)) and *contains* the board content (a
+  tile at (648,140) sits inside), **yet the layer still rendered black**. So a
+  correctly-positioned, containing clip blanks a lifted layer: the clip pushed
+  in `paint_layer` is not in the coordinate space the lifted layer actually
+  paints in. Reverted again; the board stresses this with ~2740 lifted layers
+  (every tile + token). Next attempt must map netrender's `PushClip` semantics
+  on the clean-stack layer path first (likely the clip rect is re-transformed
+  by the active stack, so an absolute-coord clip double-applies), and gate on
+  the headed board capture. This wants a dedicated serval+netrender pass, not
+  more inline iteration.
