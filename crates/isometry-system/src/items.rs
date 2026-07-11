@@ -32,7 +32,10 @@ mod tests {
     #[test]
     fn items_load_and_read() {
         let items = srd_items();
-        assert!(items.len() > 50, "vendored equipment should be the full SRD set");
+        assert!(
+            items.len() > 50,
+            "vendored equipment should be the full SRD set"
+        );
         let sword = items.iter().find(|i| i.key == "longsword").unwrap();
         assert_eq!(sword.category, "Weapon");
         assert!(sword.detail.contains("1d8"));

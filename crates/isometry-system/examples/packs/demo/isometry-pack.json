@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "id": "demo",
+  "name": "Demo Generator Pack",
+  "version": "0.1.0",
+  "generators": [
+    {
+      "id": "forge_item",
+      "script": "generators/forge_item.lua",
+      "fixtures": ["fixtures/forge_item.json"]
+    }
+  ]
+}

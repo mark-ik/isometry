@@ -22,7 +22,7 @@ pub mod sim;
 pub use protocol::{
     GameEvent, GameSnapshot, NetMessage, Outbound, PeerId, Recipient, ROLL_LOG_CAP,
 };
-pub use session::{apply_game, ClientSession, HostSession};
+pub use session::{apply_game, ClientSession, GameError, HostSession};
 
 #[cfg(feature = "iroh")]
 pub mod iroh_link;

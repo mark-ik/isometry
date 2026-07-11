@@ -44,7 +44,10 @@ mod tests {
     #[test]
     fn spells_load_and_read() {
         let s = srd_spells();
-        assert!(s.len() > 100, "vendored spell list should be the full SRD set");
+        assert!(
+            s.len() > 100,
+            "vendored spell list should be the full SRD set"
+        );
         let fireball = s.iter().find(|s| s.key == "fireball").unwrap();
         assert_eq!(fireball.level, 3);
         assert_eq!(fireball.level_label(), "3");

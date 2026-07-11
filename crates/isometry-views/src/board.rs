@@ -24,10 +24,9 @@ fn tile_el(ui: &UiState, at: TileCoord, elevation: i32, class: String) -> UiChil
     let (x, y) = (cx - geo.tile_w / 2.0, cy - geo.tile_h / 2.0);
     let z = depth_key(at, elevation);
     Box::new(clickable(
-        el("div", ()).attr("class", class).attr(
-            "style",
-            format!("left: {x}px; top: {y}px; z-index: {z};"),
-        ),
+        el("div", ())
+            .attr("class", class)
+            .attr("style", format!("left: {x}px; top: {y}px; z-index: {z};")),
         move |ui: &mut UiState, _| {
             ui.click_tile(at);
         },
@@ -136,10 +135,11 @@ fn shroud_el(ui: &UiState, at: TileCoord, elev: i32) -> UiChild {
     let (cx, cy) = geo.tile_to_screen(at, elev);
     let (x, y) = (cx - geo.tile_w / 2.0, cy - geo.tile_h / 2.0);
     let z = depth_key(at, elev) + 2;
-    Box::new(el("div", ()).attr("class", "fog-shroud").attr(
-        "style",
-        format!("left: {x}px; top: {y}px; z-index: {z};"),
-    ))
+    Box::new(
+        el("div", ())
+            .attr("class", "fog-shroud")
+            .attr("style", format!("left: {x}px; top: {y}px; z-index: {z};")),
+    )
 }
 
 /// Props stand on their tile: anchored bottom-center on the diamond,
@@ -185,6 +185,19 @@ fn token_el(ui: &UiState, token: &Token) -> UiChild {
     // 8x12 sprite at 3x (24x36), feet at the diamond center.
     let (x, y) = (cx - 12.0, cy - 32.0);
     let mut class = format!("token token-{}", token.sprite);
+    // Equipment appearance remains pack CSS: public layer keys become stable
+    // token classes, while the future voxel compositor can replace the same
+    // projection with a baked recipe without changing campaign data.
+    if let Some(inventory) = ui.inventories.get(&token.id) {
+        for item_id in inventory.equipped.values() {
+            if let Some(item) = inventory.items.get(item_id) {
+                for layer in item.appearance_layers() {
+                    class.push_str(" token-layer-");
+                    class.push_str(&layer_class(layer));
+                }
+            }
+        }
+    }
     // One drawn side, mirrored for the other two facings (the GBA
     // economy): E/N flip, S/W stay.
     if matches!(
@@ -195,14 +208,39 @@ fn token_el(ui: &UiState, token: &Token) -> UiChild {
     }
     let id = token.id;
     Box::new(clickable(
-        el("div", ()).attr("class", class).attr(
-            "style",
-            format!("left: {x}px; top: {y}px; z-index: {z};"),
-        ),
+        el("div", ())
+            .attr("class", class)
+            .attr("style", format!("left: {x}px; top: {y}px; z-index: {z};")),
         move |ui: &mut UiState, _| {
             ui.click_token(id);
         },
     ))
+}
+
+/// Make a pack layer key safe for the CSS-class vocabulary. Different raw
+/// punctuation collapses intentionally: appearance keys are authored ids, and
+/// pack validation can reject collisions once packs gain a formal manifest.
+fn layer_class(key: &str) -> String {
+    key.chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod layer_class_tests {
+    use super::layer_class;
+
+    #[test]
+    fn equipment_layer_keys_map_to_stable_css_classes() {
+        assert_eq!(layer_class("effect:Flame"), "effect-flame");
+        assert_eq!(layer_class("weapon/longsword +1"), "weapon-longsword--1");
+    }
 }
 
 /// A ground marker diamond under a token (turn-active gold, selection
@@ -217,10 +255,11 @@ fn marker_el(ui: &UiState, token_id: isometry_core::TokenId, class: &str) -> Opt
     let (cx, cy) = ui.geo.tile_to_screen(token.at, elev);
     let z = depth_key(token.at, elev) + 1;
     let (x, y) = (cx - 14.0, cy - 7.0);
-    Some(Box::new(el("div", ()).attr("class", class.to_owned()).attr(
-        "style",
-        format!("left: {x}px; top: {y}px; z-index: {z};"),
-    )))
+    Some(Box::new(
+        el("div", ())
+            .attr("class", class.to_owned())
+            .attr("style", format!("left: {x}px; top: {y}px; z-index: {z};")),
+    ))
 }
 
 /// The right-click context menu, or `None` when closed. An absolutely-
@@ -270,7 +309,10 @@ pub fn board_root(ui: &UiState) -> UiChild {
     // Markers and tokens follow fog: a marker only shows on a token the
     // viewer can currently see.
     let marker_shown = |id: isometry_core::TokenId| {
-        ui.map.token(id).map(|t| ui.token_visible(t)).unwrap_or(false)
+        ui.map
+            .token(id)
+            .map(|t| ui.token_visible(t))
+            .unwrap_or(false)
     };
     if let Some(id) = ui.selected_token {
         if marker_shown(id) {
@@ -297,15 +339,17 @@ pub fn board_root(ui: &UiState) -> UiChild {
     }
     let (camx, camy) = ui.camera;
     let mut pane_children: Vec<UiChild> = vec![Box::new(
-        el("div", layers).attr("class", "board").attr(
-            "style",
-            format!("left: {camx}px; top: {camy}px;"),
-        ),
+        el("div", layers)
+            .attr("class", "board")
+            .attr("style", format!("left: {camx}px; top: {camy}px;")),
     )];
     if let Some(overlay) = crate::sheet::sheet_overlay(ui) {
         pane_children.push(overlay);
     }
     if let Some(overlay) = crate::compendium::compendium_overlay(ui) {
+        pane_children.push(overlay);
+    }
+    if let Some(overlay) = crate::generator::generator_overlay(ui) {
         pane_children.push(overlay);
     }
     if let Some(menu) = context_menu_overlay(ui) {

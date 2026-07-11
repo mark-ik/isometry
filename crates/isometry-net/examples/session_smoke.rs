@@ -33,7 +33,14 @@ fn demo_snapshot() -> GameSnapshot {
         });
         turns.add(TokenId(id));
     }
-    GameSnapshot { map, turns, roll_log: Vec::new(), journal: Vec::new() }
+    GameSnapshot {
+        map,
+        turns,
+        roll_log: Vec::new(),
+        journal: Vec::new(),
+        inventories: Default::default(),
+        generations: Vec::new(),
+    }
 }
 
 #[tokio::main]

@@ -9,6 +9,7 @@ description = "Isometry's serval desktop host: winit window + netrender present 
 
 [dependencies]
 isometry-core = { workspace = true }
+isometry-campaign = { workspace = true }
 isometry-views = { workspace = true }
 isometry-net = { workspace = true, features = ["iroh"] }
 isometry-system = { workspace = true }
@@ -24,6 +25,11 @@ paint_list_render = { workspace = true }
 wgpu = { workspace = true }
 winit = { workspace = true }
 serde_json = { workspace = true }
+serde = { workspace = true }
+muniment = { workspace = true, features = ["redb"] }
+codicil = { workspace = true }
+armillary = { workspace = true }
+pollster = "0.4"
 # ISOMETRY_CAPTURE_DIR self-capture (headed-verify receipts without
 # screen grabs, which lose to overlapping windows).
 png = "0.17"

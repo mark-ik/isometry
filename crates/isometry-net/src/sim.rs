@@ -49,6 +49,22 @@ impl Sim {
         self.settle();
     }
 
+    /// The DM reveals a private campaign fact and broadcasts its public face.
+    pub fn host_reveal_secret(&mut self, id: &str) -> Result<(), String> {
+        let out = self.host.reveal_secret(id)?;
+        self.enqueue_from_host(out);
+        self.settle();
+        Ok(())
+    }
+
+    /// The DM reveals a hidden item modifier into the public inventory log.
+    pub fn host_reveal_item_modifier(&mut self, id: &str) -> Result<(), String> {
+        let out = self.host.reveal_item_modifier(id)?;
+        self.enqueue_from_host(out);
+        self.settle();
+        Ok(())
+    }
+
     /// A client proposes an event; it reaches the host, is validated,
     /// and the resulting broadcast flows back to every peer.
     pub fn client_intent(&mut self, peer: PeerId, event: GameEvent) {

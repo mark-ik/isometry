@@ -8,7 +8,6 @@ repository.workspace = true
 description = "Isometry's campaign-state layer: generated objects, secret facts with reveal conditions, the public world-fact envelope, and the host-private campaign store. Pure data, no I/O; the substrate stores and displays, system plugins interpret."
 
 [dependencies]
+isometry-core = { workspace = true }
 serde = { workspace = true }
-
-[dev-dependencies]
 serde_json = { workspace = true }

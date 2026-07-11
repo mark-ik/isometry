@@ -1,0 +1,20 @@
+{
+  "name": "demo forge-item fixture",
+  "seed": 7,
+  "request": {
+    "generator": "demo:forge_item",
+    "args": { "type": "text", "value": "river" },
+    "locks": {
+      "culture": { "type": "text", "value": "river-clans" }
+    }
+  },
+  "expected": {
+    "type": "item",
+    "item": {
+      "template": "demo:river-blade",
+      "name": "River-Clan Blade-3595544800446187243",
+      "tags": ["fixture"]
+    }
+  },
+  "expected_draws": [7191089600892374487]
+}

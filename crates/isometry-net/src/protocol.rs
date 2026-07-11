@@ -1,4 +1,6 @@
-use isometry_campaign::WorldFact;
+use std::collections::BTreeMap;
+
+use isometry_campaign::{GenerationRecord, Inventory, ItemId, ItemModifierReveal, WorldFact};
 use isometry_core::{MapDocument, RollRecord, SessionEvent, SheetData, TokenId, TurnList};
 use serde::{Deserialize, Serialize};
 
@@ -26,6 +28,15 @@ pub struct GameSnapshot {
     /// in the host's private `CampaignStore` (worldbuilding decision 8).
     #[serde(default)]
     pub journal: Vec<WorldFact>,
+    /// Public carried/equipped item instances, keyed by owning token. Hidden
+    /// modifiers remain in the host-private `CampaignStore` until revealed.
+    #[serde(default)]
+    pub inventories: BTreeMap<TokenId, Inventory>,
+    /// Host-accepted generator results, stored as result data rather than
+    /// peer-rerunnable scripts. A later type-specific operation lowers a
+    /// record into items, map changes, cast NPCs, or story state.
+    #[serde(default)]
+    pub generations: Vec<GenerationRecord>,
 }
 
 /// Rolls kept in the shared log; older ones drop off.
@@ -55,6 +66,25 @@ pub enum GameEvent {
     /// event. Host-committed only; the host rejects client intents of
     /// this variant (the DM is the authority over what becomes true).
     Fact(WorldFact),
+    /// Replace one token's public inventory/equipment state. A rules plugin
+    /// interprets modifiers; the substrate only stores and replicates them.
+    InventorySet {
+        token: TokenId,
+        inventory: Inventory,
+    },
+    /// Move one whole public item instance between tokens atomically. Applying
+    /// it also clears any source equipment slot pointing at that instance.
+    ItemTransfer {
+        from: TokenId,
+        to: TokenId,
+        item: ItemId,
+    },
+    /// Publish a previously hidden modifier into a public item instance.
+    /// Host-committed only, like [`GameEvent::Fact`].
+    ItemModifierRevealed(ItemModifierReveal),
+    /// Record a typed generator result selected by the host. It has no direct
+    /// map or inventory effect: those lowerings remain explicit events.
+    Generation(GenerationRecord),
 }
 
 /// One message on the wire. The host is the authority: clients send

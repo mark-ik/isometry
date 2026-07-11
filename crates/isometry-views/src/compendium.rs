@@ -53,7 +53,7 @@ pub fn compendium_overlay(ui: &UiState) -> Option<UiChild> {
             .items
             .iter()
             .find(|it| it.key == key)
-            .map(item_page)
+            .map(|item| item_page(ui, item))
             .unwrap_or_else(|| item_index(ui)),
         (None, CompendiumTab::Monsters) => monster_index(ui),
         (None, CompendiumTab::Spells) => spell_index(ui),
@@ -339,7 +339,7 @@ fn spell_page(s: &SpellRow) -> UiChild {
     crate::widgets::record_card(&s.name, &sub, vec![stats, desc(s.desc.clone())])
 }
 
-fn item_page(it: &ItemRow) -> UiChild {
+fn item_page(ui: &UiState, it: &ItemRow) -> UiChild {
     let mut pairs = vec![
         ("Cost".to_owned(), it.cost.clone()),
         ("Weight".to_owned(), it.weight.clone()),
@@ -348,5 +348,13 @@ fn item_page(it: &ItemRow) -> UiChild {
         pairs.push(("".to_owned(), it.detail.clone()));
     }
     let stats = stat_list(pairs, "monster-stats");
-    crate::widgets::record_card(&it.name, &it.category, vec![stats, desc(it.desc.clone())])
+    let mut body = vec![stats, desc(it.desc.clone())];
+    if ui.open_sheet.is_some() && ui.can_edit_inventory {
+        let item = it.clone();
+        body.push(Box::new(clickable(
+            el::<_, UiState, ()>("div", text("Add to sheet")).attr("class", "btn spawn-btn"),
+            move |ui: &mut UiState, _| ui.request_compendium_item(&item),
+        )));
+    }
+    crate::widgets::record_card(&it.name, &it.category, body)
 }

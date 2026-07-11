@@ -29,6 +29,14 @@ isometry-system = { path = "crates/isometry-system", version = "0.1.0" }
 # Persistence
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+# Portable slots/blobs over a host-chosen backend. Isometry uses its redb
+# backend for private desktop campaign state; the future web host can swap
+# the backend without changing campaign data.
+muniment = { git = "https://github.com/mark-ik/muniment.git", branch = "main" }
+codicil = { git = "https://github.com/mark-ik/codicil.git", branch = "main" }
+# Host-neutral actor runtime for background host/session work. The SerVal
+# application owns its state on the winit thread and drains typed updates.
+armillary = { git = "https://github.com/mark-ik/armillary.git", branch = "main" }
 
 # UI: the serval host stack (I1, the woodshed pattern). GIT deps on the
 # owned repos so any machine resolves; local checkouts override via the

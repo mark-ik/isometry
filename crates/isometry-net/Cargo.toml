@@ -17,6 +17,7 @@ iroh = ["dep:iroh", "dep:iroh-tickets", "dep:tokio", "dep:tracing"]
 [dependencies]
 isometry-core = { workspace = true }
 isometry-campaign = { workspace = true }
+codicil = { workspace = true }
 serde = { workspace = true }
 # Compact, no_std-friendly wire framing; also the byte form the portable
 # log hash folds over (so convergence is std-hash-independent).

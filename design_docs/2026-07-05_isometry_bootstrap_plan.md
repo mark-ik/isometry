@@ -16,7 +16,7 @@ list; serval `.side` wheel-scroll (taller window meanwhile);
 cross-machine run (unavailable here). The bootstrap arc is complete;
 isometry-web (browser player client) and campaign packs are the next
 horizons, each their own plan.
-**Thesis:** a pixel-art isometric P2P VTT is buildable on the Strophos
+**Thesis:** a pixel-art isometric P2P VTT is buildable on the Merely
 stack with the woodshed consumer pattern, and the GBA tactics aesthetic
 (fixed camera, battle-scale maps) keeps every known engine risk inside
 measured territory. This plan records the founding decisions, the engine
@@ -220,7 +220,7 @@ clicks (`_attack_rng.png`); bumping STR 10->14 via the stepper re-derives
 
 - **Bevy or Godot instead of the serval stack.** Bevy: game-native
   (bevy_ecs_tilemap, matchbox), weak at form-heavy chrome, feeds nothing
-  back into Strophos. Godot: fastest to playable, same objection
+  back into Merely. Godot: fastest to playable, same objection
   stronger. Not chosen for the woodshed reasons. Revisit trigger: serval
   churn blocking Isometry shipping for an extended stretch, or probe
   P2/P3 failing without a landable engine fix.

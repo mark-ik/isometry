@@ -9,6 +9,7 @@ description = "Isometry's system-plugin lane: a game system is a schema plus Lua
 
 [dependencies]
 isometry-core = { workspace = true }
+isometry-campaign = { workspace = true }
 serde = { workspace = true }
 # Parses the vendored SRD content packs (data/*.json) at load.
 serde_json = { workspace = true }

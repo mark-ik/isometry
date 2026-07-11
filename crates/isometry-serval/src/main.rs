@@ -10,7 +10,8 @@
 //! harness shape.
 //!
 //! Sessions (I4): `--host` binds an iroh session and prints a join
-//! ticket; `--join <ticket>` dials it. In a session the view is Remote —
+//! ticket; `--join <ticket>` dials it. `--campaign <name>` restores that
+//! campaign's durable checkpoint before a host accepts peers. In a session the view is Remote —
 //! play routes through the host authority (`net` module bridges the
 //! async session to this sync loop). Env hooks: `ISOMETRY_PROFILE=1`
 //! (frame timers + net trace), `ISOMETRY_CAPTURE_DIR` (self-capture),
@@ -23,15 +24,23 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use codicil::Codicil;
+use isometry_campaign::{
+    CampaignStore, EntropyTape, GenValue, GeneratorRequest, ItemId, ItemInstance, WorldFact,
+};
 use isometry_core::FieldValue;
 use isometry_net::{GameEvent, GameSnapshot};
-use isometry_system::{srd_5e, srd_bestiary, srd_items, srd_spells, System};
+use isometry_system::{
+    srd_5e, srd_bestiary, srd_items, srd_spells, GeneratorLimits, GeneratorPack, System,
+};
 use isometry_views::{
-    board_css, board_root, demo_map, synth_map, ActionRow, ItemRow, MonsterRow, NetMode,
-    SheetSchema, SpellRow, UiChild, UiState, PANEL_W,
+    board_css, board_root, demo_map, synth_map, ActionRow, GenerationRequest, InventoryRequest,
+    ItemRow, MonsterRow, NetMode, SheetSchema, SpellRow, UiChild, UiState, PANEL_W,
 };
 
+mod campaign_store;
 mod net;
+use campaign_store::{CampaignCheckpoint, CampaignRepository};
 use net::{NetBridge, Role};
 use layout_dom_api::{DomMutation, LayoutDomMut as _};
 use netrender::{ColorLoad, ExternalTexturePlacement, NetrenderOptions};
@@ -61,6 +70,15 @@ struct App {
     window: Option<Arc<Window>>,
     host: Option<SurfaceHost>,
     runner: Option<Runner>,
+    /// GM-only state saved beside the public map through Muniment. It never
+    /// enters the view, map JSON, or replicated snapshot.
+    campaign: CampaignStore,
+    /// Public campaign facts. The view does not render the journal yet, but
+    /// the checkpoint must retain it for replay and host handoff.
+    journal: Vec<WorldFact>,
+    /// The host's append-only Codicil history. It is empty for local editing
+    /// until a session begins, then mirrors the authority actor.
+    history: Codicil<GameEvent>,
     /// Retained layout session in logical coordinates: hit-test target
     /// and incremental-apply subject.
     layout: Option<IncrementalLayout<NodeId>>,
@@ -90,6 +108,8 @@ struct App {
     /// `--as <player>`: the fog viewer this process plays as. `None` is
     /// omniscient (the DM / a spectator).
     viewer_arg: Option<String>,
+    /// `--campaign <name>`: restore this named campaign checkpoint at boot.
+    campaign_arg: Option<String>,
     /// The live session bridge in networked mode.
     net: Option<NetBridge>,
     /// Last session version pulled into the UI; a bump means redraw.
@@ -107,6 +127,10 @@ struct App {
     system: Option<System>,
     /// Last open sheet, so derived stats recompute only on change.
     last_sheet_open: Option<isometry_core::TokenId>,
+    /// Entropy remains host-owned even while a preview is uncommitted. Each
+    /// accepted record carries its exact draw; no peer evaluates the pack.
+    generation_tape: EntropyTape,
+    generation_ordinal: u64,
 }
 
 /// Parsed session role from the command line.
@@ -115,15 +139,31 @@ enum NetIntent {
     Join(String),
 }
 
-/// Where map documents save: `maps/<slug>.json` under the working
-/// directory, so a campaign folder can live in version control.
-fn map_path(name: &str) -> std::path::PathBuf {
-    let slug: String = name
+fn document_slug(name: &str) -> String {
+    name
         .to_lowercase()
         .chars()
         .map(|c| if c.is_alphanumeric() { c } else { '_' })
-        .collect();
-    std::path::PathBuf::from("maps").join(format!("{slug}.json"))
+        .collect()
+}
+
+/// The public, reviewable map document.
+fn map_path(name: &str) -> std::path::PathBuf {
+    std::path::PathBuf::from("maps").join(format!("{}.json", document_slug(name)))
+}
+
+/// The private GM store paired with a map. Muniment's redb backend makes the
+/// slot durable; it is intentionally outside the map's shareable JSON.
+fn campaign_path(name: &str) -> std::path::PathBuf {
+    std::path::PathBuf::from("campaigns").join(format!("{}.redb", document_slug(name)))
+}
+
+/// The first preview surface is intentionally backed by the worked pack that
+/// ships with the system crate. Pack discovery/configuration follows once the
+/// preview workflow itself is proven end to end.
+fn demo_generator_pack_path() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../isometry-system/examples/packs/demo")
 }
 
 impl App {
@@ -328,52 +368,134 @@ impl App {
     /// Consume one-shot state requests (save/load) and repaint: the
     /// tail of every dispatch.
     fn after_dispatch(&mut self) {
-        let mut save: Option<(std::path::PathBuf, String)> = None;
-        let mut load: Option<std::path::PathBuf> = None;
+        let mut save: Option<(std::path::PathBuf, String, String, GameSnapshot)> = None;
+        let mut load: Option<(std::path::PathBuf, String)> = None;
+        let journal = self.journal.clone();
         if let Some(runner) = self.runner.as_mut() {
             runner.update(|ui| {
                 if std::mem::take(&mut ui.save_requested) {
                     match serde_json::to_string_pretty(&ui.map) {
-                        Ok(json) => save = Some((map_path(&ui.map.name), json)),
+                        Ok(json) => {
+                            let name = ui.map.name.clone();
+                            save = Some((
+                                map_path(&name),
+                                json,
+                                name,
+                                GameSnapshot {
+                                    map: ui.map.clone(),
+                                    turns: ui.turns.clone(),
+                                    roll_log: ui.roll_log.clone(),
+                                    journal: journal.clone(),
+                                    inventories: ui.inventories.clone(),
+                                    generations: ui.generations.clone(),
+                                },
+                            ));
+                        }
                         Err(e) => ui.status = format!("save failed: {e}"),
                     }
                 }
                 if std::mem::take(&mut ui.load_requested) {
-                    load = Some(map_path(&ui.map.name));
+                    load = Some((map_path(&ui.map.name), ui.map.name.clone()));
                 }
             });
         }
-        if let Some((path, json)) = save {
-            let ok = std::fs::create_dir_all("maps")
+        if let Some((path, json, name, local_public)) = save {
+            let map_result = std::fs::create_dir_all("maps")
                 .and_then(|_| std::fs::write(&path, json));
+            let campaign = self
+                .net
+                .as_ref()
+                .and_then(NetBridge::campaign)
+                .unwrap_or_else(|| self.campaign.clone());
+            let public = self
+                .net
+                .as_ref()
+                .and_then(NetBridge::latest)
+                .unwrap_or(local_public);
+            let history = self
+                .net
+                .as_ref()
+                .and_then(NetBridge::history)
+                .unwrap_or_else(|| self.history.clone());
+            let checkpoint = CampaignCheckpoint::new(public, campaign, history);
+            let campaign_result = CampaignRepository::open(campaign_path(&name))
+                .and_then(|repository| repository.save_checkpoint(&checkpoint));
             if let Some(runner) = self.runner.as_mut() {
                 runner.update(|ui| {
-                    ui.status = match &ok {
-                        Ok(()) => format!("saved {}", path.display()),
-                        Err(e) => format!("save failed: {e}"),
+                    ui.status = match (map_result.as_ref(), campaign_result.as_ref()) {
+                        (Ok(()), Ok(())) => format!("saved {}", path.display()),
+                        (Err(error), Ok(())) => {
+                            format!("checkpoint saved, map export failed: {error}")
+                        }
+                        (Err(error), Err(_)) => format!("map save failed: {error}"),
+                        (Ok(()), Err(error)) => {
+                            format!("map saved, private campaign save failed: {error}")
+                        }
                     };
                 });
             }
         }
-        if let Some(path) = load {
+        if let Some((path, name)) = load {
+            let checkpoint = CampaignRepository::open(campaign_path(&name))
+                .and_then(|repository| repository.load_checkpoint());
+            if let Ok(Some(checkpoint)) = checkpoint {
+                self.campaign = checkpoint.private;
+                self.journal = checkpoint.public.journal.clone();
+                self.history = checkpoint.history;
+                if let Some(runner) = self.runner.as_mut() {
+                    runner.update(|ui| {
+                        ui.apply_snapshot(checkpoint.public);
+                        ui.status = format!("loaded checkpoint {}", path.display());
+                    });
+                }
+                if let Some(window) = self.window.as_ref() {
+                    window.request_redraw();
+                }
+                return;
+            }
+            let checkpoint_error = checkpoint.err();
             let loaded = std::fs::read_to_string(&path)
                 .map_err(|e| e.to_string())
-                .and_then(|json| serde_json::from_str(&json).map_err(|e| e.to_string()));
-            if let Some(runner) = self.runner.as_mut() {
-                runner.update(|ui| match loaded {
-                    Ok(map) => {
-                        ui.replace_map(map);
-                        ui.status = format!("loaded {}", path.display());
-                    }
-                    Err(e) => ui.status = format!("load failed: {e}"),
+                .and_then(|json| {
+                    serde_json::from_str::<isometry_core::MapDocument>(&json)
+                        .map_err(|e| e.to_string())
                 });
+            match loaded {
+                Ok(map) => {
+                    let name = map.name.clone();
+                    let campaign = CampaignRepository::open(campaign_path(&name))
+                        .and_then(|repository| repository.load_private());
+                    if let Ok(campaign) = campaign.as_ref() {
+                        self.campaign = campaign.clone();
+                    }
+                    if let Some(runner) = self.runner.as_mut() {
+                        runner.update(|ui| {
+                            ui.replace_map(map);
+                            ui.status = match (campaign, checkpoint_error) {
+                                (Ok(_), None) => format!("loaded {}", path.display()),
+                                (Err(error), _) => format!(
+                                    "map loaded, private campaign state failed: {error}"
+                                ),
+                                (_, Some(error)) => format!(
+                                    "loaded legacy map after checkpoint read failed: {error}"
+                                ),
+                            };
+                        });
+                    }
+                }
+                Err(error) => {
+                    if let Some(runner) = self.runner.as_mut() {
+                        runner.update(|ui| ui.status = format!("load failed: {error}"));
+                    }
+                }
             }
         }
         if let Some(window) = self.window.as_ref() {
             window.request_redraw();
         }
-        self.pump_net();
         self.pump_sheets();
+        self.pump_generators();
+        self.pump_net();
     }
 
     /// In networked mode: ship the UI's queued game events to the
@@ -393,7 +515,13 @@ impl App {
         if let Some(runner) = self.runner.as_mut() {
             runner.update(|ui| whispers = std::mem::take(&mut ui.whisper_outbox));
         }
-        if let Some(net) = self.net.as_ref() {
+        let mut received = Vec::new();
+        let mut players = Vec::new();
+        let mut failure = None;
+        if let Some(net) = self.net.as_mut() {
+            // Armillary keeps the network runtime off the winit kernel. Drain
+            // its typed updates before reading any mirror state.
+            net.poll();
             if !events.is_empty() && self.profile {
                 eprintln!("[isometry] pump: submitting {} event(s)", events.len());
             }
@@ -405,20 +533,24 @@ impl App {
             }
             // Deliver received whispers into the message log, and refresh
             // the whisper-target list from connected players.
-            let received = net.take_whispers();
-            let players = net.players();
-            if !received.is_empty() || !players.is_empty() {
-                if let Some(runner) = self.runner.as_mut() {
-                    runner.update(|ui| {
-                        for (from, text) in &received {
-                            ui.receive_whisper(from, text);
-                        }
-                        ui.connected_players = players;
-                    });
-                    if !received.is_empty() {
-                        if let Some(window) = self.window.as_ref() {
-                            window.request_redraw();
-                        }
+            received = net.take_whispers();
+            players = net.players();
+            failure = net.take_failure();
+        }
+        if !received.is_empty() || !players.is_empty() || failure.is_some() {
+            if let Some(runner) = self.runner.as_mut() {
+                runner.update(|ui| {
+                    for (from, text) in &received {
+                        ui.receive_whisper(from, text);
+                    }
+                    ui.connected_players = players;
+                    if let Some(error) = &failure {
+                        ui.status = error.clone();
+                    }
+                });
+                if !received.is_empty() || failure.is_some() {
+                    if let Some(window) = self.window.as_ref() {
+                        window.request_redraw();
                     }
                 }
             }
@@ -429,6 +561,10 @@ impl App {
             self.last_net_version = version;
             let snap = self.net.as_ref().and_then(|n| n.latest());
             if let (Some(snap), Some(runner)) = (snap, self.runner.as_mut()) {
+                self.journal = snap.journal.clone();
+                if let Some(history) = self.net.as_ref().and_then(NetBridge::history) {
+                    self.history = history;
+                }
                 runner.update(|ui| ui.apply_snapshot(snap));
                 if let Some(window) = self.window.as_ref() {
                     window.request_redraw();
@@ -445,20 +581,31 @@ impl App {
         if self.system.is_none() {
             return;
         }
-        let (bind, edit, action, open) = match self.runner.as_ref() {
+        let (bind, edit, action, inventory_request, open) = match self.runner.as_ref() {
             Some(r) => {
                 let s = r.state();
                 (
                     s.bind_sheet_request,
                     s.sheet_edit.clone(),
                     s.sheet_action.clone(),
+                    s.inventory_request.clone(),
                     s.open_sheet,
                 )
             }
             None => return,
         };
         let open_changed = open != self.last_sheet_open;
-        if bind.is_none() && edit.is_none() && action.is_none() && !open_changed {
+        let effective_missing = self
+            .runner
+            .as_ref()
+            .is_some_and(|runner| open.is_some() && runner.state().sheet_effective.is_none());
+        if bind.is_none()
+            && edit.is_none()
+            && action.is_none()
+            && inventory_request.is_none()
+            && !open_changed
+            && !effective_missing
+        {
             return;
         }
         self.last_sheet_open = open;
@@ -501,11 +648,124 @@ impl App {
             }
         }
 
+        // Item instances are minted and equipped on the host. The request only
+        // carries pack/template data; the authoritative inventory replacement
+        // is what enters the replicated log.
+        if let Some(request) = inventory_request {
+            let mut event = None;
+            runner.update(|ui| {
+                ui.inventory_request = None;
+                match request {
+                    InventoryRequest::AddCompendiumItem {
+                        token,
+                        template,
+                        name,
+                        category,
+                    } => {
+                        if ui.map.token(token).is_none() {
+                            ui.status = "cannot add item to a missing token".to_owned();
+                            return;
+                        }
+                        let inventory = ui.inventories.entry(token).or_default();
+                        let mut ordinal = inventory.items.len();
+                        let id = loop {
+                            let id = ItemId::new(format!("token-{}.item-{ordinal}", token.0));
+                            if !inventory.items.contains_key(&id) {
+                                break id;
+                            }
+                            ordinal += 1;
+                        };
+                        let appearance_layers = if category == "Weapon" {
+                            vec![format!("weapon:{template}")]
+                        } else {
+                            Vec::new()
+                        };
+                        let item = ItemInstance {
+                            id,
+                            template: format!("srd5e:{template}"),
+                            name: name.clone(),
+                            quantity: 1,
+                            tags: vec![category.to_lowercase()],
+                            modifiers: Vec::new(),
+                            appearance_layers,
+                        };
+                        if inventory.insert(item).is_ok() {
+                            event = Some(GameEvent::InventorySet {
+                                token,
+                                inventory: inventory.clone(),
+                            });
+                            ui.status = format!("added {name}");
+                        }
+                    }
+                    InventoryRequest::Equip { token, slot, item } => {
+                        if let Some(inventory) = ui.inventories.get_mut(&token) {
+                            if inventory.equip(slot, item).is_ok() {
+                                event = Some(GameEvent::InventorySet {
+                                    token,
+                                    inventory: inventory.clone(),
+                                });
+                                ui.status = "equipped item".to_owned();
+                            }
+                        }
+                    }
+                    InventoryRequest::Unequip { token, slot } => {
+                        if let Some(inventory) = ui.inventories.get_mut(&token) {
+                            inventory.equipped.remove(&slot);
+                            event = Some(GameEvent::InventorySet {
+                                token,
+                                inventory: inventory.clone(),
+                            });
+                            ui.status = "unequipped item".to_owned();
+                        }
+                    }
+                    InventoryRequest::Transfer { from, to, item } => {
+                        let destination_has_item = ui
+                            .inventories
+                            .get(&to)
+                            .is_some_and(|inventory| inventory.items.contains_key(&item));
+                        if !destination_has_item {
+                            let moved = ui
+                                .inventories
+                                .get_mut(&from)
+                                .and_then(|inventory| inventory.take(&item).ok());
+                            if let Some(moved) = moved {
+                                if ui
+                                    .inventories
+                                    .entry(to)
+                                    .or_default()
+                                    .insert(moved)
+                                    .is_ok()
+                                {
+                                    event = Some(GameEvent::ItemTransfer { from, to, item });
+                                    ui.status = "transferred item".to_owned();
+                                }
+                            }
+                        }
+                    }
+                }
+                ui.sheet_effective = None;
+            });
+            if let Some(event) = event {
+                runner.update(|ui| {
+                    if ui.net_mode == NetMode::Remote {
+                        ui.net_outbox.push(event);
+                    }
+                });
+            }
+        }
+
         // Roll an action: evaluate its dice expression against the sheet.
         if let Some((tok, key)) = action {
-            let sheet = runner.state().map.sheet(tok).cloned();
+            let (sheet, inventory) = {
+                let state = runner.state();
+                (
+                    state.map.sheet(tok).cloned(),
+                    state.inventories.get(&tok).cloned(),
+                )
+            };
             if let Some(sheet) = sheet {
-                if let Some(expr) = system.action_expr(&key, &sheet) {
+                let effective = system.effective_sheet(&sheet, inventory.as_ref());
+                if let Some(expr) = system.action_expr(&key, &effective) {
                     let by = sheet.text("name").unwrap_or("?").to_owned();
                     let label = system
                         .actions
@@ -523,10 +783,111 @@ impl App {
 
         // Recompute derived stats for the open sheet.
         if let Some(tok) = open {
-            let sheet = runner.state().map.sheet(tok).cloned();
+            let (sheet, inventory) = {
+                let state = runner.state();
+                (
+                    state.map.sheet(tok).cloned(),
+                    state.inventories.get(&tok).cloned(),
+                )
+            };
             if let Some(sheet) = sheet {
-                let derived = system.derived(&sheet);
-                runner.update(|ui| ui.sheet_derived = derived);
+                let effective = system.effective_sheet(&sheet, inventory.as_ref());
+                let derived = system.derived(&effective);
+                runner.update(|ui| {
+                    ui.sheet_effective = Some(effective);
+                    ui.sheet_derived = derived;
+                });
+            }
+        }
+        if let Some(window) = self.window.as_ref() {
+            window.request_redraw();
+        }
+    }
+
+    /// Evaluate or commit a host-owned generator preview. The view asks for a
+    /// one-shot action; this desktop layer loads the declared pack and owns the
+    /// entropy tape, while `isometry-net` remains scripting-agnostic.
+    fn pump_generators(&mut self) {
+        let mut action = None;
+        let mut locks = Default::default();
+        let mut can_edit = false;
+        let mut remote = false;
+        let mut existing_ids = Vec::new();
+        let mut preview = None;
+        if let Some(runner) = self.runner.as_mut() {
+            runner.update(|ui| {
+                action = ui.generation_request.take();
+                locks = ui.generator_locks.clone();
+                can_edit = ui.can_edit_inventory;
+                remote = ui.net_mode == NetMode::Remote;
+                existing_ids = ui.generations.iter().map(|record| record.id.clone()).collect();
+                if action == Some(GenerationRequest::Commit) {
+                    preview = ui.generator_preview.take();
+                }
+            });
+        }
+        let Some(action) = action else {
+            return;
+        };
+        if !can_edit {
+            if let Some(runner) = self.runner.as_mut() {
+                runner.update(|ui| ui.status = "generation requires the host".to_owned());
+            }
+            return;
+        }
+        match action {
+            GenerationRequest::Generate => {
+                let mut ordinal = self.generation_ordinal;
+                let record_id = loop {
+                    ordinal = ordinal.wrapping_add(1);
+                    let id = format!("generated.demo.forge-item.{ordinal}");
+                    if !existing_ids.iter().any(|existing| existing == &id) {
+                        break id;
+                    }
+                };
+                self.generation_ordinal = ordinal;
+                let request = GeneratorRequest {
+                    generator: "demo:forge_item".to_owned(),
+                    args: GenValue::Text {
+                        value: "river".to_owned(),
+                    },
+                    locks,
+                };
+                let result = GeneratorPack::load(demo_generator_pack_path()).and_then(|pack| {
+                    pack.generate(
+                        record_id,
+                        &request,
+                        &mut self.generation_tape,
+                        GeneratorLimits::default(),
+                    )
+                });
+                if let Some(runner) = self.runner.as_mut() {
+                    runner.update(|ui| match result {
+                        Ok(record) => {
+                            ui.generator_preview = Some(record);
+                            ui.status = "generated preview".to_owned();
+                        }
+                        Err(error) => ui.status = format!("generation failed: {error}"),
+                    });
+                }
+            }
+            GenerationRequest::Commit => {
+                let Some(record) = preview else {
+                    return;
+                };
+                if let Some(runner) = self.runner.as_mut() {
+                    runner.update(|ui| {
+                        if remote {
+                            ui.net_outbox.push(GameEvent::Generation(record));
+                            ui.status = "committing generated result".to_owned();
+                        } else if ui.generations.iter().all(|existing| existing.id != record.id) {
+                            ui.generations.push(record);
+                            ui.status = "committed generated result".to_owned();
+                        } else {
+                            ui.status = "generation id already committed".to_owned();
+                        }
+                    });
+                }
             }
         }
         if let Some(window) = self.window.as_ref() {
@@ -710,7 +1071,35 @@ impl ApplicationHandler for App {
             }
             Err(_) => demo_map(),
         };
+        let can_restore = !matches!(self.net_intent.as_ref(), Some(NetIntent::Join(_)));
+        let mut restore_status = None;
+        let mut restored_public = None;
+        if can_restore {
+            if let Some(name) = self.campaign_arg.take() {
+                match CampaignRepository::open(campaign_path(&name))
+                    .and_then(|repository| repository.load_checkpoint())
+                {
+                    Ok(Some(checkpoint)) => {
+                        self.campaign = checkpoint.private;
+                        self.journal = checkpoint.public.journal.clone();
+                        self.history = checkpoint.history;
+                        restored_public = Some(checkpoint.public);
+                        restore_status = Some(format!("restored campaign {name}"));
+                    }
+                    Ok(None) => restore_status = Some(format!("campaign {name} has no checkpoint")),
+                    Err(error) => {
+                        restore_status = Some(format!("campaign restore failed: {error}"))
+                    }
+                }
+            }
+        }
         let mut ui = UiState::new(map);
+        if let Some(snapshot) = restored_public {
+            ui.apply_snapshot(snapshot);
+        }
+        if let Some(status) = restore_status {
+            ui.status = status;
+        }
         // Start with the board roughly centered in the pane, and every
         // token in the turn order (a skirmish ready to play; drop
         // tokens out via the panel for free movement).
@@ -737,12 +1126,19 @@ impl ApplicationHandler for App {
                     map: ui.map.clone(),
                     turns: ui.turns.clone(),
                     roll_log: Vec::new(),
-                    journal: Vec::new(),
+                    journal: self.journal.clone(),
+                    inventories: ui.inventories.clone(),
+                    generations: ui.generations.clone(),
                 };
-                self.net = Some(NetBridge::spawn(Role::Host(snapshot)));
+                self.net = Some(NetBridge::spawn(Role::Host {
+                    state: snapshot,
+                    campaign: self.campaign.clone(),
+                    history: self.history.clone(),
+                }));
             }
             Some(NetIntent::Join(ticket)) => {
                 ui.net_mode = NetMode::Remote;
+                ui.can_edit_inventory = false;
                 ui.status = "connecting...".to_owned();
                 let name = self
                     .viewer_arg
@@ -792,6 +1188,7 @@ impl ApplicationHandler for App {
             self.maybe_selftest();
             self.pump_net();
             self.pump_sheets();
+            self.pump_generators();
             event_loop
                 .set_control_flow(ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(100)));
         }
@@ -1080,6 +1477,16 @@ fn parse_viewer() -> Option<String> {
         .cloned()
 }
 
+/// Parse `--campaign <name>` for checkpoint restore. The name shares the map
+/// slug convention, so `--campaign "Demo Skirmish"` resolves its paired store.
+fn parse_campaign() -> Option<String> {
+    let args: Vec<String> = std::env::args().collect();
+    args.iter()
+        .position(|a| a == "--campaign")
+        .and_then(|i| args.get(i + 1))
+        .cloned()
+}
+
 fn main() {
     let event_loop = EventLoop::new().expect("event loop");
     event_loop.set_control_flow(ControlFlow::Wait);
@@ -1087,6 +1494,9 @@ fn main() {
         window: None,
         host: None,
         runner: None,
+        campaign: CampaignStore::new(),
+        journal: Vec::new(),
+        history: Codicil::new(),
         layout: None,
         layout_size: (0.0, 0.0),
         sheet: board_css(),
@@ -1101,6 +1511,7 @@ fn main() {
         capture_dir: std::env::var_os("ISOMETRY_CAPTURE_DIR").map(Into::into),
         net_intent: parse_net_intent(),
         viewer_arg: parse_viewer(),
+        campaign_arg: parse_campaign(),
         net: None,
         last_net_version: 0,
         net_selftest: std::env::var_os("ISOMETRY_NET_SELFTEST").is_some(),
@@ -1108,6 +1519,13 @@ fn main() {
         selftest_fired: false,
         system: None,
         last_sheet_open: None,
+        generation_tape: EntropyTape::from_seed(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos() as u64)
+                .unwrap_or(1),
+        ),
+        generation_ordinal: 0,
     };
     event_loop.run_app(&mut app).expect("run app");
 }

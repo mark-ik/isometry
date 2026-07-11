@@ -280,6 +280,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "armillary"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+]
+
+[[package]]
 name = "arrayref"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -873,6 +880,14 @@ dependencies = [
  "serde",
  "termcolor",
  "unicode-width",
+]
+
+[[package]]
+name = "codicil"
+version = "0.1.0"
+dependencies = [
+ "muniment",
+ "serde",
 ]
 
 [[package]]
@@ -2957,6 +2972,7 @@ dependencies = [
 name = "isometry-campaign"
 version = "0.1.0"
 dependencies = [
+ "isometry-core",
  "serde",
  "serde_json",
 ]
@@ -2973,6 +2989,7 @@ dependencies = [
 name = "isometry-net"
 version = "0.1.0"
 dependencies = [
+ "codicil",
  "iroh",
  "iroh-tickets",
  "isometry-campaign",
@@ -2987,15 +3004,21 @@ dependencies = [
 name = "isometry-serval"
 version = "0.1.0"
 dependencies = [
+ "armillary",
+ "codicil",
+ "isometry-campaign",
  "isometry-core",
  "isometry-net",
  "isometry-system",
  "isometry-views",
  "layout-dom-api",
+ "muniment",
  "netrender",
  "paint_list_api",
  "paint_list_render",
  "png 0.17.16",
+ "pollster",
+ "serde",
  "serde_json",
  "serval-layout",
  "serval-scripted-dom",
@@ -3010,6 +3033,7 @@ dependencies = [
 name = "isometry-system"
 version = "0.1.0"
 dependencies = [
+ "isometry-campaign",
  "isometry-core",
  "piccolo",
  "serde",
@@ -3020,6 +3044,7 @@ dependencies = [
 name = "isometry-views"
 version = "0.1.0"
 dependencies = [
+ "isometry-campaign",
  "isometry-core",
  "isometry-net",
  "isometry-voxel",
@@ -3445,6 +3470,17 @@ checksum = "bb85c154ba489f01b25c0d36ae69a87e4a1c73a72631fc6c0eb6dde34a73e44b"
 dependencies = [
  "num-traits",
  "pxfm",
+]
+
+[[package]]
+name = "muniment"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "blake3",
+ "redb",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -4989,6 +5025,15 @@ checksum = "c4ed38b89c2c77ff968c524145ad65fb010f38af5c7a224b53b81d47ac2daa81"
 dependencies = [
  "bytemuck",
  "font-types",
+]
+
+[[package]]
+name = "redb"
+version = "2.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8eca1e9d98d5a7e9002d0013e18d5a9b000aee942eb134883a82f06ebffb6c01"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

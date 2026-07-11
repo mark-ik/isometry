@@ -198,6 +198,10 @@ pub fn board_css() -> String {
     background-size: 100% 100%;
     image-rendering: pixelated;
 }
+/* Pack-layer CSS: `effect:flame` on an equipped public item becomes
+   `.token-layer-effect-flame`. A full rig may supply its own layer rule; this
+   starter rule makes the W1 equipment projection visible on the live board. */
+.token-layer-effect-flame { box-shadow: 0 0 0 2px #e38a34, 0 -3px 0 #ffd766; }
 "#
     .to_owned();
     // Voxel-baked pixel tileset: the pixel sprites this sheet was waiting for
@@ -212,6 +216,8 @@ pub fn board_css() -> String {
 /// absolutely (inline geometry), so these rules only paint colour and type.
 const COMPENDIUM_CSS: &str = r#"
 .compendium { position: absolute; left: 232px; top: 36px; width: 372px; background-color: #1b1e27; border: 1px solid #2c3347; border-radius: 4px; padding: 10px 10px 12px; z-index: 500; box-shadow: 0 8px 28px rgba(0,0,0,0.55); }
+.generator { position: absolute; left: 232px; top: 36px; width: 372px; background-color: #1b1e27; border: 1px solid #2c3347; border-radius: 4px; padding: 10px 10px 12px; z-index: 501; box-shadow: 0 8px 28px rgba(0,0,0,0.55); }
+.generator-proposal { color: #e8ebf2; font-size: 14px; font-weight: bold; margin: 10px 0; }
 .compendium-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .compendium-title { font-size: 15px; font-weight: bold; color: #e8ebf2; }
 .compendium-cell { font-size: 12px; color: #cfd3dd; white-space: nowrap; }

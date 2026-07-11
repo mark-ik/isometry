@@ -9,6 +9,7 @@ description = "Isometry's xilem_serval view layer: board + chrome view fns and t
 
 [dependencies]
 isometry-core = { workspace = true }
+isometry-campaign = { workspace = true }
 isometry-net = { workspace = true }
 isometry-voxel = { workspace = true }
 xilem-serval = { workspace = true }

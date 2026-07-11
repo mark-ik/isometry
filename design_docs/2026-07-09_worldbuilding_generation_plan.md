@@ -427,7 +427,7 @@ then commits.
 
 ### W0: Data visibility and generated log channel
 
-**Landed 2026-07-09.** `isometry-campaign` founded (open question 1's
+**W0a landed 2026-07-09.** `isometry-campaign` founded (open question 1's
 recommendation taken): `SecretFact`/`RevealCondition`/`WorldFact`/
 `Visibility` + the host-private `CampaignStore` (reveal moves a fact out of
 the GM layer and returns its public face, so a fact is always in exactly one
@@ -438,7 +438,20 @@ capped noise); the host rejects client `Fact` intents. Guard:
 `secrets_stay_host_side_until_revealed` (isometry-net) proves the
 done-condition including the no-secret-bytes check on peer snapshots.
 Lua marshalling and the sheet view skip/summarize nested fields until
-W1/W2 give them real consumers.
+W1/W2 give them real consumers. Follow-up implementation tightened the host
+boundary: `HostSession` owns the private `CampaignStore`; reveals move through
+a durable pending state, so an interrupted reveal can either finalize or
+recover after restore; and the Serval host saves GM state through Muniment's
+typed slot over its transactional redb backend, beside the shareable map JSON.
+
+**W0b checkpoint landed 2026-07-09.** The desktop host now stores a versioned
+Muniment checkpoint containing the public `GameSnapshot`/journal and private
+`CampaignStore` and its `Codicil<GameEvent>` history in one typed slot; the JSON
+map remains a readable export and legacy fallback. The Save/Load path consumes
+the checkpoint, and `--host --campaign <name>` restores it into a fresh host,
+rebuilds the sequence/hash from Codicil, and reconciles pending reveals before
+peers join. Remaining before Tier 1 is live transfer of that same bundle during
+handoff rather than inventing another format.
 
 Add the smallest state vocabulary that can hold hidden facts and generated
 results, shaped by decision 8 (secrets never enter the replicated log).
@@ -467,6 +480,35 @@ provably contain no unrevealed `gm` data.
 Implement item templates/instances and hidden modifiers as the first concrete
 consumer.
 
+**W1a foundation landed 2026-07-09.** `isometry-campaign` now owns typed
+`ItemInstance`/`Inventory`/`EquipmentSlot` data: templates remain pack keys,
+while generated names, quantity, public modifiers, and voxel appearance-layer
+keys belong to campaign instances. `GameSnapshot::inventories` replicates the
+public inventory per token. Hidden modifiers use the same private/pending/
+public-commit protocol as secrets; a host-only `ItemModifierRevealed` event
+attaches the modifier exactly once after the DM reveal. The guard proves that
+clients receive an equipped sword but not its curse bytes until the reveal.
+**W1b mechanics landed 2026-07-09.** The system builds a transient effective
+sheet from equipped public modifiers, leaving the stored sheet unchanged; the
+5e system reads the `attack_bonus` field, and the sheet renders that effective
+value. Equipped appearance-layer keys also project into pack CSS classes on
+the board (`effect:flame` has a visible starter rule). Full voxel recipe
+composition, item transfer, quantities, and ownership-based permissions remain
+later W1 work.
+
+**W1c host controls landed 2026-07-09.** With a sheet open, the host can add
+an SRD compendium item, equip a carried item to the main hand, and unequip it.
+The host mints the instance id and commits the public `InventorySet`; joined
+players have read-only inventory UI and their authoring intents are rejected.
+Ownership-based player inventory permissions, item transfer, quantities, and
+full voxel recipe composition remain later work.
+
+**W1d host transfer landed 2026-07-09.** `ItemTransfer` moves one whole public
+instance between tokens as a single ordered event. The source automatically
+unequips it and the target receives the same instance, including revealed
+modifiers. Joined players cannot forge a transfer. Stack splitting/merging and
+Personae-backed owner permissions remain open.
+
 - Base items from the SRD item data.
 - Modifier tables: material, quality, enchantment, curse, origin, quirk.
 - Reveal conditions.
@@ -481,13 +523,61 @@ reveals the curse through a DM action.
 
 Define the pack-side generator API before broadening to maps/campaigns.
 
+**W2a substrate landed 2026-07-09.** `isometry-campaign` now owns typed
+`GenValue` proposals, visible value locks, a cast-role request shape, and a
+persistable SplitMix64 host entropy tape. `isometry-system` runs a pack's
+`call_gen(request_json, entropy) -> result_json` in a Piccolo core sandbox,
+with one recorded host draw per call, a total fuel cap, output-size cap, and
+decoded-value depth cap. It returns a proposal only: it cannot commit state.
+The `GeneratorFixture` API also asserts a fixed-seed proposal and its exact
+entropy trace. Focused deterministic-output and infinite-loop fuel-cap tests
+are present. `generator_fixture` is a pack-author command that runs a Lua file
+plus JSON fixture from disk under those same caps; a worked item fixture ships
+beside it. Commit-result mode now has a typed, idempotent public generation
+ledger: the host records the visible request, entropy draw, and proposal in the
+ordered log; peers and restores receive result data without executing pack code.
+Lowering an accepted result into an item, NPC, map, or storylet remains explicit
+and type-specific. Host preview/reroll/lock UI and campaign-pool role casting
+remain open.
+
+**W2b pack envelope landed 2026-07-09.** `ContentPackManifest` defines a
+versioned `isometry-pack.json`, namespaced generator ids, and slash-only asset
+paths constrained below the pack root. `GeneratorPack` loads that manifest,
+opens only declared scripts and fixtures (including a canonical-path containment
+check), and runs a fixture only when it names the declared generator. A complete
+demo pack and `pack_fixture` command are included. `GeneratorPack::generate`
+turns a declared request plus host-owned entropy tape into the public
+`GenerationRecord` passed to `HostSession::commit_generation`, without making
+the replication core depend on Piccolo. Pack content identity now has a durable
+author-facing shape; content hashing, signatures, P2P acquisition, and the
+preview/commit UI are later work.
+
+**W2c demo preview landed 2026-07-10.** The desktop host now exposes the
+bundled pack through a host-only preview table: generate, reroll, lock/unlock a
+visible culture constraint, discard, and commit. Preview state stays local; the
+host evaluates with its entropy tape, and commit uses the ordinary
+`GameEvent::Generation` path so remote peers receive only the accepted record.
+The worked Lua pack reads `request.locks.culture` to make the culture lock
+visibly affect its output (`River Blade` versus `River-Clan Blade`). The first
+UI is intentionally a worked-pack proof rather than a general pack browser.
+
+**W2d typed Lua request landed 2026-07-10.** A generator now receives a third,
+structured `request` argument beside the compatible `request_json` and entropy:
+`{ generator, args, locks }`, with recursively tagged `GenValue` tables. Packs
+can therefore inspect a visible lock directly (`request.locks.culture.value`)
+without parsing JSON or relying on an ad-hoc host helper. Output remains typed
+JSON until the return-side table ABI is designed. Pack discovery/selection,
+proposal lowering, content hashes/signatures, and campaign-pool casting remain
+open.
+
 - `call_gen(args) -> GenValue`, where `GenValue` can be text, object, list,
   item, NPC, map patch, world fact, or storylet proposal.
-- Fuel and recursion caps.
+- Fuel and recursion caps (fuel bounds Lua execution; decoded output nesting
+  has a separate depth cap).
 - Host-provided entropy tape.
 - Fixture runner for pack authors.
 - Lock semantics: `Lock` pins chosen *values*, which regeneration receives as
-  constraints (`args.locked`). Locks are not entropy-tape replay; tape replay
+  constraints (`request.locks`). Locks are not entropy-tape replay; tape replay
   breaks the moment structure changes, constraints survive any reroll.
 - Casting API (decision 9): a generator asks the host to fill a role from the
   campaign pool (`cast_role(predicates) -> Option<EntityRef>`) and only mints
@@ -527,14 +617,13 @@ final encounter, all inspectable before commit.
 
 ## Findings
 
-- 2026-07-09: `isometry-core::FieldValue` is currently `Int | Text | Bool`
-  only (`crates/isometry-core/src/sheet.rs`), so inventories, nested
-  modifiers, condition lists, and storylet state need either a widened value
-  model or a separate generated-object store.
-- 2026-07-09: replicated shared state is `GameSnapshot { map, turns,
-  roll_log }`, and `GameEvent` currently covers map events, turn events,
-  rolls, and sheet replacement (`crates/isometry-net/src/protocol.rs`). There
-  is no generated-result, narration, secret, item, or world-fact channel yet.
+- 2026-07-09 baseline, addressed by W0a: `FieldValue` was `Int | Text | Bool`
+  only. It now also carries `Float | List | Map`, so nested inventory and
+  generator data fit the storage substrate; W1/W2 still need typed consumers
+  rather than treating those maps as an item model.
+- 2026-07-09 baseline, addressed by W0a: replicated shared state lacked a
+  campaign channel. `GameSnapshot::journal` and `GameEvent::Fact(WorldFact)`
+  now carry public campaign facts; `CampaignStore` stays private to the host.
 - 2026-07-09: `MapDocument` is intentionally tile layers, elevation, tokens,
   and token-bound sheets (`crates/isometry-core/src/map.rs`). This supports the
   plan's rule that voxels are appearance/generation substrate, not local-map
@@ -600,10 +689,13 @@ final encounter, all inspectable before commit.
   with a no-secret-bytes done-condition; recommendations recorded on open
   questions 1 and 2; findings on `visibility.rs`, `items.rs`, `narrate.rs`,
   and the protocol hash.
-- 2026-07-09: W0 landed (see the phase section): `isometry-campaign`
-  crate, widened `FieldValue`, `GameEvent::Fact` + journal, host-only
-  fact commit, and the no-secret-bytes replication guard. Next: W1
-  (hidden item modifiers as the first concrete consumer).
+- 2026-07-09: W0a landed (see the phase section): `isometry-campaign`
+  crate, widened `FieldValue`, `GameEvent::Fact` + journal, host-owned
+  secret transaction/recovery, no-secret-bytes replication guard, and
+  Muniment/redb persistence for the desktop host's private campaign sidecar.
+  W0b then landed the versioned public/private/Codicil campaign checkpoint and
+  fresh-host restore. Live handoff still consumes that same bundle. W1 remains
+  the hidden-item modifier consumer once the handoff driver is in place.
 - 2026-07-09: Rung 7 expanded from a DM-triggered tick to factions as
   participants: time-coupled "meanwhile" turns banked from stamped scene
   time, faction sheets as ordinary `SheetData`, abilities as history

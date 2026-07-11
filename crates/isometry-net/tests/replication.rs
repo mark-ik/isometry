@@ -3,9 +3,16 @@
 //! (mid-session join, no divergence: state and log hashes match) without
 //! two machines.
 
+use std::collections::BTreeMap;
+
+use isometry_campaign::{
+    EntropyTape, EquipmentSlot, GenValue, GenerationRecord, GeneratorRequest,
+    HiddenItemModifier, Inventory, ItemId, ItemInstance, ItemModifier, ItemModifierKind,
+    ItemProposal, RevealCondition,
+};
 use isometry_core::{Facing, MapDocument, SessionEvent, Token, TokenId, TurnList};
-use isometry_net::{GameEvent, GameSnapshot, HostSession, PeerId};
 use isometry_net::sim::Sim;
+use isometry_net::{GameEvent, GameSnapshot, HostSession, PeerId};
 
 fn snapshot() -> GameSnapshot {
     let mut map = MapDocument::new("net demo", 8, 8);
@@ -34,6 +41,29 @@ fn snapshot() -> GameSnapshot {
         turns: TurnList::new(),
         roll_log: Vec::new(),
         journal: Vec::new(),
+        inventories: Default::default(),
+        generations: Vec::new(),
+    }
+}
+
+fn generation_record(id: &str) -> GenerationRecord {
+    GenerationRecord {
+        id: id.to_owned(),
+        request: GeneratorRequest {
+            generator: "demo:forge-item".to_owned(),
+            args: GenValue::Text {
+                value: "river".to_owned(),
+            },
+            locks: Default::default(),
+        },
+        entropy: EntropyTape::from_seed(7).draw(),
+        proposal: GenValue::Item {
+            item: ItemProposal {
+                template: "demo:river-blade".to_owned(),
+                name: "River Blade".to_owned(),
+                tags: vec!["fixture".to_owned()],
+            },
+        },
     }
 }
 
@@ -59,7 +89,28 @@ fn assert_converged(sim: &Sim) {
 }
 
 fn mv(id: u32, to: (i32, i32)) -> GameEvent {
-    GameEvent::Map(SessionEvent::TokenMoved { id: TokenId(id), to })
+    GameEvent::Map(SessionEvent::TokenMoved {
+        id: TokenId(id),
+        to,
+    })
+}
+
+fn sword_inventory() -> Inventory {
+    let sword = ItemInstance {
+        id: ItemId::new("reward-03.sword"),
+        template: "srd5e:longsword".to_owned(),
+        name: "Fine Longsword".to_owned(),
+        quantity: 1,
+        tags: vec!["weapon".to_owned()],
+        modifiers: Vec::new(),
+        appearance_layers: vec!["weapon:longsword".to_owned()],
+    };
+    let mut inventory = Inventory::default();
+    inventory.insert(sword).unwrap();
+    inventory
+        .equip(EquipmentSlot::MainHand, ItemId::new("reward-03.sword"))
+        .unwrap();
+    inventory
 }
 
 #[test]
@@ -192,20 +243,20 @@ fn move_and_facing_batch_orders_atomically() {
 /// ordinary logged event, and a client cannot fabricate a fact.
 #[test]
 fn secrets_stay_host_side_until_revealed() {
-    use isometry_campaign::{CampaignStore, RevealCondition, SecretFact};
+    use isometry_campaign::{RevealCondition, SecretFact};
 
     const SECRET_TEXT: &str = "OATHBOUND-RIVER-SECRET";
 
-    // The GM layer: host-private, beside the session, never inside it.
-    let mut campaign = CampaignStore::new();
-    campaign.insert_secret(SecretFact {
+    let mut host = HostSession::new(snapshot());
+    // The GM layer belongs to the host session, never inside its snapshot.
+    host.campaign_mut().insert_secret(SecretFact {
         id: "sword-01.curse".to_owned(),
         text: SECRET_TEXT.to_owned(),
         tags: vec!["item:sword-01".to_owned()],
         reveal: RevealCondition::Identify,
     });
 
-    let mut sim = Sim::new(HostSession::new(snapshot()));
+    let mut sim = Sim::new(host);
     sim.connect(PeerId(10));
     sim.connect(PeerId(11));
 
@@ -233,11 +284,14 @@ fn secrets_stay_host_side_until_revealed() {
     assert!(sim.host.state().journal.is_empty());
     assert_converged(&sim);
 
-    // The DM reveals: the fact leaves the GM store and is committed as
-    // an ordinary event; every journal converges on the public face.
-    let fact = campaign.reveal("sword-01.curse").expect("secret exists");
-    assert!(campaign.is_empty(), "revealed fact left the GM layer");
-    sim.host_event(GameEvent::Fact(fact));
+    // The DM reveals through the host transaction. The private record only
+    // finalizes after its public fact commits.
+    sim.host_reveal_secret("sword-01.curse")
+        .expect("secret exists");
+    assert!(
+        sim.host.campaign().is_empty(),
+        "revealed fact left the GM layer"
+    );
 
     assert_eq!(sim.host.state().journal.len(), 1);
     assert_eq!(sim.host.state().journal[0].text, SECRET_TEXT);
@@ -246,4 +300,253 @@ fn secrets_stay_host_side_until_revealed() {
         assert_eq!(client.state().unwrap().journal[0].kind, "reveal");
     }
     assert_converged(&sim);
+}
+
+#[test]
+fn failed_reveal_restores_the_private_secret() {
+    use isometry_campaign::{RevealCondition, SecretFact, WorldFact};
+
+    let mut host = HostSession::new(snapshot());
+    host.local_event(GameEvent::Fact(WorldFact {
+        id: "sword-01.curse".to_owned(),
+        kind: "history".to_owned(),
+        text: "A different public fact already owns this id.".to_owned(),
+        tags: Vec::new(),
+    }));
+    host.campaign_mut().insert_secret(SecretFact {
+        id: "sword-01.curse".to_owned(),
+        text: "The sword is cursed.".to_owned(),
+        tags: Vec::new(),
+        reveal: RevealCondition::Manual,
+    });
+
+    assert!(host.reveal_secret("sword-01.curse").is_err());
+    assert!(host.campaign().secret("sword-01.curse").is_some());
+    assert!(host.campaign().pending_reveal("sword-01.curse").is_none());
+}
+
+#[test]
+fn restored_host_reconciles_a_pending_reveal() {
+    use isometry_campaign::{CampaignStore, RevealCondition, SecretFact};
+
+    let mut campaign = CampaignStore::new();
+    campaign.insert_secret(SecretFact {
+        id: "sword-01.curse".to_owned(),
+        text: "The sword is cursed.".to_owned(),
+        tags: Vec::new(),
+        reveal: RevealCondition::Manual,
+    });
+    campaign
+        .begin_reveal("sword-01.curse")
+        .expect("secret exists");
+
+    let mut host = HostSession::with_campaign(snapshot(), campaign);
+    let out = host
+        .reconcile_pending_reveals()
+        .expect("reconciles pending fact");
+    assert_eq!(out.len(), 1);
+    assert_eq!(host.state().journal.len(), 1);
+    assert!(host.campaign().is_empty());
+}
+
+#[test]
+fn restored_history_rebuilds_sequence_and_convergence_hash() {
+    use isometry_campaign::CampaignStore;
+
+    let mut host = HostSession::new(snapshot());
+    host.local_event(mv(1, (2, 1)));
+    host.local_event(GameEvent::TurnAdd(TokenId(1)));
+    let state = host.state().clone();
+    let history = host.history().clone();
+    let hash = host.log_hash();
+
+    let mut restored = HostSession::with_history(state, CampaignStore::new(), history);
+    assert_eq!(restored.seq(), 2);
+    assert_eq!(restored.log_hash(), hash);
+
+    restored.local_event(GameEvent::TurnAdvance);
+    assert_eq!(restored.seq(), 3);
+    assert_eq!(restored.history().len(), 3);
+}
+
+/// W1's visibility guard: players receive equipped public items, but a
+/// generated curse does not enter their snapshots until the DM reveals it.
+#[test]
+fn hidden_item_modifiers_stay_private_until_dm_reveal() {
+    const CURSE_NAME: &str = "VOID-THIRST-CURSE";
+
+    let mut state = snapshot();
+    state.inventories.insert(TokenId(1), sword_inventory());
+    let mut host = HostSession::new(state);
+    let hidden = HiddenItemModifier {
+        id: "reward-03.sword.curse".to_owned(),
+        item: ItemId::new("reward-03.sword"),
+        modifier: ItemModifier {
+            id: "reward-03.sword.curse.void-thirst".to_owned(),
+            kind: ItemModifierKind::Curse,
+            name: CURSE_NAME.to_owned(),
+            stats: BTreeMap::from([("attack_bonus".to_owned(), -1)]),
+            appearance_layer: Some("effect:void".to_owned()),
+        },
+        reveal: RevealCondition::Identify,
+    };
+    host.campaign_mut()
+        .insert_hidden_item_modifier(hidden.clone());
+
+    let mut sim = Sim::new(host);
+    sim.connect(PeerId(10));
+    sim.connect(PeerId(11));
+
+    // A player gets the sword and its equipped slot, but cannot learn or
+    // forge the still-private curse.
+    for client in sim.clients.values() {
+        let state = client.state().unwrap();
+        assert_eq!(
+            state.inventories[&TokenId(1)].equipped[&EquipmentSlot::MainHand],
+            ItemId::new("reward-03.sword")
+        );
+        let bytes = postcard::to_allocvec(state).unwrap();
+        assert!(!bytes
+            .windows(CURSE_NAME.len())
+            .any(|w| w == CURSE_NAME.as_bytes()));
+    }
+    sim.client_intent(
+        PeerId(10),
+        GameEvent::ItemModifierRevealed(hidden.public_face()),
+    );
+    sim.client_intent(
+        PeerId(10),
+        GameEvent::InventorySet {
+            token: TokenId(1),
+            inventory: Inventory::default(),
+        },
+    );
+    sim.client_intent(
+        PeerId(10),
+        GameEvent::ItemTransfer {
+            from: TokenId(1),
+            to: TokenId(2),
+            item: ItemId::new("reward-03.sword"),
+        },
+    );
+    assert!(
+        sim.host.state().inventories[&TokenId(1)].items[&ItemId::new("reward-03.sword")]
+            .modifiers
+            .is_empty()
+    );
+    assert!(sim.host.state().inventories[&TokenId(1)]
+        .items
+        .contains_key(&ItemId::new("reward-03.sword")));
+
+    sim.host_reveal_item_modifier("reward-03.sword.curse")
+        .expect("DM reveals the curse");
+    assert!(sim.host.campaign().is_empty());
+    for client in sim.clients.values() {
+        let item = &client.state().unwrap().inventories[&TokenId(1)].items
+            [&ItemId::new("reward-03.sword")];
+        assert_eq!(item.modifiers[0].name, CURSE_NAME);
+        assert_eq!(
+            item.appearance_layers().collect::<Vec<_>>(),
+            vec!["weapon:longsword", "effect:void"]
+        );
+    }
+    assert_converged(&sim);
+}
+
+#[test]
+fn host_transfers_an_equipped_item_atomically() {
+    let mut state = snapshot();
+    state.inventories.insert(TokenId(1), sword_inventory());
+    let mut sim = Sim::new(HostSession::new(state));
+    sim.connect(PeerId(10));
+    sim.connect(PeerId(11));
+
+    sim.host_event(GameEvent::ItemTransfer {
+        from: TokenId(1),
+        to: TokenId(2),
+        item: ItemId::new("reward-03.sword"),
+    });
+
+    let source = &sim.host.state().inventories[&TokenId(1)];
+    let target = &sim.host.state().inventories[&TokenId(2)];
+    assert!(!source.items.contains_key(&ItemId::new("reward-03.sword")));
+    assert!(source.equipped.is_empty());
+    assert!(target.items.contains_key(&ItemId::new("reward-03.sword")));
+    assert!(target.equipped.is_empty());
+    assert_converged(&sim);
+}
+
+#[test]
+fn restored_host_reconciles_a_pending_item_modifier_once() {
+    let mut campaign = isometry_campaign::CampaignStore::new();
+    let hidden = HiddenItemModifier {
+        id: "reward-03.sword.curse".to_owned(),
+        item: ItemId::new("reward-03.sword"),
+        modifier: ItemModifier {
+            id: "reward-03.sword.curse.void-thirst".to_owned(),
+            kind: ItemModifierKind::Curse,
+            name: "Void Thirst".to_owned(),
+            stats: BTreeMap::new(),
+            appearance_layer: None,
+        },
+        reveal: RevealCondition::Manual,
+    };
+    campaign.insert_hidden_item_modifier(hidden);
+    campaign
+        .begin_item_modifier_reveal("reward-03.sword.curse")
+        .expect("modifier exists");
+
+    let mut state = snapshot();
+    state.inventories.insert(TokenId(1), sword_inventory());
+    let mut host = HostSession::with_campaign(state, campaign);
+    let out = host
+        .reconcile_pending_reveals()
+        .expect("reconciles pending modifier");
+    assert_eq!(out.len(), 1);
+    assert_eq!(host.history().len(), 1);
+    assert_eq!(
+        host.state().inventories[&TokenId(1)].items[&ItemId::new("reward-03.sword")]
+            .modifiers
+            .len(),
+        1
+    );
+    assert!(host.campaign().is_empty());
+}
+
+/// W2 commit-result mode: peers store the host-selected typed output but do
+/// not execute its pack script. A client cannot forge a generation record.
+#[test]
+fn committed_generation_replicates_without_client_authority() {
+    let record = generation_record("generated.river-blade.1");
+    let mut sim = Sim::new(HostSession::new(snapshot()));
+    sim.connect(PeerId(10));
+
+    sim.host_event(GameEvent::Generation(record.clone()));
+    assert_eq!(sim.host.state().generations, vec![record.clone()]);
+    assert_eq!(
+        sim.clients[&PeerId(10)].state().unwrap().generations,
+        vec![record.clone()]
+    );
+
+    sim.connect(PeerId(20));
+    assert_eq!(
+        sim.clients[&PeerId(20)].state().unwrap().generations,
+        vec![record.clone()],
+        "a late joiner receives committed results in its snapshot"
+    );
+
+    sim.client_intent(PeerId(10), GameEvent::Generation(generation_record("forged")));
+    assert_eq!(sim.host.state().generations, vec![record]);
+    assert_converged(&sim);
+}
+
+#[test]
+fn host_rejects_malformed_generation_before_it_enters_history() {
+    let mut host = HostSession::new(snapshot());
+    let mut malformed = generation_record("");
+    malformed.request.generator.clear();
+
+    assert!(host.commit_generation(malformed).is_err());
+    assert!(host.state().generations.is_empty());
+    assert!(host.history().is_empty());
 }

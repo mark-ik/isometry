@@ -4,6 +4,7 @@
 //! rules and holds no scripting engine; the system plugin lives in the
 //! host.
 
+use isometry_campaign::EquipmentSlot;
 use isometry_core::FieldValue;
 use xilem_serval::{clickable, el, text};
 
@@ -13,7 +14,8 @@ use crate::state::UiState;
 /// The open sheet as an overlay, or `None` when no sheet is open.
 pub fn sheet_overlay(ui: &UiState) -> Option<UiChild> {
     let id = ui.open_sheet?;
-    let sheet = ui.map.sheet(id)?;
+    let stored_sheet = ui.map.sheet(id)?;
+    let sheet = ui.sheet_effective.as_ref().unwrap_or(stored_sheet);
     let schema = &ui.sheet_schema;
     let name = sheet.text("name").unwrap_or("Character").to_owned();
 
@@ -94,6 +96,87 @@ pub fn sheet_overlay(ui: &UiState) -> Option<UiChild> {
             })
             .collect();
         body.push(Box::new(el("div", actions).attr("class", "sheet-actions")));
+    }
+
+    if let Some(inventory) = ui.inventories.get(&id) {
+        body.push(Box::new(
+            el("div", text("Equipment")).attr("class", "sheet-heading"),
+        ));
+        let slots = [
+            EquipmentSlot::MainHand,
+            EquipmentSlot::OffHand,
+            EquipmentSlot::Head,
+            EquipmentSlot::Body,
+            EquipmentSlot::Feet,
+            EquipmentSlot::Accessory,
+        ];
+        let rows: Vec<UiChild> = slots
+            .iter()
+            .filter_map(|slot| {
+                let item_id = inventory.equipped.get(slot)?;
+                let item = inventory.items.get(item_id)?;
+                let modifiers = item
+                    .modifiers
+                    .iter()
+                    .map(|modifier| modifier.name.as_str())
+                    .collect::<Vec<_>>();
+                let suffix = if modifiers.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", modifiers.join(", "))
+                };
+                Some(Box::new(
+                    el("div", text(format!("{slot:?}: {}{suffix}", item.name)))
+                        .attr("class", "sheet-row"),
+                ) as UiChild)
+            })
+            .collect();
+        if rows.is_empty() {
+            body.push(Box::new(
+                el("div", text("Nothing equipped")).attr("class", "sheet-row"),
+            ));
+        } else {
+            body.extend(rows);
+        }
+        if ui.can_edit_inventory {
+            if inventory.equipped.contains_key(&EquipmentSlot::MainHand) {
+                body.push(Box::new(clickable(
+                    el("span", text("unequip main hand")).attr("class", "btn btn-mini"),
+                    |ui: &mut UiState, _| ui.request_unequip_main_hand(),
+                )));
+            }
+            let carried: Vec<UiChild> = inventory
+                .items
+                .values()
+                .filter(|item| !inventory.equipped.values().any(|equipped| equipped == &item.id))
+                .map(|item| {
+                    let id = item.id.clone();
+                    Box::new(clickable(
+                        el("span", text(format!("equip {}", item.name))).attr("class", "btn btn-mini"),
+                        move |ui: &mut UiState, _| ui.request_equip(id.clone()),
+                    )) as UiChild
+                })
+                .collect();
+            body.extend(carried);
+            let recipients: Vec<(isometry_core::TokenId, String)> = ui
+                .map
+                .tokens
+                .iter()
+                .filter(|token| token.id != id)
+                .map(|token| (token.id, format!("{} {}", token.sprite, token.id.0)))
+                .collect();
+            for item in inventory.items.values() {
+                for (target, label) in &recipients {
+                    let item_id = item.id.clone();
+                    let target = *target;
+                    body.push(Box::new(clickable(
+                        el("span", text(format!("give {} to {label}", item.name)))
+                            .attr("class", "btn btn-mini"),
+                        move |ui: &mut UiState, _| ui.request_transfer(target, item_id.clone()),
+                    )));
+                }
+            }
+        }
     }
 
     let close: Vec<UiChild> = vec![Box::new(clickable(

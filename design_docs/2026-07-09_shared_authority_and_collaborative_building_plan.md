@@ -58,6 +58,18 @@ plus the campaign, not the host's node id.
   grant once personae lands in isometry; until then a host token in the
   campaign save is enough.
 
+**Implementation boundary (2026-07-09):** `HostSession` now owns its private
+`CampaignStore`, and the desktop host persists the public snapshot plus GM
+layer and Codicil history through a versioned Muniment checkpoint. A fresh
+`--host --campaign <name>` restores and reconciles that checkpoint. Tier 1
+still needs to transfer it live, then add a Personae-backed signed host grant.
+Personae's current identity/signature primitives fit that grant; its
+capability-grant layer is not yet a dependency Isometry should pretend exists.
+The desktop bridge is now an Armillary actor: Tokio/iroh ownership stays off
+the winit kernel, while typed snapshot, campaign, and history updates return
+to the kernel for UI and persistence. That is the local ownership boundary the
+live-transfer state machine will build on.
+
 **Done when:** a session survives a live host handoff with both peers'
 convergence hashes intact, the new host can reveal a secret the old host
 authored, and a rejected mid-handoff intent is retried successfully against
@@ -251,10 +263,11 @@ Prior art here is rich and maps cleanly:
 
 An append-only log needs a first-class retraction story before strangers
 co-author anything. A `Retract(fact_id)` event tombstones a fact and views
-stop showing it; actual byte removal happens at snapshot compaction (the
-save file materializes state, not history), so an X-card moment does not
-live forever in the campaign file. Tombstone-then-compact keeps replay
-coherent and makes deletion real.
+stop showing it; snapshot compaction can remove it from the active campaign
+checkpoint. It cannot erase copies already received by peers or present in
+backups, so the product promise is active-state removal plus a clear local
+data-retention policy. Tombstone-then-compact keeps replay coherent without
+claiming impossible retroactive deletion.
 
 ### What this costs
 

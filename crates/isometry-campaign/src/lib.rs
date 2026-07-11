@@ -10,7 +10,22 @@
 //! displays these objects; system plugins interpret them.
 
 mod fact;
+mod generator;
+mod item;
+mod pack;
 mod store;
 
 pub use fact::{RevealCondition, SecretFact, Visibility, WorldFact};
+pub use generator::{
+    CastRoleRequest, EntropyTape, GenValue, GenValueError, GenerationRecord,
+    GenerationRecordError, GeneratorFixture, GeneratorRequest, ItemProposal, MapPatchProposal,
+    NpcProposal, StoryletProposal,
+};
+pub use item::{
+    EquipmentSlot, HiddenItemModifier, Inventory, InventoryError, ItemId, ItemInstance,
+    ItemModifier, ItemModifierKind, ItemModifierReveal,
+};
+pub use pack::{
+    ContentPackError, ContentPackManifest, GeneratorEntry, CONTENT_PACK_FORMAT,
+};
 pub use store::CampaignStore;

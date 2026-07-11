@@ -21,6 +21,8 @@ use iroh::{Endpoint, EndpointAddr};
 use iroh_tickets::endpoint::EndpointTicket;
 use tokio::sync::{mpsc, Mutex};
 
+use codicil::Codicil;
+use isometry_campaign::CampaignStore;
 use crate::protocol::{fnv1a, GameEvent, GameSnapshot, NetMessage, Outbound, PeerId, Recipient, FNV_OFFSET};
 use crate::session::{ClientSession, HostSession};
 
@@ -115,14 +117,35 @@ pub struct HostNet {
 impl HostNet {
     /// Bind the host endpoint over the authoritative `state`.
     pub async fn bind(state: GameSnapshot) -> Result<Self, String> {
+        Self::bind_with_campaign(state, CampaignStore::new()).await
+    }
+
+    /// Bind a host restored with its GM-private campaign state.
+    pub async fn bind_with_campaign(
+        state: GameSnapshot,
+        campaign: CampaignStore,
+    ) -> Result<Self, String> {
+        Self::bind_with_history(state, campaign, Codicil::new()).await
+    }
+
+    /// Bind a host restored from a checkpoint's complete ordered history.
+    pub async fn bind_with_history(
+        state: GameSnapshot,
+        campaign: CampaignStore,
+        history: Codicil<GameEvent>,
+    ) -> Result<Self, String> {
         let endpoint = Endpoint::builder(presets::N0)
             .alpns(vec![ALPN.to_vec()])
             .bind()
             .await
             .map_err(|e| format!("host bind: {e}"))?;
+        let mut session = HostSession::with_history(state, campaign, history);
+        // A checkpoint may have landed between preparing and finalizing a
+        // reveal. Reconcile before any peer can receive the initial snapshot.
+        session.reconcile_pending_reveals()?;
         Ok(Self {
             endpoint,
-            session: Arc::new(Mutex::new(HostSession::new(state))),
+            session: Arc::new(Mutex::new(session)),
             peers: Arc::new(Mutex::new(HashMap::new())),
         })
     }
@@ -184,6 +207,18 @@ impl HostNet {
 
     pub async fn snapshot(&self) -> GameSnapshot {
         self.session.lock().await.state().clone()
+    }
+
+    /// A host-only copy for durable save or future host handoff. This never
+    /// travels through the public session stream.
+    pub async fn campaign(&self) -> CampaignStore {
+        self.session.lock().await.campaign().clone()
+    }
+
+    /// The authoritative append-only history, for checkpoint persistence and
+    /// later host handoff. It never travels in a normal peer snapshot.
+    pub async fn history(&self) -> Codicil<GameEvent> {
+        self.session.lock().await.history().clone()
     }
 
     pub async fn seq(&self) -> u64 {
@@ -332,6 +367,8 @@ mod tests {
             turns: TurnList::new(),
             roll_log: Vec::new(),
             journal: Vec::new(),
+            inventories: Default::default(),
+            generations: Vec::new(),
         }
     }
 

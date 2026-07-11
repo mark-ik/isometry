@@ -20,7 +20,7 @@ The substrate knows tiles, tokens, turns, facing, elevation, and area
 templates. Game rules live in system plugins (schema plus scripts). The
 substrate never knows what a hit point is.
 
-Isometry is a standalone consumer of the Strophos stack (xilem_serval,
+Isometry is a standalone consumer of the Merely stack (xilem_serval,
 serval-layout, netrender), the woodshed pattern: git deps on the mark-ik
 remotes, patch mirror at the workspace root, machine-local path overrides
 via a gitignored `.cargo/config.toml`.
@@ -100,7 +100,7 @@ file I/O. Event log semantics live in core; transport lives in
 - Plans go in `design_docs/` per the date-keyword-plan convention with
   done-conditions, not time estimates. Never `.claude/plans/`.
 - Follow `DOC_POLICY.md` for documentation changes.
-- Check the Strophos ecosystem before writing a new module: serval,
+- Check the Merely ecosystem before writing a new module: serval,
   netrender, mere, woodshed, and the wgpu-* repos may already have the
   piece or the pattern.
 

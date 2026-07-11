@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+use isometry_campaign::{EquipmentSlot, GenValue, GenerationRecord, Inventory, ItemId};
 use isometry_core::{
     apply, distance, reachable, roll, template_tiles, visible_tiles, Facing, IsoGeometry, Layer,
     MapDocument, MoveRules, Rng, RollRecord, SessionEvent, SightRules, TemplateKind, TileCoord,
@@ -219,6 +220,41 @@ pub struct ItemRow {
     pub desc: String,
 }
 
+/// A host-authoritative inventory mutation requested by the view. The host
+/// mints item ids and commits `GameEvent::InventorySet`; a player client never
+/// gets the authoring controls in the first place.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum InventoryRequest {
+    AddCompendiumItem {
+        token: TokenId,
+        template: String,
+        name: String,
+        category: String,
+    },
+    Equip {
+        token: TokenId,
+        slot: EquipmentSlot,
+        item: ItemId,
+    },
+    Unequip {
+        token: TokenId,
+        slot: EquipmentSlot,
+    },
+    Transfer {
+        from: TokenId,
+        to: TokenId,
+        item: ItemId,
+    },
+}
+
+/// A one-shot request from the generator preview surface. The desktop host
+/// evaluates/commits it; views never load packs or run Lua.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GenerationRequest {
+    Generate,
+    Commit,
+}
+
 /// Runner state: the substrate document plus view-layer concerns
 /// (camera, selection, editor).
 pub struct UiState {
@@ -262,6 +298,9 @@ pub struct UiState {
     /// The shared roll log (most recent last). Mirrored from the session
     /// snapshot in Remote mode; kept locally in Local mode.
     pub roll_log: Vec<RollRecord>,
+    /// Public inventory/equipment state mirrored from an authoritative
+    /// snapshot. The UI projects it; item instances remain campaign data.
+    pub inventories: BTreeMap<TokenId, Inventory>,
     /// Dice generator. Seeded deterministically; the host reseeds with
     /// real entropy at startup.
     rng: Rng,
@@ -289,10 +328,26 @@ pub struct UiState {
     /// one-shot requests the host drains to bind/edit/roll.
     pub sheet_schema: SheetSchema,
     pub open_sheet: Option<TokenId>,
+    /// The host's transient rules projection of the open sheet after public
+    /// equipped-item modifiers. The stored map sheet remains unmodified.
+    pub sheet_effective: Option<isometry_core::SheetData>,
     pub sheet_derived: BTreeMap<String, i64>,
     pub bind_sheet_request: Option<TokenId>,
     pub sheet_edit: Option<(TokenId, String, i64)>,
     pub sheet_action: Option<(TokenId, String)>,
+    pub inventory_request: Option<InventoryRequest>,
+    /// False for a joined player. The host still validates its own event path;
+    /// this only keeps DM authoring controls out of player UI.
+    pub can_edit_inventory: bool,
+    /// Public commit-result records mirrored from a session snapshot. The W2
+    /// preview table will project this ledger; content scripts never run here.
+    pub generations: Vec<GenerationRecord>,
+    /// Generator preview state is local to the host until `Commit`; players
+    /// receive only the resulting public record through a snapshot.
+    pub generator_open: bool,
+    pub generator_preview: Option<GenerationRecord>,
+    pub generator_locks: BTreeMap<String, GenValue>,
+    pub generation_request: Option<GenerationRequest>,
     /// Sprite the Token mode places.
     pub token_sprite: String,
     /// Play state: the substrate turn order.
@@ -353,6 +408,7 @@ impl UiState {
             visible: HashSet::new(),
             explored: HashSet::new(),
             roll_log: Vec::new(),
+            inventories: BTreeMap::new(),
             rng: Rng::new(1),
             initiative_mode: InitiativeMode::Individual,
             measure_anchor: None,
@@ -366,10 +422,18 @@ impl UiState {
             connected_players: Vec::new(),
             sheet_schema: SheetSchema::default(),
             open_sheet: None,
+            sheet_effective: None,
             sheet_derived: BTreeMap::new(),
             bind_sheet_request: None,
             sheet_edit: None,
             sheet_action: None,
+            inventory_request: None,
+            can_edit_inventory: true,
+            generations: Vec::new(),
+            generator_open: false,
+            generator_preview: None,
+            generator_locks: BTreeMap::new(),
+            generation_request: None,
             bestiary: Vec::new(),
             compendium_open: false,
             compendium_scroll: 0.0,
@@ -397,6 +461,116 @@ impl UiState {
 
     pub fn close_sheet(&mut self) {
         self.open_sheet = None;
+        self.sheet_effective = None;
+    }
+
+    /// Queue a GM-side item instance from an SRD/content-pack entry for the
+    /// currently open sheet. The host assigns the item id and commits it.
+    pub fn request_compendium_item(&mut self, item: &ItemRow) {
+        let Some(token) = self.open_sheet else {
+            self.status = "open a character sheet first".to_owned();
+            return;
+        };
+        if !self.can_edit_inventory {
+            self.status = "inventory changes require the host".to_owned();
+            return;
+        }
+        self.inventory_request = Some(InventoryRequest::AddCompendiumItem {
+            token,
+            template: item.key.clone(),
+            name: item.name.clone(),
+            category: item.category.clone(),
+        });
+    }
+
+    pub fn request_equip(&mut self, item: ItemId) {
+        let Some(token) = self.open_sheet else {
+            return;
+        };
+        if self.can_edit_inventory {
+            self.inventory_request = Some(InventoryRequest::Equip {
+                token,
+                slot: EquipmentSlot::MainHand,
+                item,
+            });
+        }
+    }
+
+    pub fn request_unequip_main_hand(&mut self) {
+        if self.can_edit_inventory {
+            if let Some(token) = self.open_sheet {
+                self.inventory_request = Some(InventoryRequest::Unequip {
+                    token,
+                    slot: EquipmentSlot::MainHand,
+                });
+            }
+        }
+    }
+
+    pub fn request_transfer(&mut self, to: TokenId, item: ItemId) {
+        if self.can_edit_inventory {
+            if let Some(from) = self.open_sheet {
+                if from != to {
+                    self.inventory_request = Some(InventoryRequest::Transfer { from, to, item });
+                }
+            }
+        }
+    }
+
+    /// Open the W2 host-only generator preview. The initial bundled pack has
+    /// one item generator; later pack discovery will populate this selector.
+    pub fn open_generator(&mut self) {
+        if self.can_edit_inventory {
+            self.generator_open = true;
+        } else {
+            self.status = "generation requires the host".to_owned();
+        }
+    }
+
+    pub fn close_generator(&mut self) {
+        self.generator_open = false;
+        self.generator_preview = None;
+        self.generation_request = None;
+    }
+
+    pub fn request_generation(&mut self) {
+        if self.can_edit_inventory {
+            self.generation_request = Some(GenerationRequest::Generate);
+        } else {
+            self.status = "generation requires the host".to_owned();
+        }
+    }
+
+    /// The demo pack reads this visible worldbuilding constraint. A lock is
+    /// a value passed to each reroll, never a replay of past entropy.
+    pub fn toggle_demo_culture_lock(&mut self) {
+        if !self.can_edit_inventory {
+            self.status = "generation requires the host".to_owned();
+            return;
+        }
+        if self.generator_locks.remove("culture").is_some() {
+            self.status = "unlocked culture".to_owned();
+        } else {
+            self.generator_locks.insert(
+                "culture".to_owned(),
+                GenValue::Text {
+                    value: "river-clans".to_owned(),
+                },
+            );
+            self.status = "locked culture: river-clans".to_owned();
+        }
+    }
+
+    pub fn commit_generation_preview(&mut self) {
+        if self.can_edit_inventory && self.generator_preview.is_some() {
+            self.generation_request = Some(GenerationRequest::Commit);
+        }
+    }
+
+    pub fn discard_generation_preview(&mut self) {
+        self.generator_preview = None;
+        self.generation_request = None;
+        self.status = "discarded generation preview".to_owned();
     }
 
     /// Open the SRD compendium overlay.
@@ -838,6 +1012,9 @@ impl UiState {
         self.map = snap.map;
         self.turns = snap.turns;
         self.roll_log = snap.roll_log;
+        self.inventories = snap.inventories;
+        self.generations = snap.generations;
+        self.sheet_effective = None;
         if let Some(id) = self.selected_token {
             if self.map.token(id).is_none() {
                 self.selected_token = None;
@@ -1405,14 +1582,76 @@ mod tests {
         // A snapshot mirrors the authoritative state in.
         let mut snap_map = ui.map.clone();
         snap_map.token_mut(TokenId(1)).unwrap().at = (before.0 + 1, before.1);
+        let inventories = std::collections::BTreeMap::from([(TokenId(1), Inventory::default())]);
         let snap = GameSnapshot {
             map: snap_map,
             turns: ui.turns.clone(),
             roll_log: Vec::new(),
             journal: Vec::new(),
+            inventories: inventories.clone(),
+            generations: Vec::new(),
         };
         ui.apply_snapshot(snap);
         assert_eq!(ui.map.token(TokenId(1)).unwrap().at, (before.0 + 1, before.1));
+        assert_eq!(ui.inventories, inventories);
+    }
+
+    #[test]
+    fn compendium_item_request_targets_the_open_sheet() {
+        let mut ui = UiState::new(demo_map());
+        ui.open_sheet = Some(TokenId(1));
+        let item = ItemRow {
+            key: "longsword".to_owned(),
+            name: "Longsword".to_owned(),
+            category: "Weapon".to_owned(),
+            cost: "15 gp".to_owned(),
+            weight: "3 lb.".to_owned(),
+            detail: "1d8 slashing".to_owned(),
+            desc: String::new(),
+        };
+        ui.request_compendium_item(&item);
+        assert_eq!(
+            ui.inventory_request,
+            Some(InventoryRequest::AddCompendiumItem {
+                token: TokenId(1),
+                template: "longsword".to_owned(),
+                name: "Longsword".to_owned(),
+                category: "Weapon".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn generator_controls_keep_locks_visible_and_queue_host_work() {
+        let mut ui = UiState::new(demo_map());
+        ui.open_generator();
+        ui.toggle_demo_culture_lock();
+        assert_eq!(
+            ui.generator_locks.get("culture"),
+            Some(&GenValue::Text {
+                value: "river-clans".to_owned()
+            })
+        );
+        ui.request_generation();
+        assert_eq!(ui.generation_request, Some(GenerationRequest::Generate));
+
+        ui.toggle_demo_culture_lock();
+        assert!(!ui.generator_locks.contains_key("culture"));
+    }
+
+    #[test]
+    fn transfer_request_keeps_source_and_target_explicit() {
+        let mut ui = UiState::new(demo_map());
+        ui.open_sheet = Some(TokenId(1));
+        ui.request_transfer(TokenId(2), ItemId::new("token-1.item-0"));
+        assert_eq!(
+            ui.inventory_request,
+            Some(InventoryRequest::Transfer {
+                from: TokenId(1),
+                to: TokenId(2),
+                item: ItemId::new("token-1.item-0"),
+            })
+        );
     }
 
     #[test]
@@ -1499,7 +1738,6 @@ mod tests {
 
     #[test]
     fn fog_hides_out_of_sight_and_remembers_explored() {
-        use isometry_core::TokenId;
         let mut ui = UiState::new(demo_map());
         // Knights are owner "A" near (10,14)/(9,15); goblins "B" near the
         // northeast hill. As player A, the goblins are out of sight.
@@ -1545,7 +1783,6 @@ mod tests {
 
     #[test]
     fn token_mode_places_and_removes() {
-        use isometry_core::TokenId;
         let mut ui = UiState::new(demo_map());
         ui.mode = EditMode::Token;
         let n = ui.map.tokens.len();
