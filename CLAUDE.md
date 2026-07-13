@@ -21,7 +21,7 @@ templates. Game rules live in system plugins (schema plus scripts). The
 substrate never knows what a hit point is.
 
 Isometry is a standalone consumer of the Merely stack (xilem_serval,
-serval-layout, netrender), the woodshed pattern: git deps on the mark-ik
+genet-layout, netrender), the woodshed pattern: git deps on the mark-ik
 remotes, patch mirror at the workspace root, machine-local path overrides
 via a gitignored `.cargo/config.toml`.
 
@@ -72,10 +72,10 @@ All authoritative design material lives in `design_docs/`. Read
 crates/
   isometry-core/    Pure-Rust substrate model: grids, iso math, map
                     documents, session events. No I/O, no UI, no net,
-                    no serval deps.
+                    no genet deps.
   isometry-views/   xilem_serval view fns + CSS sheets (tilesets are
                     stylesheets). Host-agnostic.
-  isometry-serval/  Native winit host: window, input, netrender present.
+  isometry-genet/  Native winit host: window, input, netrender present.
                     ISOMETRY_PROFILE=1 prints frame timers.
   isometry-net/     DM-authority replication over a pure protocol seam, with
                     iroh behind a feature.
@@ -89,7 +89,7 @@ Planned (phase-gated, see the bootstrap and horizon plans): `isometry-web`
 (browser host), richer campaign packs, generator/worldbuilding tools, and
 later live 2.5D / 3D voxel lenses.
 
-Keep `isometry-core` pure: no `wgpu`, no `iroh`, no serval crates, no
+Keep `isometry-core` pure: no `wgpu`, no `iroh`, no genet crates, no
 file I/O. Event log semantics live in core; transport lives in
 `isometry-net`.
 
@@ -100,7 +100,7 @@ file I/O. Event log semantics live in core; transport lives in
 - Plans go in `design_docs/` per the date-keyword-plan convention with
   done-conditions, not time estimates. Never `.claude/plans/`.
 - Follow `DOC_POLICY.md` for documentation changes.
-- Check the Merely ecosystem before writing a new module: serval,
+- Check the Merely ecosystem before writing a new module: genet,
   netrender, mere, woodshed, and the wgpu-* repos may already have the
   piece or the pattern.
 

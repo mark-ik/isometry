@@ -9,12 +9,12 @@
 use std::collections::HashSet;
 
 use isometry_core::{depth_key, path_to, MapDocument, TileCoord, TileKindId, Token};
-use xilem_serval::{clickable, el, text, AnyView, ServalCtx, ServalElement};
+use xilem_serval::{clickable, el, text, AnyView, GenetCtx, GenetElement};
 
 use crate::panel::side_panel;
 use crate::state::{EditMode, FogLevel, UiState};
 
-pub type UiChild = Box<dyn AnyView<UiState, (), ServalCtx, ServalElement>>;
+pub type UiChild = Box<dyn AnyView<UiState, (), GenetCtx, GenetElement>>;
 
 /// One diamond at tile `at`, drawn at `elevation`, with `class` deciding
 /// its paint. Clicking selects the tile.
@@ -350,6 +350,9 @@ pub fn board_root(ui: &UiState) -> UiChild {
         pane_children.push(overlay);
     }
     if let Some(overlay) = crate::generator::generator_overlay(ui) {
+        pane_children.push(overlay);
+    }
+    if let Some(overlay) = crate::governance::governance_overlay(ui) {
         pane_children.push(overlay);
     }
     if let Some(menu) = context_menu_overlay(ui) {

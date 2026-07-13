@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::WorldFact;
+use crate::{CampaignDraft, LocalMapProposal, StoryletProposal, WorldFact};
 
 /// One typed value crossing the pack-generator ABI.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -23,6 +23,8 @@ pub enum GenValue {
     MapPatch { patch: MapPatchProposal },
     WorldFact { fact: WorldFact },
     Storylet { storylet: StoryletProposal },
+    LocalMap { map: LocalMapProposal },
+    Campaign { campaign: CampaignDraft },
 }
 
 impl GenValue {
@@ -49,7 +51,9 @@ impl GenValue {
             | Self::Npc { .. }
             | Self::MapPatch { .. }
             | Self::WorldFact { .. }
-            | Self::Storylet { .. } => Ok(()),
+            | Self::Storylet { .. }
+            | Self::LocalMap { .. }
+            | Self::Campaign { .. } => Ok(()),
         }
     }
 }
@@ -97,16 +101,6 @@ pub struct MapPatchProposal {
     pub target: String,
     #[serde(default)]
     pub operations: Vec<GenValue>,
-}
-
-/// A small authored scene or narrative opportunity. The dialogue engine later
-/// interprets its `entry` and `tags`; the generator only proposes it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StoryletProposal {
-    pub key: String,
-    pub entry: String,
-    #[serde(default)]
-    pub tags: Vec<String>,
 }
 
 /// The stable request passed to a pack's `call_gen(request_json, entropy,

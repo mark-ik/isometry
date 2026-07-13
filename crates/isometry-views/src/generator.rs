@@ -14,11 +14,75 @@ fn proposal_label(value: &GenValue) -> String {
         GenValue::Item { item } => format!("Item: {} ({})", item.name, item.template),
         GenValue::Npc { npc } => format!("NPC: {} ({})", npc.name, npc.key),
         GenValue::MapPatch { patch } => {
-            format!("Map patch: {} ({} operations)", patch.target, patch.operations.len())
+            format!(
+                "Map patch: {} ({} operations)",
+                patch.target,
+                patch.operations.len()
+            )
         }
         GenValue::WorldFact { fact } => format!("Fact: {}", fact.text),
         GenValue::Storylet { storylet } => format!("Storylet: {}", storylet.entry),
+        GenValue::LocalMap { map } => {
+            format!("Map: {} ({}x{})", map.name, map.width, map.height)
+        }
+        GenValue::Campaign { campaign } => format!(
+            "Campaign: {} ({} maps, {} factions, {} secrets)",
+            campaign.name,
+            campaign.maps.len(),
+            campaign.world.factions.len(),
+            campaign.secrets.len()
+        ),
     }
+}
+
+fn proposal_details(value: &GenValue) -> Vec<String> {
+    let GenValue::Campaign { campaign } = value else {
+        return Vec::new();
+    };
+    let mut details = vec![
+        format!("Start: {}", campaign.starting_map),
+        format!("Finale: {}", campaign.final_storylet),
+    ];
+    details.extend(
+        campaign
+            .world
+            .factions
+            .values()
+            .map(|faction| format!("Faction: {} [{}]", faction.name, faction.tags.join(", "))),
+    );
+    details.extend(campaign.maps.iter().map(|map| {
+        format!(
+            "Map: {} ({:?}, {}x{})",
+            map.map.name, map.scale, map.map.width, map.map.height
+        )
+    }));
+    details.extend(
+        campaign
+            .world
+            .laws
+            .values()
+            .map(|law| format!("Law: {} - {}", law.name, law.text)),
+    );
+    details.extend(
+        campaign
+            .world
+            .history
+            .iter()
+            .map(|event| format!("History {}: {}", event.time, event.text)),
+    );
+    details.extend(
+        campaign
+            .rewards
+            .iter()
+            .map(|item| format!("Reward: {}", item.name)),
+    );
+    details.extend(
+        campaign
+            .secrets
+            .iter()
+            .map(|secret| format!("GM secret: {}", secret.text)),
+    );
+    details
 }
 
 /// The first preview-table slice uses the bundled demo item generator. The
@@ -28,11 +92,13 @@ pub fn generator_overlay(ui: &UiState) -> Option<UiChild> {
     if !ui.generator_open {
         return None;
     }
-    let locked = ui.generator_locks.contains_key("culture");
-    let lock_label = if locked {
-        "Unlock culture"
-    } else {
-        "Lock culture"
+    let choice = ui.selected_generator()?;
+    let preset = choice.lock_presets.first();
+    let locked = preset.is_some_and(|preset| ui.generator_locks.contains_key(&preset.key));
+    let lock_label = match (preset, locked) {
+        (Some(preset), true) => format!("Unlock {}", preset.label),
+        (Some(preset), false) => format!("Lock {}", preset.label),
+        (None, _) => "No lock presets".to_owned(),
     };
     let mut actions: Vec<UiChild> = vec![Box::new(clickable(
         el::<_, UiState, ()>("span", text("close")).attr("class", "btn btn-mini"),
@@ -47,36 +113,50 @@ pub fn generator_overlay(ui: &UiState) -> Option<UiChild> {
                     |ui: &mut UiState, _| ui.commit_generation_preview(),
                 )),
             );
-            vec![
-                Box::new(el("div", text(record.request.generator.clone())).attr("class", "entry-sub")),
-                Box::new(el("div", text(proposal_label(&record.proposal))).attr("class", "generator-proposal")),
-                Box::new(el("div", text(format!("entropy: {}", record.entropy))).attr("class", "side-line")),
+            let mut body: Vec<UiChild> = vec![
                 Box::new(
-                    el(
-                        "div",
-                        (
-                            clickable(
-                                el("div", text("Reroll")).attr("class", "btn"),
-                                |ui: &mut UiState, _| ui.request_generation(),
-                            ),
-                            clickable(
-                                el("div", text(lock_label)).attr("class", "btn"),
-                                |ui: &mut UiState, _| ui.toggle_demo_culture_lock(),
-                            ),
-                            clickable(
-                                el("div", text("Discard")).attr("class", "btn"),
-                                |ui: &mut UiState, _| ui.discard_generation_preview(),
-                            ),
-                        ),
-                    )
-                    .attr("class", "btn-row"),
+                    el("div", text(record.request.generator.clone())).attr("class", "entry-sub"),
                 ),
-            ]
+                Box::new(
+                    el("div", text(proposal_label(&record.proposal)))
+                        .attr("class", "generator-proposal"),
+                ),
+                Box::new(
+                    el("div", text(format!("entropy: {}", record.entropy)))
+                        .attr("class", "side-line"),
+                ),
+            ];
+            body.extend(
+                proposal_details(&record.proposal)
+                    .into_iter()
+                    .map(|detail| {
+                        Box::new(el("div", text(detail)).attr("class", "side-line")) as UiChild
+                    }),
+            );
+            body.push(Box::new(
+                el(
+                    "div",
+                    (
+                        clickable(
+                            el("div", text("Reroll")).attr("class", "btn"),
+                            |ui: &mut UiState, _| ui.request_generation(),
+                        ),
+                        clickable(
+                            el("div", text(lock_label.clone())).attr("class", "btn"),
+                            |ui: &mut UiState, _| ui.toggle_generator_lock(),
+                        ),
+                        clickable(
+                            el("div", text("Discard")).attr("class", "btn"),
+                            |ui: &mut UiState, _| ui.discard_generation_preview(),
+                        ),
+                    ),
+                )
+                .attr("class", "btn-row"),
+            ));
+            body
         }
         None => vec![
-            Box::new(
-                el("div", text("Demo forge-item generator")).attr("class", "entry-sub"),
-            ),
+            Box::new(el("div", text(choice.name.clone())).attr("class", "entry-sub")),
             Box::new(
                 el(
                     "div",
@@ -87,7 +167,7 @@ pub fn generator_overlay(ui: &UiState) -> Option<UiChild> {
                         ),
                         clickable(
                             el("div", text(lock_label)).attr("class", "btn"),
-                            |ui: &mut UiState, _| ui.toggle_demo_culture_lock(),
+                            |ui: &mut UiState, _| ui.toggle_generator_lock(),
                         ),
                     ),
                 )
@@ -95,6 +175,14 @@ pub fn generator_overlay(ui: &UiState) -> Option<UiChild> {
             ),
         ],
     };
+    let mut body = body;
+    body.insert(
+        0,
+        Box::new(clickable(
+            el("div", text(format!("Generator: {}", choice.name))).attr("class", "btn"),
+            |ui: &mut UiState, _| ui.cycle_generator(),
+        )),
+    );
     Some(crate::widgets::overlay_panel(
         "generator",
         "Generate".to_owned(),

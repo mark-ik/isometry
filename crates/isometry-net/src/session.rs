@@ -8,8 +8,8 @@ use std::collections::HashMap;
 
 use codicil::Codicil;
 use isometry_campaign::{
-    CampaignStore, GenerationRecord, GenerationRecordError, InventoryError, ItemId,
-    ItemModifierReveal, WorldFact,
+    CampaignStore, GenerationRecord, GenerationRecordError, InventoryError, ItemId, ItemInstance,
+    ItemModifierReveal, MapScale, StoryletEffect, WorldError, WorldEvent, WorldFact,
 };
 use isometry_core::{apply, EventError, TokenId};
 
@@ -30,6 +30,9 @@ pub enum GameError {
     SameInventoryTransfer(TokenId),
     ConflictingGeneration(String),
     InvalidGeneration(GenerationRecordError),
+    UnknownMap(String),
+    ConflictingMap(String),
+    World(WorldError),
 }
 
 const MAX_GENERATION_VALUE_DEPTH: usize = 16;
@@ -38,6 +41,7 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
     match event {
         GameEvent::Map(e) => {
             apply(&mut state.map, e).map_err(GameError::Core)?;
+            sync_active_map(state);
             Ok(())
         }
         GameEvent::TurnAdd(id) => {
@@ -70,6 +74,7 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
         }
         GameEvent::SheetSet { token, sheet } => {
             state.map.set_sheet(*token, sheet.clone());
+            sync_active_map(state);
             Ok(())
         }
         GameEvent::Fact(fact) => {
@@ -120,6 +125,42 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
             }
             state.generations.push(record.clone());
             Ok(())
+        }
+        GameEvent::MapStored(map) => {
+            if map.id.trim().is_empty() {
+                return Err(GameError::UnknownMap(map.id.clone()));
+            }
+            if let Some(existing) = state.maps.get(&map.id) {
+                return if existing == map {
+                    Ok(())
+                } else {
+                    Err(GameError::ConflictingMap(map.id.clone()))
+                };
+            }
+            state.maps.insert(map.id.clone(), map.clone());
+            Ok(())
+        }
+        GameEvent::MapActivated { id } => {
+            let map = state
+                .maps
+                .get(id)
+                .ok_or_else(|| GameError::UnknownMap(id.clone()))?;
+            state.map = map.document.clone();
+            state.active_map = Some(id.clone());
+            state.turns = isometry_core::TurnList::new();
+            for token in &state.map.tokens {
+                state.turns.add(token.id);
+            }
+            Ok(())
+        }
+        GameEvent::World(event) => state.world.apply(event).map_err(GameError::World),
+    }
+}
+
+fn sync_active_map(state: &mut GameSnapshot) {
+    if let Some(id) = &state.active_map {
+        if let Some(map) = state.maps.get_mut(id) {
+            map.document = state.map.clone();
         }
     }
 }
@@ -320,11 +361,169 @@ impl HostSession {
     /// Commit a validated generator result in commit-result mode. The record
     /// is public and replayable, while applying it to game state stays a
     /// separate, type-specific DM operation.
-    pub fn commit_generation(
+    pub fn commit_generation(&mut self, record: GenerationRecord) -> Result<Vec<Outbound>, String> {
+        self.try_commit(GameEvent::Generation(record))
+    }
+
+    /// Resolve one committed storylet against public world data and private
+    /// fact IDs, then commit all effects through ordinary replicated events.
+    /// A cloned snapshot prevalidates the batch so a bad late effect cannot
+    /// leave a half-applied storylet.
+    pub fn commit_storylet(
+        &mut self,
+        key: &str,
+        item_owner: Option<TokenId>,
+    ) -> Result<Vec<Outbound>, String> {
+        let storylet = self
+            .state
+            .world
+            .storylets
+            .get(key)
+            .cloned()
+            .ok_or_else(|| format!("unknown storylet: {key}"))?;
+        let resolved = self
+            .state
+            .world
+            .resolve_storylet(&storylet, self.campaign.secret_ids())
+            .map_err(|error| format!("storylet does not match: {error:?}"))?;
+        let mut events = Vec::new();
+        for (index, effect) in resolved.effects.into_iter().enumerate() {
+            match effect {
+                StoryletEffect::Fact { fact } => events.push(GameEvent::Fact(fact)),
+                StoryletEffect::History { event } => {
+                    events.push(GameEvent::World(WorldEvent::History(event)))
+                }
+                StoryletEffect::LocalMap { map } => {
+                    let map = map
+                        .lower(MapScale::Local)
+                        .map_err(|error| format!("storylet map is invalid: {error}"))?;
+                    events.push(GameEvent::MapStored(map));
+                }
+                StoryletEffect::Item { item } => {
+                    let owner = item_owner
+                        .ok_or_else(|| "storylet item effect needs an owner".to_owned())?;
+                    let mut inventory = self
+                        .state
+                        .inventories
+                        .get(&owner)
+                        .cloned()
+                        .unwrap_or_default();
+                    inventory
+                        .insert(ItemInstance {
+                            id: ItemId::new(format!("storylet.{key}.{index}")),
+                            template: item.template,
+                            name: item.name,
+                            quantity: 1,
+                            tags: item.tags,
+                            modifiers: Vec::new(),
+                            appearance_layers: Vec::new(),
+                        })
+                        .map_err(|error| format!("storylet item is invalid: {error:?}"))?;
+                    events.push(GameEvent::InventorySet {
+                        token: owner,
+                        inventory,
+                    });
+                }
+            }
+        }
+        let mut preview = self.state.clone();
+        for event in &events {
+            apply_game(&mut preview, event)
+                .map_err(|error| format!("storylet effect rejected: {error:?}"))?;
+        }
+        let mut out = Vec::new();
+        for event in events {
+            out.extend(self.try_commit(event)?);
+        }
+        Ok(out)
+    }
+
+    /// Accept an inspectable campaign draft. Public world/maps/rewards enter
+    /// the ordered log; hidden facts enter only the host-private store. Both
+    /// sides are staged before either is changed.
+    pub fn commit_campaign(
         &mut self,
         record: GenerationRecord,
+        item_owner: Option<TokenId>,
     ) -> Result<Vec<Outbound>, String> {
-        self.try_commit(GameEvent::Generation(record))
+        let isometry_campaign::GenValue::Campaign { campaign: draft } = record.proposal.clone()
+        else {
+            return Err("generation record is not a campaign draft".to_owned());
+        };
+        draft
+            .validate()
+            .map_err(|error| format!("invalid campaign draft: {error:?}"))?;
+
+        let mut private = self.campaign.clone();
+        for secret in &draft.secrets {
+            if let Some(existing) = private.secret(&secret.id) {
+                if existing != secret {
+                    return Err(format!(
+                        "conflicting private campaign secret: {}",
+                        secret.id
+                    ));
+                }
+            } else {
+                private.insert_secret(secret.clone());
+            }
+        }
+
+        let mut events = vec![GameEvent::Generation(record)];
+        events.extend(
+            draft
+                .public_world_events()
+                .into_iter()
+                .map(GameEvent::World),
+        );
+        for draft_map in &draft.maps {
+            let map = draft_map
+                .map
+                .lower(draft_map.scale)
+                .map_err(|error| format!("campaign map is invalid: {error}"))?;
+            events.push(GameEvent::MapStored(map));
+        }
+        if !draft.rewards.is_empty() {
+            let owner =
+                item_owner.ok_or_else(|| "campaign reward needs a character owner".to_owned())?;
+            let mut inventory = self
+                .state
+                .inventories
+                .get(&owner)
+                .cloned()
+                .unwrap_or_default();
+            for (index, item) in draft.rewards.iter().enumerate() {
+                inventory
+                    .insert(ItemInstance {
+                        id: ItemId::new(format!("campaign.{}.reward.{index}", draft.id)),
+                        template: item.template.clone(),
+                        name: item.name.clone(),
+                        quantity: 1,
+                        tags: item.tags.clone(),
+                        modifiers: Vec::new(),
+                        appearance_layers: Vec::new(),
+                    })
+                    .map_err(|error| format!("campaign reward is invalid: {error:?}"))?;
+            }
+            events.push(GameEvent::InventorySet {
+                token: owner,
+                inventory,
+            });
+        }
+        events.push(GameEvent::MapActivated {
+            id: draft.starting_map.clone(),
+        });
+
+        let mut preview = self.state.clone();
+        for event in &events {
+            apply_game(&mut preview, event)
+                .map_err(|error| format!("campaign draft rejected: {error:?}"))?;
+        }
+        let mut out = Vec::new();
+        for event in events {
+            out.extend(self.try_commit(event)?);
+        }
+        self.campaign = private;
+        Ok(out)
     }
 
     /// Complete interrupted reveals after restoring a snapshot and campaign
@@ -385,7 +584,10 @@ impl HostSession {
                     | GameEvent::InventorySet { .. }
                     | GameEvent::ItemTransfer { .. }
                     | GameEvent::ItemModifierRevealed(_)
-                    | GameEvent::Generation(_),
+                    | GameEvent::Generation(_)
+                    | GameEvent::MapStored(_)
+                    | GameEvent::MapActivated { .. }
+                    | GameEvent::World(_),
             } => vec![(
                 Recipient::One(from),
                 NetMessage::Rejected {

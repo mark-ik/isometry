@@ -9,7 +9,7 @@ Thumbs.db
 # sem (Ataraxy-Labs) semantic-diff index cache — local, never committed.
 .sem/
 
-# Machine-local cargo overrides (source-specific [patch] to local serval
+# Machine-local cargo overrides (source-specific [patch] to local genet
 # checkouts, the mere pattern). Never committed.
 .cargo/config.toml
 /maps/

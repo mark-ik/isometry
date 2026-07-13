@@ -67,6 +67,6 @@ scope here. The factual layers above stand alone without it.
   `describe_scene` (omniscient factual), `describe_from` (viewer-relative,
   fog-aware via `visible_from`, omits tokens on unseen tiles). Pure additive,
   no substrate change. 9 tests (45 core total). Verified standalone (the
-  workspace build was transiently blocked by an unrelated serval/stylo pin
+  workspace build was transiently blocked by an unrelated genet/stylo pin
   conflict during a concurrent edit). N3 (model fluency) stays deferred until
   the vates seam lands.

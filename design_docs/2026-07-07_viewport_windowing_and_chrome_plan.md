@@ -3,7 +3,7 @@
 **Date:** 2026-07-07
 **Status:** active plan (next after I6). The "quick wins" lane from the
 next-horizons landscape ([2026-07-07_next_horizons_landscape.md](2026-07-07_next_horizons_landscape.md),
-sequence items 1 and 2). All phases are app-side with no serval or external
+sequence items 1 and 2). All phases are app-side with no genet or external
 dependency, and reuse capabilities the engine already ships. Done-conditions,
 not time estimates. **W1-W4 all landed 2026-07-07**: windowing, board
 wheel-pan, token drag-move, token context menu. Deferred halves, tracked in
@@ -60,10 +60,10 @@ pans, the panel stays put.
 
 Panel-scroll was the original intent, but `scroll_at` over a near-full panel
 chains through `.side` into the whole-document viewport (dragging the board),
-and serval has no `overscroll-behavior` to contain it (only a WPT
+and genet has no `overscroll-behavior` to contain it (only a WPT
 expectations entry). Since the panel fits the retained 820 window, panel-wheel
 is left inert rather than shipping that jank. **Deferred:** true panel-scroll
-for short windows, blocked on serval scroll-isolation (`overscroll-behavior:
+for short windows, blocked on genet scroll-isolation (`overscroll-behavior:
 contain` or an equivalent container fix).
 
 ## Phase W3: pointer-drag interactions
@@ -150,7 +150,7 @@ gating this lane:
   host is `ControlFlow::Wait` and pumps `tick_animations` only in networked
   sessions. A dedicated tick loop enables idle-bob and cursor-pulse.
 - **Camera / animation interplay (probe during W1).** Windowing may leverage
-  serval's CSS-transitions work (repos/serval/docs/2026-07-05_css_transitions_plan.md).
+  genet's CSS-transitions work (repos/genet/docs/2026-07-05_css_transitions_plan.md).
   Two angles: (a) tiles entering/leaving the windowed viewport fade or slide
   in via the RepaintOnly transition path rather than popping; (b) a camera
   pan animates a transform on the board container instead of re-emitting
@@ -159,7 +159,7 @@ gating this lane:
   transitions ride the RepaintOnly path, so a transition-driven pan may still
   hit raster cost even if it avoids the view rebuild. Worth a quick probe in
   W1; the deeper smooth-pan fix remains the camera-offset composite below.
-- **Camera-offset composite.** The one serval/netrender ask that would make
+- **Camera-offset composite.** The one genet/netrender ask that would make
   smooth pan/zoom cheap (folds into open question B8: snap-pan vs smooth).
 - **Layered HUD polish** using the confirmed backdrop-filter/box-shadow/z
   stack.
@@ -178,7 +178,7 @@ gating this lane:
 ## Progress
 
 - 2026-07-07 (W1 landed): viewport windowing. `UiState` gains a `viewport`
-  field (pane logical px); the serval host seeds it from the window size and
+  field (pane logical px); the genet host seeds it from the window size and
   keeps it current on resize; `board.rs` culls both whole-grid emitters
   (`ground_tiles`, `prop_tiles`) through `in_view`, with generous asymmetric
   margins so elevation columns and standing sprites are never clipped, and an

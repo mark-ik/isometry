@@ -40,6 +40,9 @@ fn demo_snapshot() -> GameSnapshot {
         journal: Vec::new(),
         inventories: Default::default(),
         generations: Vec::new(),
+        maps: Default::default(),
+        active_map: None,
+        world: Default::default(),
     }
 }
 
@@ -50,7 +53,10 @@ async fn main() {
         "host" => {
             let host = HostNet::bind(demo_snapshot()).await.expect("bind host");
             host.spawn_accept();
-            println!("share this ticket with a player:\n\n  {}\n", host.ticket().await);
+            println!(
+                "share this ticket with a player:\n\n  {}\n",
+                host.ticket().await
+            );
             println!("hosting; advancing the turn every 2s. ctrl-c to stop.");
             loop {
                 tokio::time::sleep(Duration::from_secs(2)).await;

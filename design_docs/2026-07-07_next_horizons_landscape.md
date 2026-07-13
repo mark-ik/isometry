@@ -4,7 +4,7 @@
 **Status:** landscape synthesis (pre-plan). Grounds the six next-horizon
 lanes after bootstrap I0-I6. Findings come from a multi-agent research +
 codebase-audit pass (web prior-art plus in-repo verification with
-file:line citations); load-bearing factual strands (SRD licensing, serval
+file:line citations); load-bearing factual strands (SRD licensing, genet
 capabilities) were adversarially verified. Where verification corrected a
 survey claim, the correction is used. This doc is reference and decision
 substrate; commitments live in the per-lane plans it sequences.
@@ -14,7 +14,7 @@ substrate; commitments live in the per-lane plans it sequences.
 The bootstrap arc is done: editor, hot-seat play, iroh sessions, fog,
 table furniture, and system plugins all landed. This maps what comes
 next across six lanes Mark named (Lua docs, map scales + traversal,
-isometry-web, rulesets/packs, generators/commands, serval GUI), states
+isometry-web, rulesets/packs, generators/commands, genet GUI), states
 the real constraints, and recommends a build order.
 
 ## 1. Lua plugin documentation
@@ -137,16 +137,16 @@ node.
 A player-only browser client for v1: the DM stays native and owns
 authority, Lua, file I/O, and inbound connections; the browser is a pure
 replica (Snapshot + Applied tail in, Intent out). Package it as a
-standalone workspace mirroring serval's `[patch.crates-io]` (patches do not
+standalone workspace mirroring genet's `[patch.crates-io]` (patches do not
 inherit through git deps, and wasm needs the per-target WebGPU netrender
-manifest), exactly like `serval_web_smoke`.
+manifest), exactly like `genet_web_smoke`.
 
 ### What is already proven
 
-- **Serval renders in a browser today.** `serval_web_smoke` drives the full
-  chain on wasm32/WebGPU (xilem-serval view to ScriptedDom to serval-layout
+- **Genet renders in a browser today.** `genet_web_smoke` drives the full
+  chain on wasm32/WebGPU (xilem-serval view to ScriptedDom to genet-layout
   to PaintList to netrender to canvas), PASS in Chrome 2026-07-04. Same
-  pipeline `isometry-serval` uses natively. The three known walls (Instant,
+  pipeline `isometry-genet` uses natively. The three known walls (Instant,
   system fonts, RGBA8-vs-BGRA) are already fixed in the libraries.
 - **The reusable stack is wasm-portable by construction.** `isometry-views`
   depends only on `isometry-core`, `isometry-net`, `xilem-serval`. A grep
@@ -334,7 +334,7 @@ the current owned-data-only boundary and the result-crosses-the-wire model.
 Cap recursion depth and total picks, and fuel-budget each `>gen` so a
 pathological grammar cannot hang the host.
 
-## 6. serval GUI capabilities
+## 6. genet GUI capabilities
 
 Grounded in the verified capability audit.
 
@@ -362,7 +362,7 @@ focus model, the full native form-control set, and
 | Particle/spell VFX, water shimmer, palette-cycle, live vello scenes | Feasible now via Path-B texture (app-side wiring) | xilem-serval exports `external_texture` backed by netrender `install_external_texture` + `DrawExternalTexture`, passing e2e (meerkat's orrery pattern). Highest-leverage VFX unblock |
 | Smooth pan/zoom | Costly-but-possible now | Playable at battle scale but re-rasters the full viewport until the camera-offset composite lands; zoom hits the transform-origin limits |
 | Sprite/cursor animation (idle bob, pulse) | Costly; needs a host tick loop | CSS transitions landed (RepaintOnly path) but the host is `ControlFlow::Wait` and pumps `tick_animations` only in networked sessions |
-| Soft/feathered fog, vignettes via `mask-image` | Blocked (small engine add) | serval-layout parses `mask-image` but never lowers it in paint_emit; a Path-B texture can do soft fog today |
+| Soft/feathered fog, vignettes via `mask-image` | Blocked (small engine add) | genet-layout parses `mask-image` but never lowers it in paint_emit; a Path-B texture can do soft fog today |
 | Custom vector gauges (arc gauges, waveform timelines) | Blocked on chisel Path-A | The tile-cached `DrawPath` lane needs the unwired xilem-serval `leaf()` view |
 
 ### The defining constraint
@@ -440,7 +440,7 @@ probes.
    host-side fog/secret culling before sending to browser peers?
 8. **Smooth pan/zoom vs snap-pan.** Commit to snap-pan permanently (matches
    the GBA reference, dodges the re-raster cost) or prioritize the netrender
-   camera-offset composite as the one serval/netrender ask? Folds in
+   camera-offset composite as the one genet/netrender ask? Folds in
    copyleft handling for any CC-BY-SA pack co-mingled with proprietary
    assets.
 
@@ -449,6 +449,6 @@ probes.
 Multi-agent landscape pass 2026-07-07 (workflow
 `isometry-next-horizons-landscape`, run `wf_fb1ce42f-812`, plus a follow-up
 generators/command-grammar research agent). Per-agent findings and
-citations are in the workflow transcript. Licensing and serval-capability
+citations are in the workflow transcript. Licensing and genet-capability
 strands were adversarially verified against primary sources and in-repo
 `file:line`.

@@ -4,7 +4,7 @@
 //! 2:1 diamond projection, map documents, and the session event log.
 //! Game rules never live in this crate; they arrive as system plugins
 //! (schema plus scripts) in a later phase. Keep this crate free of UI,
-//! I/O, networking, and serval dependencies.
+//! I/O, networking, and genet dependencies.
 
 mod dice;
 mod event;

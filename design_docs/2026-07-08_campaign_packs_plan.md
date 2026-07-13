@@ -125,18 +125,14 @@ mountain.
     #5 feared from rotation, multiplying facing art, is exactly what a voxel
     3D source dissolves, since live modes render any angle without per-facing
     art; the residual cost is runtime depth re-sort, not art.
-12. **Generation is an op; DM-authority carries the result (2026-07-08
-    pressure-test).** Generation is a `GameEvent` in the ordered event log
-    (decision #2: iroh + DM-authority, not a CRDT or p2panda op): "apply
-    generator G to this grid," with later hand-edits as ordinary subsequent
-    ops. Peers replay the log, so a generated map the GM then tweaks is
-    described correctly and for free. The DM is authority and **the op carries
-    the generated result** (a tile grid is small), so peers never re-run
-    generation and cross-peer determinism is not required. *(2026-07-09: "the
-    DM" = whoever holds edit mode, possibly several people; and in the
-    shared-authority doc's tier-3 no-DM mode, seed-only replay stops being
-    optional and becomes load-bearing, with this decision's determinism
-    discipline as the entry fee.)* Seed-only replay
+12. **Generation produces immutable result data (revised 2026-07-11).** In a
+    hosted tactical session, generation may still be a result-carrying
+    `GameEvent`; peers replay the accepted result and do not run the generator.
+    In collaborative campaign authoring, that same result is content-addressed
+    proposal data referenced by a signed p2panda operation. Create, apply, and
+    branch remain distinct lifecycle choices, and a Moot-selected recognition
+    policy decides which proposal becomes a campaign head. Generation itself
+    does not confer authority on the machine that ran it. Seed-only replay
     (ship the seed, regenerate locally) is an opt-in *bandwidth* optimization,
     allowed only for generators that pass determinism discipline: integer or
     fixed-point noise (no ambient float), a portable seeded RNG, no `HashMap`
@@ -144,8 +140,8 @@ mountain.
     `RandomState` diverges silently), order-stable WFC retries, and
     content-hash generator identity (not a version string). A pack's Lua
     generator becomes a consensus function *only* under seed-only replay, so
-    the DM-carries-result default keeps peer-shipped Lua off the consensus
-    path; where seed-only is used the piccolo sandbox must be deterministic
+    result-carrying defaults keep peer-shipped Lua off the consensus path;
+    where seed-only is used the piccolo sandbox must be deterministic
     (no `os.time`, fuel limits enforced, a curated API). On any determinism
     doubt the fallback is to ship the grid: more bytes, never divergent worlds.
 
@@ -153,7 +149,7 @@ mountain.
 
 - **Why a new crate:** `isometry-core` stays pure (no wgpu, no I/O per
   CLAUDE.md), so a renderer and `.vox` loader cannot live there. Precondition
-  before founding: grep the ecosystem (serval, netrender, wgpu-*, mere) for
+  before founding: grep the ecosystem (genet, netrender, wgpu-*, mere) for
   an existing voxel or sprite-bake piece and extend rather than duplicate;
   none is known. New crate is MIT/Apache, edition 2024 (founding convention).
 - **Shape:** takes a voxel volume (procedural now, `dot_vox` next), renders
@@ -216,7 +212,7 @@ alongside.
   content types, Monsters first, attribution recorded. *Done:* a Monsters
   pack loads from vendored data.
 - Monsters namespace index as a sortable `data_grid` in a wiki pane in the
-  isometry-serval host (not pelt). *Done:* index renders and sorts.
+  isometry-genet host (not pelt). *Done:* index renders and sorts.
 - Monster page view (header + stat grids + prose). *Done:* an index row
   opens its page.
 - Spawn-onto-board action from a page, wired to the token model. *Done:* a
@@ -324,9 +320,9 @@ alongside.
   trimmed format (data/*.json, ~695KB vs 3.3MB raw), loaded via serde
   include_str; the compendium browses the full SRD, virtualized, with wheel
   scroll. Receipt: scry-shots/2026-07-08_isometry_vendored_bestiary.png.
-  Known gap: serval does not clip the grid body's overflow:hidden on
+  Known gap: genet does not clip the grid body's overflow:hidden on
   absolutely-placed rows, so a scrolled window is not viewport-clipped (the
-  DOM still virtualizes) - a serval-side follow-up. `search_field` is the
+  DOM still virtualizes) - a genet-side follow-up. `search_field` is the
   next sibling now that lists are hundreds long.
 - 2026-07-08: **search_field landed** (commit 2fe91c6), the third `data_grid`
   sibling. A filter box over the compendium (keys route via the host,
@@ -338,13 +334,13 @@ alongside.
 - 2026-07-09: **overlay_panel + record_card extracted** (commit 2146762);
   five catalogued siblings now realized (overlay_panel backs the compendium +
   sheet; record_card backs the monster/spell/item pages). **Attempted the
-  serval grid-clip fix and reverted it.** The change (clip lifted layers by
-  their containing-block overflow, serval 0c248e5) passed isolated paint-list
-  unit tests (clip + escape; 269 serval-layout green) but **blanked the
+  genet grid-clip fix and reverted it.** The change (clip lifted layers by
+  their containing-block overflow, genet 0c248e5) passed isolated paint-list
+  unit tests (clip + escape; 269 genet-layout green) but **blanked the
   isometry board**: every tile and token paints as an absolutely-placed lifted
   layer, and the re-applied clip whited-out the whole frame (a coordinate-space
   or clip-balance mismatch with the board's camera + pane the unit tests did
-  not catch). Reverted (serval 6f812c4) to keep the tree rendering. The clip
+  not catch). Reverted (genet 6f812c4) to keep the tree rendering. The clip
   gap stays open; a rework needs board-level integration coverage (a headed
   capture in the loop), not just paint-list unit tests. Lesson: a core-paint
   change needs an app-level render check before it lands.
@@ -360,9 +356,9 @@ alongside.
   (every tile + token). Next attempt must map netrender's `PushClip` semantics
   on the clean-stack layer path first (likely the clip rect is re-transformed
   by the active stack, so an absolute-coord clip double-applies), and gate on
-  the headed board capture. This wants a dedicated serval+netrender pass, not
+  the headed board capture. This wants a dedicated genet+netrender pass, not
   more inline iteration.
-- 2026-07-09: **serval grid-clip fix landed** (serval c88fa8320c2), headed
+- 2026-07-09: **genet grid-clip fix landed** (genet c88fa8320c2), headed
   every step. The root cause was not the clip's coordinate space but its cost:
   in netrender a clip is a scene layer, and the board paints every tile and
   token as an absolutely-placed lifted layer (~2740), so re-applying the pane
@@ -372,10 +368,10 @@ alongside.
   adds zero clip-layers, while a scrolled compendium row keeps its clip and is
   bounded to the pane body. Folds in the earlier real bug (clip based at
   `child_origin`, not the parent `origin`) and the CB gate (only a non-static
-  ancestor clips its abs descendants, CSS 2.1 s11.1.2). 269 serval-layout tests
+  ancestor clips its abs descendants, CSS 2.1 s11.1.2). 269 genet-layout tests
   plus two new clip tests (clipped-by-positioned, escapes-static) green.
   Verified headed: the default board renders (Code/testing/isometry/images/
   2026-07-09_isometry_board_committed.png) and the deep-scrolled compendium
   clips its rows to the pane body while the board renders behind it
-  (2026-07-09_isometry_serval_clip_fix.png). The known gap noted on the P2
+  (2026-07-09_isometry_genet_clip_fix.png). The known gap noted on the P2
   entries is now closed: a scrolled data_grid window is viewport-clipped.

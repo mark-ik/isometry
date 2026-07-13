@@ -1,10 +1,10 @@
 # Shared authority and collaborative building
 
 **Date:** 2026-07-09
-**Status:** design record with one near-term candidate (tier 1). Tiers 2 and 3
-are gated and deliberately not scheduled. This doc is the CLAUDE.md guardrail
-("no rollback, no CRDTs; revisit only through a plan") being revisited through
-a plan; its conclusion is that the guardrail survives every tier.
+**Status:** revised implementation plan (2026-07-11). The original conclusion
+that one ordered log should survive every tier was too broad. The first
+multi-writer campaign-space slice is landed behind `isometry-net`'s
+`campaign-p2p` feature; tactical play still uses the existing sequencer.
 **Related:** [worldbuilding_generation_plan](2026-07-09_worldbuilding_generation_plan.md)
 (decision 8 two-store split, W0 landed, the W2 generator ABI this doc leans
 on), [campaign_packs_plan](2026-07-08_campaign_packs_plan.md) (decision 12
@@ -14,34 +14,44 @@ load-bearing), [optional_intelligence_vision](2026-07-07_optional_intelligence_v
 (capabilities as the one collaboration primitive; cross-repo,
 `repos/personae/design_docs/2026-07-08_personae_across_the_suite.md`).
 
-**Thesis:** sharing hosting duties, and even removing the DM entirely, does
-not require CRDTs or rollback. The single ordered event log survives every
-version of this. What varies is three separable things: who **orders** the
-log, who **validates** intents, and who is allowed to **know secrets**. Those
-three questions form a ladder, and turn-based play answers the ordering
-question almost for free.
+**Thesis:** a campaign is a signed multi-writer space; a combat exchange may
+still need a temporary sequencer. Consistency is chosen per domain type rather
+than imposed campaign-wide. p2panda supplies signed per-author logs and sync;
+Isometry supplies type-specific materializers and policy. Moot names the group
+and its governance, Murm carries private channels, Personae supplies identities
+and grants, and Iroh carries p2panda's QUIC, gossip, and blobs.
 
 ## Position
 
-The current model (bootstrap decision: DM-authority, ordered log, FNV
-convergence hash, no optimistic mutation) stays the spine. CRDTs solve
-concurrent divergent edits that must merge; a tabletop session is a totally
-ordered conversation with a referee, and every tier below keeps total order.
-The referee just stops being a fixed person.
+The current host-authoritative model remains a valid single-player and
+traditional-table projection. It is not the ownership model of a campaign.
+Campaign authors write independently signed operations, keep concurrent work,
+and derive views from the complete operation set. A pack-selected policy may
+recognize a proposal as a campaign head, but recognition does not erase the
+proposal, its endorsements, or a competing branch.
+
+The tactical lane keeps total order where timing and contention require it:
+initiative, movement into contested cells, resource spending, reactions, and
+resolved randomness. The sequencer is a scoped lease or turn role, not the
+campaign owner. Facts, drafts, maps, dialogue contributions, pack changes, and
+most downtime authoring should not pass through that bottleneck.
 
 What the tiers change:
 
-| | Orders the log | Validates | Holds secrets |
+| Domain | Write model | Resolution | Carrier |
 | --- | --- | --- | --- |
-| Today | the DM's app | the DM's app | the DM (CampaignStore) |
-| Tier 1 | the host-role holder | same | moves with the role |
-| Tier 2 | the active turn's app | every peer (deterministic Lua) | the GM-grant holder |
-| Tier 3 | the active turn's app | every peer | nobody (committed, sealed, audited) |
+| Campaign authoring | signed multi-writer operations | type-specific materializer + group policy | p2panda LogSync/gossip over Iroh |
+| Live tactics | intents into a temporary sequencer | deterministic rules, ordered commits | current Isometry session lane, later shared transport |
+| Group membership and policy | signed social records | Moot fold / configured governance | Moot over the same p2panda substrate |
+| GM and secret channels | capability-scoped members | recipient set and reveal policy | Murm/private spaces; sealed blobs where needed |
+| Single player | one writer and one local sequencer | the same folds with one author | local Muniment backend |
 
-## Tier 1: the host role is transferable (near-term candidate)
+## Tier 1 compatibility path: the host role is transferable
 
-DM-authority becomes a role, not a person. The session's identity is the log
-plus the campaign, not the host's node id.
+DM-authority becomes a role, not a person. This keeps traditional hosted play
+robust, but it is no longer the prerequisite for collaborative campaign
+ownership. The session's identity is the tactical log plus campaign-space
+heads, not the host's node id.
 
 - **Handoff protocol:** a late-join in reverse. The outgoing host freezes
   intents (rejects with "host migrating"), transfers `GameSnapshot` + seq +
@@ -142,16 +152,17 @@ creative mode, survival mode. Today's model is one player in **edit mode**
 for everyone"**: it keeps the turn-based structure and makes a *game* of
 building the world together, with its own rulebook.
 
-**The definitional collapse (2026-07-09):** "the GM" is not a protocol
-role; **the GM is whoever is in edit mode, and that need not be one
-person.** Two consequences:
+**The definitional collapse (revised 2026-07-11):** "the GM" is not the
+campaign owner. It is a bundle of configured capabilities: global view,
+secret custody, unrestricted authoring in selected channels, and perhaps a
+tactical sequencing lease. Those capabilities may be split across people or
+left unused. Two consequences:
 
-- **Global view follows edit mode.** Only edit-mode holders see the GM
-  layer. With multiple simultaneous holders (co-DMs), the private
-  `CampaignStore` replicates among them over a directed channel, the
-  whisper shape, never the hashed public log. Decision 8 generalizes to
-  three replication rings: the public log (everyone, hash-converged), the
-  GM ring (edit-mode holders, directed sync), and whispers (pairs).
+- **Global view follows a capability.** Authorized holders receive encrypted
+  secret records over a Murm/private space. Public campaign operations remain
+  in the p2panda campaign space; live tactical commits remain in the ordered
+  session lane. Pairwise whispers are simply smaller private spaces. This is
+  access control over records, not a second owner for public campaign truth.
   Players talk freely, as always; table talk was never consensus state.
 - **Edit mode and sequencing are separable.** Holding edit mode grants
   authoring and the global view, not necessarily log ordering: tier 2's
@@ -271,36 +282,95 @@ claiming impossible retroactive deletion.
 
 ### What this costs
 
-Almost nothing new at the substrate level: the `WorldFact` envelope, the
-two-store split, the preview-table UI, and the intent/commit shape all
-exist or are already planned in W0-W4. The genuinely new pieces are the
-draft channel, the author field, votes as an event kind, and tombstones,
-each a small vocabulary addition rather than a system.
+The shared substrate is largely available, but the domain work is real. Each
+collaborative type needs an operation grammar, validation, a deterministic
+materializer, conflict-preserving UI, policy hooks, retraction semantics, and
+offline/convergence tests. The first generic shape now exists for campaign
+proposals, endorsements, and recognition. Maps, facts, inventory, dialogue,
+packs, secret grants, and tactical lease transfer remain separate migrations.
 
 ## Sequencing
 
-1. Tier 1 host handoff, when session robustness starts to matter (first
-   candidate after the worldbuilding ladder's early rungs).
-2. Collaborative prep (draft channel + multiplayer preview) with W4's
-   storylet/world-fact layer, DM-gated commit first.
-3. Tier 2 with personae-in-isometry, pulled by demand for DM-less mechanics.
-4. Tier 3 with the W2 ABI's determinism discipline proven, pulled by demand
-   for DM-less campaigns.
+1. Campaign proposal space: create/apply/branch envelopes, signed operations,
+   endorsements, recognition, and convergence over Muniment-backed p2panda
+   stores. **Landed locally 2026-07-11.**
+2. Compose LogSync/gossip through shared `transport::SyncedSpace`; prove two
+   Personae authors converge after live exchange and offline catch-up.
+   **Landed locally 2026-07-11.**
+3. Bind campaign membership and recognition policy to Moot; bind private
+   campaign channels and secret delivery to Murm. **Policy evaluation, the
+   group-scoped frozen-Moot-electorate bridge, signed campaign-to-Moot
+   association, and signed policy selection/change records landed locally
+   2026-07-11. The opt-in `campaign-moot` host composition now loads the live
+   Moot store and derives contexts from its signed membership commitment. The
+   signed adopt-or-branch resolution grammar, policy-gated materialization, and
+   host-fed competing-binding surface landed locally 2026-07-12. Same-Moot
+   founding conflicts use that Moot's admission context; later conflicts use
+   the campaign's current binding. Unrelated founding Moots remain restricted
+   because neither electorate can erase the other's claim. Murm's signed
+   Join/Leave fold and deterministic membership commitment now back a private Isometry
+   `{cabal, channel, members, revision}` secret-audience binding. Actual secret
+   publication/receipt, payload sealing, cabal-key rotation after removal, and
+   desktop actor wiring are deferred by the 2026-07-12 Murm peer-runtime plan:
+   `murm-replication` must own accepted-operation processing, service lifecycle,
+   retention, checkpoints, and native-drop import before Isometry rebases as a
+   later domain consumer. Do not add a second Isometry actor or private-delivery
+   path against the retiring host-composition seam.**
+4. Migrate collaborative domains one at a time: drafts/facts, maps, packs,
+   dialogue, inventory/equipment, then world simulation records. Each chooses
+   its own merge/materialization rule and ships conflict UI with it.
+5. Recast the existing host session as the tactical sequencer. Add signed lease
+   transfer and deterministic peer validation without making the lease holder
+   campaign owner.
+6. Add commit-reveal randomness and sealed/auditable secrets for tables whose
+   configured policy requires them.
 
-Nothing above changes the substrate invariants: geometry and turns in core,
-rules in plugins, one ordered log, convergence by hash.
+The stable substrate invariants are now: geometry and turns in core, rules in
+plugins, signed immutable operations, explicit domain materializers, and total
+ordering only where the domain requires it.
+
+## Next Game Slice
+
+While the peer-runtime rebase is underway, the next useful Isometry work is a
+complete targeted-action loop in the existing tactical sequencer. Today the
+system can derive an action's dice expression and the UI can append its roll to
+the shared log, but no action names a target or changes game state.
+
+The slice is deliberately narrow:
+
+1. A player submits an `ActionIntent { actor, target, action_key }`; the host
+   checks turn ownership, target existence, range, and any system-defined
+   prerequisites.
+2. The injected rules system resolves that intent using host entropy into one
+   `ActionResolved` event containing the public roll, hit/miss result, and typed
+   sheet deltas. Peers apply the event, never rerun Lua or roll dice.
+3. The first SRD action is adjacent melee attack against AC, changing separate
+   `hp_current` and `hp_max` fields. Defeat and conditions can remain follow-ons;
+   an HP change and explicit miss already make positioning, turns, equipment,
+   sheets, and rolls one playable loop.
+4. The sheet action enters target-pick mode; clicking a token submits the intent;
+   the board and roll log show the resolved result. Local and remote hosts use
+   the same resolver path.
+
+**Done when:** two peers and solo play produce the same resolved action event
+for a fixed host entropy tape; an out-of-range, wrong-turn, or missing-target
+intent changes nothing; a successful attack changes only the target's current
+HP; and the UI can select and resolve an attack without a GM editing sheet
+fields by hand.
 
 ## Open questions
 
 1. Host handoff transport: does iroh let peers re-dial a new node cleanly
    mid-session (new ticket distribution over the old connection), or does
    tier 1 v1 accept "everyone rejoins from the new host's ticket"?
-2. Does the draft channel live in the session log (simple, replays with the
-   campaign) or beside it (keeps play replay lean)? Bias: beside, same
-   pattern as the CampaignStore.
-3. Votes: simple majority of connected peers, or role-weighted (the
-   storylet's cast owner outvotes)? Bias: keep it data the pack/system can
-   configure; the substrate just counts.
+2. Which Moot policy recognizes a proposal by default? The evaluator now
+   supports any eligible member, fixed threshold, fractional threshold, and
+   unanimity without hardcoding one. Explicit owner/grant policy waits on the
+   Personae capability layer. Packs or a signed Moot policy operation must
+   select the default.
+3. Which operation families need true CRDT data types beyond set-valued folds?
+   Map cells, ordered dialogue choices, inventory uniqueness, and counters must
+   each name their conflict rule before migration.
 4. Retraction vs the convergence hash: tombstones replay fine, but does
    compaction-after-tombstone need a resync checkpoint event so late
    joiners' hashes still converge? (Likely yes: compaction mints a new
@@ -312,3 +382,33 @@ rules in plugins, one ordered log, convergence by hash.
   discussion, extended with the collaborative-building modes. Tier 1
   named the only near-term candidate; tiers 2-3 gated on personae and W2
   respectively.
+- 2026-07-11: Rejected campaign-wide single authority and single-log ordering.
+  Added `CampaignProposalMode::{Create, Apply, Branch}` and a feature-gated
+  campaign p2panda space over `mooting::MunimentStore`. Personae signs
+  per-author operations; the deterministic view preserves concurrent proposals,
+  endorsements, and recognized heads. Opposite arrival-order convergence and
+  tamper/cross-campaign rejection are tested. Shared transport + `SyncedSpace`
+  also pass a two-peer Personae test covering offline LogSync catch-up, live
+  propagation, and equal final views. The live tactical sequencer is
+  intentionally unchanged pending type-by-type migration.
+- 2026-07-11: Added reusable recognition policy to Mooting and a
+  `MootRoster` bridge that freezes the electorate at a signed revision.
+  Isometry now distinguishes recognition claims from policy truth: outsider
+  endorsements remain auditable but do not count, pre-threshold claims remain
+  pending, and claims for stale electorate revisions do not produce applicable
+  heads. This established the evaluator used by the association slice below.
+- 2026-07-11: Added signed `GovernanceProposed` / `GovernanceClaimed` campaign
+  operations. Initial association must pass the target Moot's admission
+  context; later policy changes or Moot migrations must pass the campaign's
+  current bound policy, so a destination cannot authorize its own takeover.
+  Electorate fingerprints now include the Moot id, closing identical-roster
+  cross-Moot replay. Invalid bindings are rejected and competing accepted
+  bindings remain visible for explicit resolution rather than lowest-hash or
+  last-writer selection.
+- 2026-07-11: Added provider-neutral Moot authoring and deterministic
+  `MootRoster::membership_revision`, committed only to winning signed join
+  operations. Added Isometry's `campaign-moot` composition layer, which loads a
+  live `MootStore` and derives campaign/admission/change contexts without
+  caller-supplied revision bytes. Verified that Personae-authored membership
+  counts, fauna does not invalidate recognition, and a later join makes an old
+  claim stale under the new electorate.

@@ -1,6 +1,9 @@
 use std::collections::BTreeMap;
 
-use isometry_campaign::{GenerationRecord, Inventory, ItemId, ItemModifierReveal, WorldFact};
+use isometry_campaign::{
+    CampaignMap, CampaignWorld, GenerationRecord, Inventory, ItemId, ItemModifierReveal,
+    WorldEvent, WorldFact,
+};
 use isometry_core::{MapDocument, RollRecord, SessionEvent, SheetData, TokenId, TurnList};
 use serde::{Deserialize, Serialize};
 
@@ -37,6 +40,16 @@ pub struct GameSnapshot {
     /// record into items, map changes, cast NPCs, or story state.
     #[serde(default)]
     pub generations: Vec<GenerationRecord>,
+    /// Named authored/generated maps retained by the campaign. `map` is the
+    /// active editable projection; edits mirror back into this registry when
+    /// `active_map` is set.
+    #[serde(default)]
+    pub maps: BTreeMap<String, CampaignMap>,
+    #[serde(default)]
+    pub active_map: Option<String>,
+    /// Public world state. Secret fact bodies stay in `CampaignStore`.
+    #[serde(default)]
+    pub world: CampaignWorld,
 }
 
 /// Rolls kept in the shared log; older ones drop off.
@@ -85,6 +98,14 @@ pub enum GameEvent {
     /// Record a typed generator result selected by the host. It has no direct
     /// map or inventory effect: those lowerings remain explicit events.
     Generation(GenerationRecord),
+    /// Store one generated/authored map without changing the active board.
+    /// Host-committed only.
+    MapStored(CampaignMap),
+    /// Swap the active editable board to a named campaign map.
+    /// Host-committed only.
+    MapActivated { id: String },
+    /// Apply one idempotent public world-state change. Host-committed only.
+    World(WorldEvent),
 }
 
 /// One message on the wire. The host is the authority: clients send

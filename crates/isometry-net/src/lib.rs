@@ -19,6 +19,18 @@ mod protocol;
 mod session;
 pub mod sim;
 
+#[cfg(feature = "campaign-p2p")]
+pub mod campaign_space;
+
+#[cfg(feature = "campaign-p2p-net")]
+pub mod campaign_sync;
+
+#[cfg(feature = "campaign-moot")]
+pub mod campaign_moot;
+
+#[cfg(feature = "campaign-murm")]
+pub mod campaign_secrets;
+
 pub use protocol::{
     GameEvent, GameSnapshot, NetMessage, Outbound, PeerId, Recipient, ROLL_LOG_CAP,
 };

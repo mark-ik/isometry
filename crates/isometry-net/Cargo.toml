@@ -13,6 +13,23 @@ description = "Isometry's session layer: DM-authority replication of the Session
 # and a tokio runtime, so it is opt-in.
 default = []
 iroh = ["dep:iroh", "dep:iroh-tickets", "dep:tokio", "dep:tracing"]
+campaign-p2p = [
+    "dep:personae",
+    "dep:muniment",
+    "dep:mooting",
+    "dep:p2panda-core",
+    "dep:p2panda-store",
+    "dep:thiserror",
+]
+campaign-p2p-net = [
+    "campaign-p2p",
+    "dep:transport",
+    "dep:p2panda-net",
+    "dep:p2panda-sync",
+    "dep:tokio",
+]
+campaign-moot = ["campaign-p2p", "dep:moothold", "dep:tokio"]
+campaign-murm = ["dep:murm", "dep:thiserror"]
 
 [dependencies]
 isometry-core = { workspace = true }
@@ -22,6 +39,17 @@ serde = { workspace = true }
 # Compact, no_std-friendly wire framing; also the byte form the portable
 # log hash folds over (so convergence is std-hash-independent).
 postcard = { version = "1", features = ["alloc"] }
+personae = { workspace = true, optional = true }
+muniment = { workspace = true, optional = true }
+mooting = { workspace = true, optional = true }
+moothold = { workspace = true, optional = true }
+p2panda-core = { workspace = true, optional = true }
+p2panda-net = { workspace = true, optional = true }
+p2panda-store = { workspace = true, optional = true }
+p2panda-sync = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
+transport = { workspace = true, optional = true }
+murm = { workspace = true, optional = true }
 
 # iroh feature only.
 iroh = { version = "0.98", optional = true }
@@ -31,6 +59,7 @@ tracing = { version = "0.1", optional = true }
 
 [dev-dependencies]
 isometry-core = { workspace = true }
+pollster = "0.4"
 
 [[example]]
 name = "session_smoke"

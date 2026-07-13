@@ -8,7 +8,7 @@ kept open for later 2.5D / 3D lenses. The core is system-agnostic: game
 rules arrive as schema-plus-script plugins, and the substrate only knows
 tiles, tokens, turns, facing, and elevation.
 
-Built in Rust on the Merely stack (xilem_serval, serval-layout,
+Built in Rust on the Merely stack (xilem_serval, genet-layout,
 netrender). Status: bootstrap; see
 [design_docs/2026-07-05_isometry_bootstrap_plan.md](design_docs/2026-07-05_isometry_bootstrap_plan.md).
 

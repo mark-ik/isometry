@@ -10,6 +10,7 @@ mod board;
 mod compendium;
 mod demo;
 mod generator;
+mod governance;
 mod panel;
 mod sheet;
 mod state;
@@ -19,7 +20,8 @@ mod widgets;
 pub use board::{board_root, UiChild};
 pub use demo::{demo_map, synth_map};
 pub use state::{
-    ActionRow, CompendiumTab, EditMode, FogLevel, GenerationRequest, InitiativeMode,
-    InventoryRequest, ItemRow, MonsterRow, NetMode, SheetSchema, SpellRow, UiState, PANEL_W,
+    ActionRow, CompendiumTab, EditMode, FogLevel, GenerationRequest, GovernanceBindingRow,
+    GovernanceConflict, GovernanceResolutionRequest, InitiativeMode, InventoryRequest, ItemRow,
+    MonsterRow, NetMode, SheetSchema, SpellRow, UiState, PANEL_W,
 };
 pub use theme::board_css;

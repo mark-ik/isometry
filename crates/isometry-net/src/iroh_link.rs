@@ -21,10 +21,12 @@ use iroh::{Endpoint, EndpointAddr};
 use iroh_tickets::endpoint::EndpointTicket;
 use tokio::sync::{mpsc, Mutex};
 
+use crate::protocol::{
+    fnv1a, GameEvent, GameSnapshot, NetMessage, Outbound, PeerId, Recipient, FNV_OFFSET,
+};
+use crate::session::{ClientSession, HostSession};
 use codicil::Codicil;
 use isometry_campaign::CampaignStore;
-use crate::protocol::{fnv1a, GameEvent, GameSnapshot, NetMessage, Outbound, PeerId, Recipient, FNV_OFFSET};
-use crate::session::{ClientSession, HostSession};
 
 /// The session ALPN. Bumping it is a protocol break (old clients can't
 /// dial a new host).
@@ -40,17 +42,25 @@ fn peer_of(conn: &Connection) -> PeerId {
 async fn write_frame(send: &mut SendStream, msg: &NetMessage) -> Result<(), String> {
     let body = postcard::to_allocvec(msg).map_err(|e| format!("encode: {e}"))?;
     let len = (body.len() as u32).to_le_bytes();
-    send.write_all(&len).await.map_err(|e| format!("write len: {e}"))?;
-    send.write_all(&body).await.map_err(|e| format!("write body: {e}"))?;
+    send.write_all(&len)
+        .await
+        .map_err(|e| format!("write len: {e}"))?;
+    send.write_all(&body)
+        .await
+        .map_err(|e| format!("write body: {e}"))?;
     Ok(())
 }
 
 async fn read_frame(recv: &mut RecvStream) -> Result<NetMessage, String> {
     let mut len_buf = [0u8; 4];
-    recv.read_exact(&mut len_buf).await.map_err(|e| format!("read len: {e}"))?;
+    recv.read_exact(&mut len_buf)
+        .await
+        .map_err(|e| format!("read len: {e}"))?;
     let len = u32::from_le_bytes(len_buf) as usize;
     let mut body = vec![0u8; len];
-    recv.read_exact(&mut body).await.map_err(|e| format!("read body: {e}"))?;
+    recv.read_exact(&mut body)
+        .await
+        .map_err(|e| format!("read body: {e}"))?;
     postcard::from_bytes(&body).map_err(|e| format!("decode: {e}"))
 }
 
@@ -192,6 +202,20 @@ impl HostNet {
     pub async fn local_event(&self, event: GameEvent) {
         let out = self.session.lock().await.local_event(event);
         dispatch(&self.peers, out).await;
+    }
+
+    pub async fn commit_campaign(
+        &self,
+        record: isometry_campaign::GenerationRecord,
+        item_owner: Option<isometry_core::TokenId>,
+    ) -> Result<(), String> {
+        let out = self
+            .session
+            .lock()
+            .await
+            .commit_campaign(record, item_owner)?;
+        dispatch(&self.peers, out).await;
+        Ok(())
     }
 
     /// The DM whispers to a named player (directed, not broadcast).
@@ -369,6 +393,9 @@ mod tests {
             journal: Vec::new(),
             inventories: Default::default(),
             generations: Vec::new(),
+            maps: Default::default(),
+            active_map: None,
+            world: Default::default(),
         }
     }
 
@@ -392,7 +419,9 @@ mod tests {
         host.spawn_accept();
         let ticket = host.ticket().await;
 
-        let client = ClientNet::join(&ticket, "tester").await.expect("client join");
+        let client = ClientNet::join(&ticket, "tester")
+            .await
+            .expect("client join");
         // Snapshot handshake arrives.
         wait_until("snapshot", || async { client.state().await.is_some() }).await;
 

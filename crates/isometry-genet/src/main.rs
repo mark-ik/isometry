@@ -1,12 +1,12 @@
-//! Isometry's serval desktop host (bootstrap plan I1).
+//! Isometry's genet desktop host (bootstrap plan I1).
 //!
 //! A winit window presenting the board screen over live state:
-//! `ServalAppRunner` diffs `isometry_views::board_root` into a
+//! `GenetAppRunner` diffs `isometry_views::board_root` into a
 //! `ScriptedDom`, a retained `IncrementalLayout` lays it out at logical
 //! size (incremental `apply` for attribute-only batches, so a camera pan
 //! stays off the rebuild path), paint emission lowers to a
-//! `netrender::Scene`, and `serval-winit-host`'s `SurfaceHost` rasterizes
-//! and composites onto the backbuffer. Borrowed from the woodshed-serval
+//! `netrender::Scene`, and `genet-winit-host`'s `SurfaceHost` rasterizes
+//! and composites onto the backbuffer. Borrowed from the woodshed-genet
 //! harness shape.
 //!
 //! Sessions (I4): `--host` binds an iroh session and prints a join
@@ -26,12 +26,13 @@ use std::time::{Duration, Instant};
 
 use codicil::Codicil;
 use isometry_campaign::{
-    CampaignStore, EntropyTape, GenValue, GeneratorRequest, ItemId, ItemInstance, WorldFact,
+    CampaignStore, EntropyTape, GenValue, GeneratorRequest, ItemId, ItemInstance, MapScale,
+    WorldFact,
 };
 use isometry_core::FieldValue;
-use isometry_net::{GameEvent, GameSnapshot};
+use isometry_net::{apply_game, GameEvent, GameSnapshot, HostSession};
 use isometry_system::{
-    srd_5e, srd_bestiary, srd_items, srd_spells, GeneratorLimits, GeneratorPack, System,
+    srd_5e, srd_bestiary, srd_items, srd_spells, GeneratorCatalog, GeneratorLimits, System,
 };
 use isometry_views::{
     board_css, board_root, demo_map, synth_map, ActionRow, GenerationRequest, InventoryRequest,
@@ -41,15 +42,13 @@ use isometry_views::{
 mod campaign_store;
 mod net;
 use campaign_store::{CampaignCheckpoint, CampaignRepository};
-use net::{NetBridge, Role};
 use layout_dom_api::{DomMutation, LayoutDomMut as _};
+use net::{NetBridge, Role};
 use netrender::{ColorLoad, ExternalTexturePlacement, NetrenderOptions};
 use paint_list_api::{DeviceIntSize, PaintList as _};
-use serval_layout::{
-    Applied, IncrementalLayout, InteractionState, ScrollOffsets, SourceNodeId,
-};
-use serval_scripted_dom::{NodeId, ScriptedDom};
-use serval_winit_host::SurfaceHost;
+use genet_layout::{Applied, IncrementalLayout, InteractionState, ScrollOffsets, SourceNodeId};
+use genet_scripted_dom::{NodeId, ScriptedDom};
+use genet_winit_host::SurfaceHost;
 use winit::application::ApplicationHandler;
 use winit::event::{
     ElementState, KeyEvent as WinitKeyEvent, MouseButton, MouseScrollDelta, WindowEvent,
@@ -57,9 +56,9 @@ use winit::event::{
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey as WinitNamedKey};
 use winit::window::{Window, WindowId};
-use xilem_serval::{PointerClick, Propagation, ServalAppRunner};
+use xilem_serval::{PointerClick, Propagation, GenetAppRunner};
 
-type Runner = ServalAppRunner<UiState, fn(&UiState) -> UiChild, UiChild>;
+type Runner = GenetAppRunner<UiState, fn(&UiState) -> UiChild, UiChild>;
 
 /// Logical px per wheel notch, used to normalize trackpad pixel deltas.
 const WHEEL_NOTCH_PX: f32 = 48.0;
@@ -131,6 +130,7 @@ struct App {
     /// accepted record carries its exact draw; no peer evaluates the pack.
     generation_tape: EntropyTape,
     generation_ordinal: u64,
+    generator_catalog: GeneratorCatalog,
 }
 
 /// Parsed session role from the command line.
@@ -140,8 +140,7 @@ enum NetIntent {
 }
 
 fn document_slug(name: &str) -> String {
-    name
-        .to_lowercase()
+    name.to_lowercase()
         .chars()
         .map(|c| if c.is_alphanumeric() { c } else { '_' })
         .collect()
@@ -158,12 +157,19 @@ fn campaign_path(name: &str) -> std::path::PathBuf {
     std::path::PathBuf::from("campaigns").join(format!("{}.redb", document_slug(name)))
 }
 
-/// The first preview surface is intentionally backed by the worked pack that
-/// ships with the system crate. Pack discovery/configuration follows once the
-/// preview workflow itself is proven end to end.
-fn demo_generator_pack_path() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../isometry-system/examples/packs/demo")
+/// Search the bundled example, a project-local pack root, and user-selected
+/// roots. Entries may be pack directories or directories containing packs.
+fn generator_pack_roots() -> Vec<std::path::PathBuf> {
+    let mut roots = vec![std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../isometry-system/examples/packs/demo")];
+    let local = std::path::PathBuf::from("packs");
+    if local.is_dir() {
+        roots.push(local);
+    }
+    if let Some(paths) = std::env::var_os("ISOMETRY_PACK_DIRS") {
+        roots.extend(std::env::split_paths(&paths));
+    }
+    roots
 }
 
 impl App {
@@ -172,9 +178,11 @@ impl App {
     }
 
     fn redraw(&mut self) {
-        let (Some(window), Some(host), Some(runner)) =
-            (self.window.as_ref(), self.host.as_ref(), self.runner.as_ref())
-        else {
+        let (Some(window), Some(host), Some(runner)) = (
+            self.window.as_ref(),
+            self.host.as_ref(),
+            self.runner.as_ref(),
+        ) else {
             return;
         };
         let size = window.inner_size();
@@ -277,7 +285,7 @@ impl App {
 
     /// A wheel notch over the board pane snap-pans the board (wheel = pan,
     /// the tactics-canvas convention). Over the side panel it is inert: the
-    /// panel fits the default window, and serval has no `overscroll-behavior`
+    /// panel fits the default window, and genet has no `overscroll-behavior`
     /// to keep a near-full panel's scroll from chaining into the whole-
     /// document viewport (which would drag the board), so true panel-scroll
     /// for short windows is a follow-on. `nx`/`ny` are wheel notches.
@@ -286,9 +294,7 @@ impl App {
             return;
         }
         if let Some(runner) = self.runner.as_mut() {
-            runner.update(|ui| {
-                ui.pan_tiles(-nx * WHEEL_BOARD_TILES, -ny * WHEEL_BOARD_TILES)
-            });
+            runner.update(|ui| ui.pan_tiles(-nx * WHEEL_BOARD_TILES, -ny * WHEEL_BOARD_TILES));
         }
     }
 
@@ -342,11 +348,17 @@ impl App {
     fn click(&mut self) {
         let hit = self.cursor_hit();
         if self.profile {
-            eprintln!("[isometry] click at {:?} hit {:?}", self.cursor, hit.map(|h| h.1));
+            eprintln!(
+                "[isometry] click at {:?} hit {:?}",
+                self.cursor,
+                hit.map(|h| h.1)
+            );
         }
         let Some((node, id)) = hit else { return };
         self.last_drag = Some(id);
-        let Some(runner) = self.runner.as_mut() else { return };
+        let Some(runner) = self.runner.as_mut() else {
+            return;
+        };
         runner.dispatch_click(
             node,
             PointerClick {
@@ -388,6 +400,9 @@ impl App {
                                     journal: journal.clone(),
                                     inventories: ui.inventories.clone(),
                                     generations: ui.generations.clone(),
+                                    maps: ui.campaign_maps.clone(),
+                                    active_map: ui.active_map.clone(),
+                                    world: ui.world.clone(),
                                 },
                             ));
                         }
@@ -400,8 +415,8 @@ impl App {
             });
         }
         if let Some((path, json, name, local_public)) = save {
-            let map_result = std::fs::create_dir_all("maps")
-                .and_then(|_| std::fs::write(&path, json));
+            let map_result =
+                std::fs::create_dir_all("maps").and_then(|_| std::fs::write(&path, json));
             let campaign = self
                 .net
                 .as_ref()
@@ -473,9 +488,9 @@ impl App {
                             ui.replace_map(map);
                             ui.status = match (campaign, checkpoint_error) {
                                 (Ok(_), None) => format!("loaded {}", path.display()),
-                                (Err(error), _) => format!(
-                                    "map loaded, private campaign state failed: {error}"
-                                ),
+                                (Err(error), _) => {
+                                    format!("map loaded, private campaign state failed: {error}")
+                                }
                                 (_, Some(error)) => format!(
                                     "loaded legacy map after checkpoint read failed: {error}"
                                 ),
@@ -517,6 +532,7 @@ impl App {
         }
         let mut received = Vec::new();
         let mut players = Vec::new();
+        let mut campaign_outcomes = Vec::new();
         let mut failure = None;
         if let Some(net) = self.net.as_mut() {
             // Armillary keeps the network runtime off the winit kernel. Drain
@@ -535,20 +551,36 @@ impl App {
             // the whisper-target list from connected players.
             received = net.take_whispers();
             players = net.players();
+            campaign_outcomes = net.take_campaign_outcomes();
             failure = net.take_failure();
         }
-        if !received.is_empty() || !players.is_empty() || failure.is_some() {
+        if !received.is_empty()
+            || !players.is_empty()
+            || !campaign_outcomes.is_empty()
+            || failure.is_some()
+        {
             if let Some(runner) = self.runner.as_mut() {
                 runner.update(|ui| {
                     for (from, text) in &received {
                         ui.receive_whisper(from, text);
                     }
                     ui.connected_players = players;
+                    if let Some(outcome) = campaign_outcomes.last() {
+                        ui.status = match &outcome.value {
+                            Ok(()) => {
+                                format!("committed campaign draft (request {})", outcome.request)
+                            }
+                            Err(error) => format!(
+                                "campaign commit failed (request {}): {error}",
+                                outcome.request
+                            ),
+                        };
+                    }
                     if let Some(error) = &failure {
                         ui.status = error.clone();
                     }
                 });
-                if !received.is_empty() || failure.is_some() {
+                if !received.is_empty() || !campaign_outcomes.is_empty() || failure.is_some() {
                     if let Some(window) = self.window.as_ref() {
                         window.request_redraw();
                     }
@@ -621,8 +653,10 @@ impl App {
                 ui.bind_sheet_request = None;
                 ui.map.set_sheet(tok, sheet.clone());
                 if ui.net_mode == NetMode::Remote {
-                    ui.net_outbox
-                        .push(GameEvent::SheetSet { token: tok, sheet: sheet.clone() });
+                    ui.net_outbox.push(GameEvent::SheetSet {
+                        token: tok,
+                        sheet: sheet.clone(),
+                    });
                 }
             });
         }
@@ -729,13 +763,7 @@ impl App {
                                 .get_mut(&from)
                                 .and_then(|inventory| inventory.take(&item).ok());
                             if let Some(moved) = moved {
-                                if ui
-                                    .inventories
-                                    .entry(to)
-                                    .or_default()
-                                    .insert(moved)
-                                    .is_ok()
-                                {
+                                if ui.inventories.entry(to).or_default().insert(moved).is_ok() {
                                     event = Some(GameEvent::ItemTransfer { from, to, item });
                                     ui.status = "transferred item".to_owned();
                                 }
@@ -814,15 +842,34 @@ impl App {
         let mut remote = false;
         let mut existing_ids = Vec::new();
         let mut preview = None;
+        let mut choice = None;
+        let mut local_snapshot = None;
+        let journal = self.journal.clone();
         if let Some(runner) = self.runner.as_mut() {
             runner.update(|ui| {
                 action = ui.generation_request.take();
                 locks = ui.generator_locks.clone();
                 can_edit = ui.can_edit_inventory;
                 remote = ui.net_mode == NetMode::Remote;
-                existing_ids = ui.generations.iter().map(|record| record.id.clone()).collect();
+                choice = ui.selected_generator().cloned();
+                existing_ids = ui
+                    .generations
+                    .iter()
+                    .map(|record| record.id.clone())
+                    .collect();
                 if action == Some(GenerationRequest::Commit) {
                     preview = ui.generator_preview.take();
+                    local_snapshot = Some(GameSnapshot {
+                        map: ui.map.clone(),
+                        turns: ui.turns.clone(),
+                        roll_log: ui.roll_log.clone(),
+                        journal: journal.clone(),
+                        inventories: ui.inventories.clone(),
+                        generations: ui.generations.clone(),
+                        maps: ui.campaign_maps.clone(),
+                        active_map: ui.active_map.clone(),
+                        world: ui.world.clone(),
+                    });
                 }
             });
         }
@@ -837,30 +884,37 @@ impl App {
         }
         match action {
             GenerationRequest::Generate => {
+                let Some(choice) = choice else {
+                    if let Some(runner) = self.runner.as_mut() {
+                        runner.update(|ui| ui.status = "no generator selected".to_owned());
+                    }
+                    return;
+                };
                 let mut ordinal = self.generation_ordinal;
                 let record_id = loop {
                     ordinal = ordinal.wrapping_add(1);
-                    let id = format!("generated.demo.forge-item.{ordinal}");
+                    let generator_slug: String = choice
+                        .id
+                        .chars()
+                        .map(|c| if c.is_alphanumeric() { c } else { '.' })
+                        .collect();
+                    let id = format!("generated.{generator_slug}.{ordinal}");
                     if !existing_ids.iter().any(|existing| existing == &id) {
                         break id;
                     }
                 };
                 self.generation_ordinal = ordinal;
                 let request = GeneratorRequest {
-                    generator: "demo:forge_item".to_owned(),
-                    args: GenValue::Text {
-                        value: "river".to_owned(),
-                    },
+                    generator: choice.id,
+                    args: choice.default_args,
                     locks,
                 };
-                let result = GeneratorPack::load(demo_generator_pack_path()).and_then(|pack| {
-                    pack.generate(
-                        record_id,
-                        &request,
-                        &mut self.generation_tape,
-                        GeneratorLimits::default(),
-                    )
-                });
+                let result = self.generator_catalog.generate(
+                    record_id,
+                    &request,
+                    &mut self.generation_tape,
+                    GeneratorLimits::default(),
+                );
                 if let Some(runner) = self.runner.as_mut() {
                     runner.update(|ui| match result {
                         Ok(record) => {
@@ -875,18 +929,161 @@ impl App {
                 let Some(record) = preview else {
                     return;
                 };
-                if let Some(runner) = self.runner.as_mut() {
-                    runner.update(|ui| {
-                        if remote {
-                            ui.net_outbox.push(GameEvent::Generation(record));
-                            ui.status = "committing generated result".to_owned();
-                        } else if ui.generations.iter().all(|existing| existing.id != record.id) {
-                            ui.generations.push(record);
-                            ui.status = "committed generated result".to_owned();
-                        } else {
-                            ui.status = "generation id already committed".to_owned();
-                        }
+                if matches!(record.proposal, GenValue::Campaign { .. }) {
+                    let item_owner = local_snapshot.as_ref().and_then(|snapshot| {
+                        snapshot
+                            .turns
+                            .active()
+                            .or_else(|| snapshot.map.tokens.first().map(|token| token.id))
                     });
+                    if remote {
+                        if let Some(net) = self.net.as_mut() {
+                            let request = net.commit_campaign(record, item_owner);
+                            if let Some(runner) = self.runner.as_mut() {
+                                runner.update(|ui| match request {
+                                    Some(request) => {
+                                        ui.status = format!(
+                                            "committing campaign draft (request {})",
+                                            request
+                                        )
+                                    }
+                                    None => {
+                                        ui.status = "campaign authority actor stopped".to_owned()
+                                    }
+                                });
+                            }
+                        }
+                    } else if let Some(snapshot) = local_snapshot {
+                        let mut host = HostSession::with_history(
+                            snapshot,
+                            self.campaign.clone(),
+                            self.history.clone(),
+                        );
+                        match host.commit_campaign(record.clone(), item_owner) {
+                            Ok(_) => {
+                                self.campaign = host.campaign().clone();
+                                self.history = host.history().clone();
+                                self.journal = host.state().journal.clone();
+                                let snapshot = host.state().clone();
+                                if let Some(runner) = self.runner.as_mut() {
+                                    runner.update(|ui| {
+                                        ui.apply_snapshot(snapshot);
+                                        ui.status = "committed campaign draft".to_owned();
+                                    });
+                                }
+                            }
+                            Err(error) => {
+                                if let Some(runner) = self.runner.as_mut() {
+                                    runner.update(|ui| {
+                                        ui.generator_preview = Some(record);
+                                        ui.status = format!("campaign commit failed: {error}");
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    if let Some(window) = self.window.as_ref() {
+                        window.request_redraw();
+                    }
+                    return;
+                }
+                let mut events = vec![GameEvent::Generation(record.clone())];
+                match &record.proposal {
+                    GenValue::LocalMap { map } => match map.lower(MapScale::Local) {
+                        Ok(mut campaign_map) => {
+                            campaign_map.id = format!("{}.map", record.id);
+                            let id = campaign_map.id.clone();
+                            events.push(GameEvent::MapStored(campaign_map));
+                            events.push(GameEvent::MapActivated { id });
+                        }
+                        Err(error) => {
+                            if let Some(runner) = self.runner.as_mut() {
+                                runner.update(|ui| {
+                                    ui.generator_preview = Some(record.clone());
+                                    ui.status = format!("generated map is invalid: {error}");
+                                });
+                            }
+                            return;
+                        }
+                    },
+                    GenValue::WorldFact { fact } => events.push(GameEvent::Fact(fact.clone())),
+                    GenValue::Item { item } => {
+                        let target = local_snapshot.as_ref().and_then(|snapshot| {
+                            snapshot
+                                .turns
+                                .active()
+                                .or_else(|| snapshot.map.tokens.first().map(|token| token.id))
+                        });
+                        let Some(target) = target else {
+                            if let Some(runner) = self.runner.as_mut() {
+                                runner.update(|ui| {
+                                    ui.generator_preview = Some(record.clone());
+                                    ui.status =
+                                        "generated item needs a character on the map".to_owned();
+                                });
+                            }
+                            return;
+                        };
+                        let mut inventory = local_snapshot
+                            .as_ref()
+                            .and_then(|snapshot| snapshot.inventories.get(&target))
+                            .cloned()
+                            .unwrap_or_default();
+                        let instance = ItemInstance {
+                            id: ItemId::new(format!("{}.item", record.id)),
+                            template: item.template.clone(),
+                            name: item.name.clone(),
+                            quantity: 1,
+                            tags: item.tags.clone(),
+                            modifiers: Vec::new(),
+                            appearance_layers: Vec::new(),
+                        };
+                        if let Err(error) = inventory.insert(instance) {
+                            if let Some(runner) = self.runner.as_mut() {
+                                runner.update(|ui| {
+                                    ui.generator_preview = Some(record.clone());
+                                    ui.status = format!("generated item is invalid: {error:?}");
+                                });
+                            }
+                            return;
+                        }
+                        events.push(GameEvent::InventorySet {
+                            token: target,
+                            inventory,
+                        });
+                    }
+                    _ => {}
+                }
+                if remote {
+                    if let Some(runner) = self.runner.as_mut() {
+                        runner.update(|ui| {
+                            ui.net_outbox.extend(events);
+                            ui.status = "committing generated result".to_owned();
+                        });
+                    }
+                } else if let Some(mut snapshot) = local_snapshot {
+                    let result = events
+                        .iter()
+                        .try_for_each(|event| apply_game(&mut snapshot, event));
+                    match result {
+                        Ok(()) => {
+                            self.journal = snapshot.journal.clone();
+                            if let Some(runner) = self.runner.as_mut() {
+                                runner.update(|ui| {
+                                    ui.apply_snapshot(snapshot);
+                                    ui.status = "committed generated result".to_owned();
+                                });
+                            }
+                        }
+                        Err(error) => {
+                            if let Some(runner) = self.runner.as_mut() {
+                                runner.update(|ui| {
+                                    ui.generator_preview = Some(record);
+                                    ui.status = format!("generation commit failed: {error:?}");
+                                });
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1060,13 +1257,18 @@ impl ApplicationHandler for App {
                 ..Default::default()
             },
         )
-        .expect("boot serval host");
+        .expect("boot genet host");
         // `ISOMETRY_SYNTH=<n>` loads an n x n synthetic stress board (n>1,
         // default 30 = the probe P2 board) instead of the demo skirmish;
         // large n exercises viewport windowing.
         let map = match std::env::var("ISOMETRY_SYNTH") {
             Ok(v) => {
-                let n = v.trim().parse::<u32>().ok().filter(|&n| n > 1).unwrap_or(30);
+                let n = v
+                    .trim()
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|&n| n > 1)
+                    .unwrap_or(30);
                 synth_map(n, n)
             }
             Err(_) => demo_map(),
@@ -1096,6 +1298,10 @@ impl ApplicationHandler for App {
         let mut ui = UiState::new(map);
         if let Some(snapshot) = restored_public {
             ui.apply_snapshot(snapshot);
+        }
+        ui.generator_choices = self.generator_catalog.choices();
+        for diagnostic in self.generator_catalog.diagnostics() {
+            eprintln!("[isometry] content pack: {diagnostic}");
         }
         if let Some(status) = restore_status {
             ui.status = status;
@@ -1129,6 +1335,9 @@ impl ApplicationHandler for App {
                     journal: self.journal.clone(),
                     inventories: ui.inventories.clone(),
                     generations: ui.generations.clone(),
+                    maps: ui.campaign_maps.clone(),
+                    active_map: ui.active_map.clone(),
+                    world: ui.world.clone(),
                 };
                 self.net = Some(NetBridge::spawn(Role::Host {
                     state: snapshot,
@@ -1189,8 +1398,9 @@ impl ApplicationHandler for App {
             self.pump_net();
             self.pump_sheets();
             self.pump_generators();
-            event_loop
-                .set_control_flow(ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(100)));
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                Instant::now() + Duration::from_millis(100),
+            ));
         }
     }
 
@@ -1241,10 +1451,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 let scale = self.scale_factor();
-                self.cursor = (
-                    (position.x / scale) as f32,
-                    (position.y / scale) as f32,
-                );
+                self.cursor = ((position.x / scale) as f32, (position.y / scale) as f32);
                 self.hover();
                 // Play-mode path preview: rebuild only when the hovered
                 // tile changed and a reach highlight is showing.
@@ -1490,6 +1697,7 @@ fn parse_campaign() -> Option<String> {
 fn main() {
     let event_loop = EventLoop::new().expect("event loop");
     event_loop.set_control_flow(ControlFlow::Wait);
+    let generator_catalog = GeneratorCatalog::discover(generator_pack_roots());
     let mut app = App {
         window: None,
         host: None,
@@ -1526,6 +1734,7 @@ fn main() {
                 .unwrap_or(1),
         ),
         generation_ordinal: 0,
+        generator_catalog,
     };
     event_loop.run_app(&mut app).expect("run app");
 }

@@ -5,11 +5,10 @@ This file is maintainer-owned per DOC_POLICY §6; edit freely, Mark.
 
 ## What it is
 
-Isometry is a pixel-art isometric virtual tabletop. One player (the DM)
-prepares maps in the built-in editor and hosts a session; the others join
-peer-to-peer, no server, and play through the maps in turns. It is a
-substrate for tabletop systems (D&D, Pathfinder, others), not a game with
-rules of its own.
+Isometry is a pixel-art isometric virtual tabletop. A group co-owns a signed,
+local-first campaign space and may run play through a traditional hosted
+tactical session or a shared-authority policy. It is a substrate for tabletop
+systems (D&D, Pathfinder, others), not a game with rules of its own.
 
 The feel target is a GBA-era tactics RPG: Tactics Ogre: The Knight of
 Lodis, Final Fantasy Tactics Advance. Fixed isometric camera, 2:1 diamond
@@ -20,9 +19,10 @@ their own campaigns.
 
 ## Pillars
 
-1. **The DM is the server.** Sessions are hosted from the DM's app over
-   p2p transport. Players join with a ticket string. Turn-based play
-   needs an ordered event log, not netcode.
+1. **Campaign ownership is multi-writer; tactical order is scoped.** Campaign
+   authors sign independent operations that converge through p2panda. A hosted
+   combat can still use one temporary sequencer over p2p transport. Holding
+   that role does not make the peer the campaign owner.
 2. **Battle-scale maps, sculpted.** Lodis-scale boards (roughly 15x15 to
    30x30) with per-tile height as a first-class editing brush. Elevation,
    facing, and turn order are substrate features because the reference
@@ -34,7 +34,7 @@ their own campaigns.
    derived stats and dice behavior are scripts (rhai). The substrate
    tracks geometry and turns, never hit points. 5e SRD (CC-BY-4.0) and
    Pathfinder 2e (ORC) are the first-party system candidates.
-5. **Players eventually join from a browser.** The serval-web lane makes
+5. **Players eventually join from a browser.** The genet-web lane makes
    a no-install player client plausible from the same codebase. Native DM
    app first.
 

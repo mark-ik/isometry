@@ -6,9 +6,12 @@
 use std::collections::BTreeMap;
 
 use isometry_campaign::{
-    EntropyTape, EquipmentSlot, GenValue, GenerationRecord, GeneratorRequest,
-    HiddenItemModifier, Inventory, ItemId, ItemInstance, ItemModifier, ItemModifierKind,
-    ItemProposal, RevealCondition,
+    CampaignDraft, CampaignWorld, DraftMap, EncounterAnchor, EntropyTape, EquipmentSlot, GenValue,
+    GenerationRecord, GeneratorRequest, HiddenItemModifier, HistoryEvent, Inventory, ItemId,
+    ItemInstance, ItemModifier, ItemModifierKind, ItemProposal, LocalMapProposal, MapCellProposal,
+    MapPoint, MapScale, RevealCondition, RoleSlot, SecretFact, SpawnZone, StoryletEffect,
+    StoryletProposal, StoryletRequirements, WorldCharacter, WorldEvent, WorldFact, WorldFaction,
+    WorldLaw,
 };
 use isometry_core::{Facing, MapDocument, SessionEvent, Token, TokenId, TurnList};
 use isometry_net::sim::Sim;
@@ -43,6 +46,9 @@ fn snapshot() -> GameSnapshot {
         journal: Vec::new(),
         inventories: Default::default(),
         generations: Vec::new(),
+        maps: Default::default(),
+        active_map: None,
+        world: Default::default(),
     }
 }
 
@@ -535,7 +541,10 @@ fn committed_generation_replicates_without_client_authority() {
         "a late joiner receives committed results in its snapshot"
     );
 
-    sim.client_intent(PeerId(10), GameEvent::Generation(generation_record("forged")));
+    sim.client_intent(
+        PeerId(10),
+        GameEvent::Generation(generation_record("forged")),
+    );
     assert_eq!(sim.host.state().generations, vec![record]);
     assert_converged(&sim);
 }
@@ -549,4 +558,257 @@ fn host_rejects_malformed_generation_before_it_enters_history() {
     assert!(host.commit_generation(malformed).is_err());
     assert!(host.state().generations.is_empty());
     assert!(host.history().is_empty());
+}
+
+#[test]
+fn generated_map_stores_activates_edits_and_replicates_as_result_data() {
+    let map = LocalMapProposal {
+        id: "demo:river-cache".to_owned(),
+        name: "River Cache".to_owned(),
+        width: 5,
+        height: 4,
+        default_ground: "grass".to_owned(),
+        cells: vec![MapCellProposal {
+            col: 2,
+            row: 2,
+            ground: Some("stone".to_owned()),
+            prop: None,
+            elevation: Some(1),
+        }],
+        spawn_zones: vec![SpawnZone {
+            id: "party".to_owned(),
+            cells: vec![MapPoint { col: 0, row: 1 }],
+        }],
+        transitions: Vec::new(),
+        encounter_anchors: vec![EncounterAnchor {
+            id: "guardian".to_owned(),
+            at: MapPoint { col: 3, row: 2 },
+            tags: vec!["guardian".to_owned()],
+        }],
+    }
+    .lower(MapScale::Local)
+    .unwrap();
+    let mut sim = Sim::new(HostSession::new(snapshot()));
+    sim.connect(PeerId(10));
+
+    sim.host_event(GameEvent::MapStored(map.clone()));
+    sim.host_event(GameEvent::MapActivated { id: map.id.clone() });
+    assert_eq!(
+        sim.host.state().active_map.as_deref(),
+        Some("demo:river-cache")
+    );
+    assert_eq!(sim.host.state().map.ground.width(), 5);
+
+    let stone = sim
+        .host
+        .state()
+        .map
+        .tile_kinds
+        .iter()
+        .position(|kind| kind == "stone")
+        .unwrap() as u16;
+    sim.host_event(GameEvent::Map(SessionEvent::TilePlaced {
+        layer: isometry_core::Layer::Ground,
+        at: (1, 1),
+        kind: isometry_core::TileKindId(stone),
+    }));
+    assert_eq!(
+        sim.host.state().maps["demo:river-cache"]
+            .document
+            .ground
+            .get(1, 1),
+        Some(&isometry_core::TileKindId(stone))
+    );
+
+    sim.connect(PeerId(20));
+    assert_eq!(
+        sim.clients[&PeerId(20)].state().unwrap().maps,
+        sim.host.state().maps
+    );
+    sim.client_intent(PeerId(10), GameEvent::MapStored(map));
+    assert_eq!(sim.host.seq(), 3, "client map authoring entered the log");
+    assert_converged(&sim);
+}
+
+#[test]
+fn storylet_matches_private_fact_casts_existing_role_and_commits_effects() {
+    let mut host = HostSession::new(snapshot());
+    host.campaign_mut().insert_secret(SecretFact {
+        id: "ford.secret".into(),
+        text: "The ford remembers a drowned oath.".into(),
+        tags: vec!["river".into()],
+        reveal: RevealCondition::Manual,
+    });
+    host.local_event(GameEvent::World(WorldEvent::Faction(WorldFaction {
+        id: "tide".into(),
+        name: "Tide Court".into(),
+        tags: vec!["river".into()],
+        claims: vec![],
+    })));
+    host.local_event(GameEvent::World(WorldEvent::Character(WorldCharacter {
+        id: "mara".into(),
+        name: "Mara".into(),
+        tags: vec!["warden".into()],
+        faction: Some("tide".into()),
+        place: None,
+    })));
+    host.local_event(GameEvent::World(WorldEvent::Law(WorldLaw {
+        id: "iron-remembers".into(),
+        name: "Iron remembers".into(),
+        text: "Iron keeps its maker's name.".into(),
+        tags: vec!["magic".into()],
+        parameters: BTreeMap::new(),
+    })));
+    let encounter = LocalMapProposal {
+        id: "oath-encounter".into(),
+        name: "Drowned Ford".into(),
+        width: 3,
+        height: 3,
+        default_ground: "water".into(),
+        cells: vec![],
+        spawn_zones: vec![],
+        transitions: vec![],
+        encounter_anchors: vec![],
+    };
+    host.local_event(GameEvent::World(WorldEvent::Storylet(StoryletProposal {
+        key: "drowned-oath".into(),
+        entry: "The drowned oath surfaces.".into(),
+        tags: vec!["encounter".into()],
+        requirements: StoryletRequirements {
+            faction_tags: vec!["river".into()],
+            hidden_facts: vec!["ford.secret".into()],
+            world_laws: vec!["iron-remembers".into()],
+        },
+        roles: vec![RoleSlot {
+            key: "warden".into(),
+            tags: vec!["warden".into()],
+        }],
+        effects: vec![
+            StoryletEffect::History {
+                event: HistoryEvent {
+                    id: "oath-returned".into(),
+                    time: 4,
+                    kind: "omen".into(),
+                    text: "The oath returned.".into(),
+                    participants: vec!["mara".into()],
+                    place: None,
+                    tags: vec![],
+                },
+            },
+            StoryletEffect::Item {
+                item: ItemProposal {
+                    template: "demo:oath-blade".into(),
+                    name: "Oath Blade".into(),
+                    tags: vec!["weapon".into()],
+                },
+            },
+            StoryletEffect::LocalMap { map: encounter },
+            StoryletEffect::Fact {
+                fact: WorldFact {
+                    id: "oath.public".into(),
+                    kind: "storylet".into(),
+                    text: "The oath has returned.".into(),
+                    tags: vec!["river".into()],
+                },
+            },
+        ],
+    })));
+
+    host.commit_storylet("drowned-oath", Some(TokenId(1)))
+        .unwrap();
+    assert_eq!(host.state().world.history[0].id, "oath-returned");
+    assert!(host.state().inventories[&TokenId(1)]
+        .items
+        .values()
+        .any(|item| item.name == "Oath Blade"));
+    assert!(host.state().maps.contains_key("oath-encounter"));
+    assert!(host
+        .state()
+        .journal
+        .iter()
+        .any(|fact| fact.id == "oath.public"));
+}
+
+#[test]
+fn campaign_commit_keeps_secrets_private_and_applies_public_draft() {
+    let mut world = CampaignWorld::default();
+    world.factions.insert(
+        "tide".into(),
+        WorldFaction {
+            id: "tide".into(),
+            name: "Tide Court".into(),
+            tags: vec!["river".into()],
+            claims: vec![],
+        },
+    );
+    world.storylets.insert(
+        "finale".into(),
+        StoryletProposal {
+            key: "finale".into(),
+            entry: "The oath returns.".into(),
+            tags: vec![],
+            requirements: Default::default(),
+            roles: vec![],
+            effects: vec![],
+        },
+    );
+    let draft = CampaignDraft {
+        id: "oath".into(),
+        name: "River Oath".into(),
+        world,
+        maps: vec![DraftMap {
+            scale: MapScale::Region,
+            map: LocalMapProposal {
+                id: "march".into(),
+                name: "River March".into(),
+                width: 3,
+                height: 2,
+                default_ground: "grass".into(),
+                cells: vec![],
+                spawn_zones: vec![],
+                transitions: vec![],
+                encounter_anchors: vec![],
+            },
+        }],
+        secrets: vec![SecretFact {
+            id: "oath.secret".into(),
+            text: "The witness lied.".into(),
+            tags: vec![],
+            reveal: RevealCondition::Manual,
+        }],
+        rewards: vec![ItemProposal {
+            template: "demo:witness".into(),
+            name: "Witness Blade".into(),
+            tags: vec!["weapon".into()],
+        }],
+        starting_map: "march".into(),
+        final_storylet: "finale".into(),
+    };
+    let record = GenerationRecord {
+        id: "generated.campaign.1".into(),
+        request: GeneratorRequest {
+            generator: "demo:campaign".into(),
+            args: GenValue::Text {
+                value: "river".into(),
+            },
+            locks: BTreeMap::new(),
+        },
+        entropy: 7,
+        proposal: GenValue::Campaign { campaign: draft },
+    };
+    let mut host = HostSession::new(snapshot());
+    host.commit_campaign(record, Some(TokenId(1))).unwrap();
+
+    assert!(host.campaign().secret("oath.secret").is_some());
+    assert!(host.state().world.factions.contains_key("tide"));
+    assert_eq!(host.state().active_map.as_deref(), Some("march"));
+    assert!(host.state().inventories[&TokenId(1)]
+        .items
+        .values()
+        .any(|item| item.name == "Witness Blade"));
+    assert!(host
+        .state()
+        .journal
+        .iter()
+        .all(|fact| fact.text != "The witness lied."));
 }

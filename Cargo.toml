@@ -4,7 +4,7 @@ members = [
     "crates/isometry-core",
     "crates/isometry-campaign",
     "crates/isometry-views",
-    "crates/isometry-serval",
+    "crates/isometry-genet",
     "crates/isometry-net",
     "crates/isometry-system",
     "crates/isometry-voxel",
@@ -37,17 +37,27 @@ codicil = { git = "https://github.com/mark-ik/codicil.git", branch = "main" }
 # Host-neutral actor runtime for background host/session work. The SerVal
 # application owns its state on the winit thread and drains typed updates.
 armillary = { git = "https://github.com/mark-ik/armillary.git", branch = "main" }
+personae = { git = "https://github.com/mark-ik/personae.git", branch = "master" }
+mooting = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+moothold = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+transport = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+murm = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+p2panda-core = "0.6.1"
+p2panda-net = "0.6.1"
+p2panda-store = { version = "0.6.1", default-features = false }
+p2panda-sync = "0.6.1"
+thiserror = "1"
 
-# UI: the serval host stack (I1, the woodshed pattern). GIT deps on the
+# UI: the genet host stack (I1, the woodshed pattern). GIT deps on the
 # owned repos so any machine resolves; local checkouts override via the
-# gitignored .cargo/config.toml source-specific [patch] entries. serval's
+# gitignored .cargo/config.toml source-specific [patch] entries. genet's
 # internal path deps resolve inside its git checkout; only the crates
 # isometry names appear here.
-xilem-serval = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
-layout-dom-api = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
-serval-scripted-dom = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
-serval-layout = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
-serval-winit-host = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
+xilem-serval = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
+layout-dom-api = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
+genet-scripted-dom = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
+genet-layout = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
+genet-winit-host = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 netrender = { git = "https://github.com/mark-ik/netrender.git", branch = "main" }
 paint_list_api = { git = "https://github.com/mark-ik/netrender.git", branch = "main" }
 paint_list_render = { git = "https://github.com/mark-ik/netrender.git", branch = "main" }
@@ -56,15 +66,15 @@ paint_list_render = { git = "https://github.com/mark-ik/netrender.git", branch =
 wgpu = { version = "29", default-features = false, features = ["std"] }
 winit = "0.30"
 
-# Mirror of serval's [patch.crates-io] entries this workspace's serval
+# Mirror of genet's [patch.crates-io] entries this workspace's genet
 # graph needs; patches are per-workspace-root and do NOT inherit through
 # a git dep. Copied from the woodshed root (the maintained model).
 [patch.crates-io]
-# stylo is the mark-ik fork (servo-media-features branch). serval-layout
+# stylo is the mark-ik fork (servo-media-features branch). genet-layout
 # pulls it via git dep, so stylo_taffy's crates.io `stylo` must patch to the
 # same source or the two copies collide on the `servo_style_crate` native
 # link. Track the branch, not a rev, so it follows the fork.
 stylo = { git = "https://github.com/mark-ik/stylo", branch = "mark-ik/servo-media-features" }
 stylo_atoms = { git = "https://github.com/mark-ik/stylo", branch = "mark-ik/servo-media-features" }
-taffy = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
-ipc-channel = { git = "https://github.com/mark-ik/serval.git", branch = "main" }
+taffy = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
+ipc-channel = { git = "https://github.com/mark-ik/genet.git", branch = "main" }

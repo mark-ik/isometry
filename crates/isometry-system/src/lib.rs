@@ -14,12 +14,14 @@
 //! Rich content generators can loosen this later; formulas do not need
 //! it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use isometry_campaign::{
-    ContentPackManifest, EntropyTape, GenValue, GenerationRecord, GeneratorFixture,
-    GeneratorRequest, Inventory,
+    CampaignDraft, ContentPackManifest, EncounterAnchor, EntropyTape, GenValue, GenerationRecord,
+    GeneratorChoice, GeneratorFixture, GeneratorRequest, Inventory, ItemProposal, LocalMapProposal,
+    MapCellProposal, MapPatchProposal, MapPoint, MapTransition, NpcProposal, SpawnZone,
+    StoryletProposal, WorldFact,
 };
 use isometry_core::{FieldValue, SheetData};
 use piccolo::{Closure, Executor, Fuel, IntoValue, Lua, StashedExecutor, Table, Value};
@@ -94,9 +96,9 @@ impl Default for GeneratorLimits {
 /// `request_json` preserves the stable serialized ABI, while `request` is its
 /// structured Lua-table form: `{ generator, args, locks }`, where every value
 /// retains the tagged [`GenValue`] shape. `entropy` is host-supplied and
-/// recorded. The returned JSON decodes to a typed [`GenValue`]. This runtime
-/// only makes proposals. It has no campaign, network, filesystem, or commit
-/// capability.
+/// recorded. The result may be a tagged Lua table or a legacy JSON string;
+/// both decode to [`GenValue`]. This runtime only makes proposals. It has no
+/// campaign, network, filesystem, or commit capability.
 pub struct GeneratorRuntime {
     lua: Lua,
     limits: GeneratorLimits,
@@ -116,6 +118,87 @@ pub struct GeneratorResult {
 pub struct GeneratorPack {
     root: PathBuf,
     manifest: ContentPackManifest,
+}
+
+/// Loaded pack set for one host. Discovery accepts either pack directories or
+/// roots whose immediate child directories are packs; failures remain visible
+/// diagnostics instead of hiding the usable packs beside them.
+pub struct GeneratorCatalog {
+    packs: Vec<GeneratorPack>,
+    diagnostics: Vec<String>,
+}
+
+impl GeneratorCatalog {
+    pub fn discover<I, P>(roots: I) -> Self
+    where
+        I: IntoIterator<Item = P>,
+        P: AsRef<Path>,
+    {
+        let mut candidates = Vec::new();
+        let mut diagnostics = Vec::new();
+        for root in roots {
+            let root = root.as_ref();
+            if root.join(GeneratorPack::MANIFEST_FILE).is_file() {
+                candidates.push(root.to_path_buf());
+                continue;
+            }
+            match std::fs::read_dir(root) {
+                Ok(entries) => {
+                    let mut children: Vec<PathBuf> = entries
+                        .filter_map(Result::ok)
+                        .map(|entry| entry.path())
+                        .filter(|path| path.join(GeneratorPack::MANIFEST_FILE).is_file())
+                        .collect();
+                    children.sort();
+                    candidates.extend(children);
+                }
+                Err(error) => diagnostics.push(format!(
+                    "read generator-pack root {}: {error}",
+                    root.display()
+                )),
+            }
+        }
+        let mut packs = Vec::new();
+        let mut ids = BTreeSet::new();
+        for candidate in candidates {
+            match GeneratorPack::load(&candidate) {
+                Ok(pack) if ids.insert(pack.manifest().id.clone()) => packs.push(pack),
+                Ok(pack) => diagnostics.push(format!(
+                    "duplicate content-pack id {} at {}",
+                    pack.manifest().id,
+                    candidate.display()
+                )),
+                Err(error) => diagnostics.push(error),
+            }
+        }
+        Self { packs, diagnostics }
+    }
+
+    pub fn choices(&self) -> Vec<GeneratorChoice> {
+        self.packs
+            .iter()
+            .flat_map(|pack| pack.manifest().generator_choices())
+            .collect()
+    }
+
+    pub fn diagnostics(&self) -> &[String] {
+        &self.diagnostics
+    }
+
+    pub fn generate(
+        &self,
+        record_id: impl Into<String>,
+        request: &GeneratorRequest,
+        tape: &mut EntropyTape,
+        limits: GeneratorLimits,
+    ) -> Result<GenerationRecord, String> {
+        let pack = self
+            .packs
+            .iter()
+            .find(|pack| pack.manifest().generator(&request.generator).is_some())
+            .ok_or_else(|| format!("no loaded pack declares generator {}", request.generator))?;
+        pack.generate(record_id, request, tape, limits)
+    }
 }
 
 impl GeneratorPack {
@@ -151,10 +234,12 @@ impl GeneratorPack {
         request: &GeneratorRequest,
         limits: GeneratorLimits,
     ) -> Result<GeneratorRuntime, String> {
-        let entry = self
-            .manifest
-            .generator(&request.generator)
-            .ok_or_else(|| format!("generator is not declared by this pack: {}", request.generator))?;
+        let entry = self.manifest.generator(&request.generator).ok_or_else(|| {
+            format!(
+                "generator is not declared by this pack: {}",
+                request.generator
+            )
+        })?;
         let script = self.read_asset(&entry.script)?;
         GeneratorRuntime::load(&script, limits)
     }
@@ -273,15 +358,20 @@ impl GeneratorRuntime {
                 )))
             })
             .map_err(|e| format!("start generator: {e}"))?;
-        let output: String = execute_bounded(&mut self.lua, &ex, self.limits.fuel)?;
-        if output.len() > self.limits.max_output_bytes {
+        let value = execute_bounded_gen_value(
+            &mut self.lua,
+            &ex,
+            self.limits.fuel,
+            self.limits.max_value_depth,
+        )?;
+        let output_bytes = serde_json::to_vec(&value)
+            .map_err(|e| format!("serialize generated value for size check: {e}"))?;
+        if output_bytes.len() > self.limits.max_output_bytes {
             return Err(format!(
                 "generator output exceeds {} byte limit",
                 self.limits.max_output_bytes
             ));
         }
-        let value: GenValue = serde_json::from_str(&output)
-            .map_err(|e| format!("generator returned invalid GenValue JSON: {e}"))?;
         value
             .validate_depth(self.limits.max_value_depth)
             .map_err(|e| format!("generator returned invalid GenValue: {e}"))?;
@@ -308,6 +398,388 @@ impl GeneratorRuntime {
         }
         Ok(())
     }
+}
+
+/// Run a generator to completion and decode its arena-bound Lua result before
+/// leaving the Piccolo context. String results preserve the W2 JSON ABI;
+/// tables are the native authoring path.
+fn execute_bounded_gen_value(
+    lua: &mut Lua,
+    executor: &StashedExecutor,
+    total_fuel: i32,
+    max_depth: usize,
+) -> Result<GenValue, String> {
+    let mut fuel = Fuel::with(total_fuel);
+    loop {
+        let complete = lua.enter(|ctx| ctx.fetch(executor).step(ctx, &mut fuel));
+        if complete {
+            break;
+        }
+        if !fuel.should_continue() {
+            return Err("generator exhausted fuel".to_owned());
+        }
+    }
+    lua.try_enter(|ctx| {
+        let value = ctx.fetch(executor).take_result::<Value>(ctx)??;
+        lua_value_to_gen(ctx, value, 0, max_depth).map_err(|error| error.into_value(ctx).into())
+    })
+    .map_err(|e| format!("run generator: {e}"))
+}
+
+fn lua_value_to_gen<'gc>(
+    ctx: piccolo::Context<'gc>,
+    value: Value<'gc>,
+    depth: usize,
+    max_depth: usize,
+) -> Result<GenValue, String> {
+    if depth > max_depth {
+        return Err(format!(
+            "generated value exceeds maximum depth of {max_depth}"
+        ));
+    }
+    let table = match value {
+        Value::String(json) => {
+            return serde_json::from_slice(json.as_bytes())
+                .map_err(|e| format!("generator returned invalid GenValue JSON: {e}"));
+        }
+        Value::Table(table) => table,
+        other => {
+            return Err(format!(
+                "generator must return a tagged table or JSON string, found {}",
+                other.type_name()
+            ));
+        }
+    };
+    let kind = lua_table_string(ctx, table, "type")?;
+    match kind.as_str() {
+        "text" => Ok(GenValue::Text {
+            value: lua_table_string(ctx, table, "value")?,
+        }),
+        "object" => {
+            let fields = lua_table_table(ctx, table, "fields")?;
+            let mut out = BTreeMap::new();
+            for (key, value) in fields.iter() {
+                let Value::String(key) = key else {
+                    return Err("generated object keys must be strings".to_owned());
+                };
+                let key = String::from_utf8(key.as_bytes().to_vec())
+                    .map_err(|_| "generated object key is not UTF-8".to_owned())?;
+                out.insert(key, lua_value_to_gen(ctx, value, depth + 1, max_depth)?);
+            }
+            Ok(GenValue::Object { fields: out })
+        }
+        "list" => Ok(GenValue::List {
+            values: lua_gen_list(
+                ctx,
+                lua_table_table(ctx, table, "values")?,
+                depth + 1,
+                max_depth,
+            )?,
+        }),
+        "item" => {
+            let item = lua_table_table(ctx, table, "item")?;
+            Ok(GenValue::Item {
+                item: ItemProposal {
+                    template: lua_table_string(ctx, item, "template")?,
+                    name: lua_table_string(ctx, item, "name")?,
+                    tags: lua_string_list(ctx, lua_table_table(ctx, item, "tags")?)?,
+                },
+            })
+        }
+        "npc" => {
+            let npc = lua_table_table(ctx, table, "npc")?;
+            Ok(GenValue::Npc {
+                npc: NpcProposal {
+                    key: lua_table_string(ctx, npc, "key")?,
+                    name: lua_table_string(ctx, npc, "name")?,
+                    tags: lua_string_list(ctx, lua_table_table(ctx, npc, "tags")?)?,
+                },
+            })
+        }
+        "map_patch" => {
+            let patch = lua_table_table(ctx, table, "patch")?;
+            Ok(GenValue::MapPatch {
+                patch: MapPatchProposal {
+                    target: lua_table_string(ctx, patch, "target")?,
+                    operations: lua_gen_list(
+                        ctx,
+                        lua_table_table(ctx, patch, "operations")?,
+                        depth + 1,
+                        max_depth,
+                    )?,
+                },
+            })
+        }
+        "world_fact" => {
+            let fact = lua_table_table(ctx, table, "fact")?;
+            Ok(GenValue::WorldFact {
+                fact: WorldFact {
+                    id: lua_table_string(ctx, fact, "id")?,
+                    kind: lua_table_string(ctx, fact, "kind")?,
+                    text: lua_table_string(ctx, fact, "text")?,
+                    tags: lua_string_list(ctx, lua_table_table(ctx, fact, "tags")?)?,
+                },
+            })
+        }
+        "storylet" => {
+            let storylet = lua_table_table(ctx, table, "storylet")?;
+            Ok(GenValue::Storylet {
+                storylet: StoryletProposal {
+                    key: lua_table_string(ctx, storylet, "key")?,
+                    entry: lua_table_string(ctx, storylet, "entry")?,
+                    tags: lua_string_list(ctx, lua_table_table(ctx, storylet, "tags")?)?,
+                    requirements: Default::default(),
+                    roles: Vec::new(),
+                    effects: Vec::new(),
+                },
+            })
+        }
+        "local_map" => {
+            let map = lua_table_table(ctx, table, "map")?;
+            Ok(GenValue::LocalMap {
+                map: LocalMapProposal {
+                    id: lua_table_string(ctx, map, "id")?,
+                    name: lua_table_string(ctx, map, "name")?,
+                    width: lua_table_u32(ctx, map, "width")?,
+                    height: lua_table_u32(ctx, map, "height")?,
+                    default_ground: lua_table_string(ctx, map, "default_ground")?,
+                    cells: lua_map_cells(ctx, lua_table_table(ctx, map, "cells")?)?,
+                    spawn_zones: lua_spawn_zones(ctx, lua_table_table(ctx, map, "spawn_zones")?)?,
+                    transitions: lua_transitions(ctx, lua_table_table(ctx, map, "transitions")?)?,
+                    encounter_anchors: lua_encounter_anchors(
+                        ctx,
+                        lua_table_table(ctx, map, "encounter_anchors")?,
+                    )?,
+                },
+            })
+        }
+        "campaign" => {
+            let json = lua_table_string(ctx, table, "campaign_json")?;
+            let campaign: CampaignDraft = serde_json::from_str(&json)
+                .map_err(|error| format!("generator returned invalid campaign draft: {error}"))?;
+            campaign
+                .validate()
+                .map_err(|error| format!("generator returned invalid campaign draft: {error:?}"))?;
+            Ok(GenValue::Campaign { campaign })
+        }
+        other => Err(format!("unknown generated value type: {other}")),
+    }
+}
+
+fn lua_table_string<'gc>(
+    ctx: piccolo::Context<'gc>,
+    table: Table<'gc>,
+    key: &'static str,
+) -> Result<String, String> {
+    match table.get(ctx, key) {
+        Value::String(value) => String::from_utf8(value.as_bytes().to_vec())
+            .map_err(|_| format!("generated field {key} is not UTF-8")),
+        value => Err(format!(
+            "generated field {key} must be a string, found {}",
+            value.type_name()
+        )),
+    }
+}
+
+fn lua_table_table<'gc>(
+    ctx: piccolo::Context<'gc>,
+    table: Table<'gc>,
+    key: &'static str,
+) -> Result<Table<'gc>, String> {
+    match table.get(ctx, key) {
+        Value::Table(value) => Ok(value),
+        value => Err(format!(
+            "generated field {key} must be a table, found {}",
+            value.type_name()
+        )),
+    }
+}
+
+fn lua_table_u32<'gc>(
+    ctx: piccolo::Context<'gc>,
+    table: Table<'gc>,
+    key: &'static str,
+) -> Result<u32, String> {
+    match table.get(ctx, key) {
+        Value::Integer(value) => {
+            u32::try_from(value).map_err(|_| format!("generated field {key} must fit u32"))
+        }
+        value => Err(format!(
+            "generated field {key} must be an integer, found {}",
+            value.type_name()
+        )),
+    }
+}
+
+fn lua_optional_string<'gc>(
+    ctx: piccolo::Context<'gc>,
+    table: Table<'gc>,
+    key: &'static str,
+) -> Result<Option<String>, String> {
+    match table.get(ctx, key) {
+        Value::Nil => Ok(None),
+        Value::String(value) => String::from_utf8(value.as_bytes().to_vec())
+            .map(Some)
+            .map_err(|_| format!("generated field {key} is not UTF-8")),
+        value => Err(format!(
+            "generated field {key} must be a string or nil, found {}",
+            value.type_name()
+        )),
+    }
+}
+
+fn lua_optional_u8<'gc>(
+    ctx: piccolo::Context<'gc>,
+    table: Table<'gc>,
+    key: &'static str,
+) -> Result<Option<u8>, String> {
+    match table.get(ctx, key) {
+        Value::Nil => Ok(None),
+        Value::Integer(value) => u8::try_from(value)
+            .map(Some)
+            .map_err(|_| format!("generated field {key} must fit u8")),
+        value => Err(format!(
+            "generated field {key} must be an integer or nil, found {}",
+            value.type_name()
+        )),
+    }
+}
+
+fn lua_map_point<'gc>(ctx: piccolo::Context<'gc>, table: Table<'gc>) -> Result<MapPoint, String> {
+    Ok(MapPoint {
+        col: lua_table_u32(ctx, table, "col")?,
+        row: lua_table_u32(ctx, table, "row")?,
+    })
+}
+
+fn lua_map_points<'gc>(
+    ctx: piccolo::Context<'gc>,
+    table: Table<'gc>,
+) -> Result<Vec<MapPoint>, String> {
+    let length = usize::try_from(table.length())
+        .map_err(|_| "generated point-list length is invalid".to_owned())?;
+    (1..=length)
+        .map(|index| match table.get(ctx, index as i64) {
+            Value::Table(point) => lua_map_point(ctx, point),
+            value => Err(format!(
+                "generated point must be a table, found {}",
+                value.type_name()
+            )),
+        })
+        .collect()
+}
+
+fn lua_map_cells<'gc>(
+    ctx: piccolo::Context<'gc>,
+    table: Table<'gc>,
+) -> Result<Vec<MapCellProposal>, String> {
+    let length = usize::try_from(table.length())
+        .map_err(|_| "generated cell-list length is invalid".to_owned())?;
+    (1..=length)
+        .map(|index| {
+            let Value::Table(cell) = table.get(ctx, index as i64) else {
+                return Err("generated map cell must be a table".to_owned());
+            };
+            Ok(MapCellProposal {
+                col: lua_table_u32(ctx, cell, "col")?,
+                row: lua_table_u32(ctx, cell, "row")?,
+                ground: lua_optional_string(ctx, cell, "ground")?,
+                prop: lua_optional_string(ctx, cell, "prop")?,
+                elevation: lua_optional_u8(ctx, cell, "elevation")?,
+            })
+        })
+        .collect()
+}
+
+fn lua_spawn_zones<'gc>(
+    ctx: piccolo::Context<'gc>,
+    table: Table<'gc>,
+) -> Result<Vec<SpawnZone>, String> {
+    let length = usize::try_from(table.length())
+        .map_err(|_| "generated spawn-zone list length is invalid".to_owned())?;
+    (1..=length)
+        .map(|index| {
+            let Value::Table(zone) = table.get(ctx, index as i64) else {
+                return Err("generated spawn zone must be a table".to_owned());
+            };
+            Ok(SpawnZone {
+                id: lua_table_string(ctx, zone, "id")?,
+                cells: lua_map_points(ctx, lua_table_table(ctx, zone, "cells")?)?,
+            })
+        })
+        .collect()
+}
+
+fn lua_transitions<'gc>(
+    ctx: piccolo::Context<'gc>,
+    table: Table<'gc>,
+) -> Result<Vec<MapTransition>, String> {
+    let length = usize::try_from(table.length())
+        .map_err(|_| "generated transition list length is invalid".to_owned())?;
+    (1..=length)
+        .map(|index| {
+            let Value::Table(transition) = table.get(ctx, index as i64) else {
+                return Err("generated transition must be a table".to_owned());
+            };
+            Ok(MapTransition {
+                id: lua_table_string(ctx, transition, "id")?,
+                at: lua_map_point(ctx, lua_table_table(ctx, transition, "at")?)?,
+                target_map: lua_table_string(ctx, transition, "target_map")?,
+                target_entry: lua_optional_string(ctx, transition, "target_entry")?,
+            })
+        })
+        .collect()
+}
+
+fn lua_encounter_anchors<'gc>(
+    ctx: piccolo::Context<'gc>,
+    table: Table<'gc>,
+) -> Result<Vec<EncounterAnchor>, String> {
+    let length = usize::try_from(table.length())
+        .map_err(|_| "generated encounter-anchor list length is invalid".to_owned())?;
+    (1..=length)
+        .map(|index| {
+            let Value::Table(anchor) = table.get(ctx, index as i64) else {
+                return Err("generated encounter anchor must be a table".to_owned());
+            };
+            Ok(EncounterAnchor {
+                id: lua_table_string(ctx, anchor, "id")?,
+                at: lua_map_point(ctx, lua_table_table(ctx, anchor, "at")?)?,
+                tags: lua_string_list(ctx, lua_table_table(ctx, anchor, "tags")?)?,
+            })
+        })
+        .collect()
+}
+
+fn lua_gen_list<'gc>(
+    ctx: piccolo::Context<'gc>,
+    table: Table<'gc>,
+    depth: usize,
+    max_depth: usize,
+) -> Result<Vec<GenValue>, String> {
+    let length = usize::try_from(table.length())
+        .map_err(|_| "generated list length is invalid".to_owned())?;
+    (1..=length)
+        .map(|index| lua_value_to_gen(ctx, table.get(ctx, index as i64), depth, max_depth))
+        .collect()
+}
+
+fn lua_string_list<'gc>(
+    ctx: piccolo::Context<'gc>,
+    table: Table<'gc>,
+) -> Result<Vec<String>, String> {
+    let length = usize::try_from(table.length())
+        .map_err(|_| "generated string-list length is invalid".to_owned())?;
+    (1..=length)
+        .map(|index| match table.get(ctx, index as i64) {
+            Value::String(value) => String::from_utf8(value.as_bytes().to_vec())
+                .map_err(|_| "generated list entry is not UTF-8".to_owned()),
+            value => Err(format!(
+                "generated list entry must be a string, found {}",
+                value.type_name()
+            )),
+        })
+        .collect()
 }
 
 /// Marshal one generator request into deterministic, tagged Lua data. Tables
@@ -365,7 +837,9 @@ fn gen_value_table<'gc>(ctx: piccolo::Context<'gc>, value: &GenValue) -> Table<'
             let item_table = Table::new(&ctx);
             set_lua_string(item_table, ctx, "template", &item.template);
             set_lua_string(item_table, ctx, "name", &item.name);
-            item_table.set(ctx, "tags", lua_strings(ctx, &item.tags)).unwrap();
+            item_table
+                .set(ctx, "tags", lua_strings(ctx, &item.tags))
+                .unwrap();
             table.set(ctx, "item", item_table).unwrap();
         }
         GenValue::Npc { npc } => {
@@ -373,7 +847,9 @@ fn gen_value_table<'gc>(ctx: piccolo::Context<'gc>, value: &GenValue) -> Table<'
             let npc_table = Table::new(&ctx);
             set_lua_string(npc_table, ctx, "key", &npc.key);
             set_lua_string(npc_table, ctx, "name", &npc.name);
-            npc_table.set(ctx, "tags", lua_strings(ctx, &npc.tags)).unwrap();
+            npc_table
+                .set(ctx, "tags", lua_strings(ctx, &npc.tags))
+                .unwrap();
             table.set(ctx, "npc", npc_table).unwrap();
         }
         GenValue::MapPatch { patch } => {
@@ -395,7 +871,9 @@ fn gen_value_table<'gc>(ctx: piccolo::Context<'gc>, value: &GenValue) -> Table<'
             set_lua_string(fact_table, ctx, "id", &fact.id);
             set_lua_string(fact_table, ctx, "kind", &fact.kind);
             set_lua_string(fact_table, ctx, "text", &fact.text);
-            fact_table.set(ctx, "tags", lua_strings(ctx, &fact.tags)).unwrap();
+            fact_table
+                .set(ctx, "tags", lua_strings(ctx, &fact.tags))
+                .unwrap();
             table.set(ctx, "fact", fact_table).unwrap();
         }
         GenValue::Storylet { storylet } => {
@@ -406,7 +884,48 @@ fn gen_value_table<'gc>(ctx: piccolo::Context<'gc>, value: &GenValue) -> Table<'
             storylet_table
                 .set(ctx, "tags", lua_strings(ctx, &storylet.tags))
                 .unwrap();
+            set_lua_string(
+                storylet_table,
+                ctx,
+                "storylet_json",
+                &serde_json::to_string(storylet).expect("storylet is serializable"),
+            );
             table.set(ctx, "storylet", storylet_table).unwrap();
+        }
+        GenValue::LocalMap { map } => {
+            table.set(ctx, "type", "local_map").unwrap();
+            let map_table = Table::new(&ctx);
+            set_lua_string(map_table, ctx, "id", &map.id);
+            set_lua_string(map_table, ctx, "name", &map.name);
+            map_table.set(ctx, "width", map.width).unwrap();
+            map_table.set(ctx, "height", map.height).unwrap();
+            set_lua_string(map_table, ctx, "default_ground", &map.default_ground);
+            map_table
+                .set(ctx, "cells", map_cells_table(ctx, &map.cells))
+                .unwrap();
+            map_table
+                .set(ctx, "spawn_zones", spawn_zones_table(ctx, &map.spawn_zones))
+                .unwrap();
+            map_table
+                .set(ctx, "transitions", transitions_table(ctx, &map.transitions))
+                .unwrap();
+            map_table
+                .set(
+                    ctx,
+                    "encounter_anchors",
+                    encounter_anchors_table(ctx, &map.encounter_anchors),
+                )
+                .unwrap();
+            table.set(ctx, "map", map_table).unwrap();
+        }
+        GenValue::Campaign { campaign } => {
+            table.set(ctx, "type", "campaign").unwrap();
+            set_lua_string(
+                table,
+                ctx,
+                "campaign_json",
+                &serde_json::to_string(campaign).expect("campaign draft is serializable"),
+            );
         }
     }
     table
@@ -418,6 +937,86 @@ fn lua_strings<'gc>(ctx: piccolo::Context<'gc>, strings: &[String]) -> Table<'gc
         table
             .set(ctx, index as i64 + 1, lua_string(ctx, string))
             .unwrap();
+    }
+    table
+}
+
+fn map_point_table<'gc>(ctx: piccolo::Context<'gc>, point: MapPoint) -> Table<'gc> {
+    let table = Table::new(&ctx);
+    table.set(ctx, "col", point.col).unwrap();
+    table.set(ctx, "row", point.row).unwrap();
+    table
+}
+
+fn map_cells_table<'gc>(ctx: piccolo::Context<'gc>, cells: &[MapCellProposal]) -> Table<'gc> {
+    let table = Table::new(&ctx);
+    for (index, cell) in cells.iter().enumerate() {
+        let value = Table::new(&ctx);
+        value.set(ctx, "col", cell.col).unwrap();
+        value.set(ctx, "row", cell.row).unwrap();
+        if let Some(ground) = &cell.ground {
+            set_lua_string(value, ctx, "ground", ground);
+        }
+        if let Some(prop) = &cell.prop {
+            set_lua_string(value, ctx, "prop", prop);
+        }
+        if let Some(elevation) = cell.elevation {
+            value.set(ctx, "elevation", elevation).unwrap();
+        }
+        table.set(ctx, index as i64 + 1, value).unwrap();
+    }
+    table
+}
+
+fn spawn_zones_table<'gc>(ctx: piccolo::Context<'gc>, zones: &[SpawnZone]) -> Table<'gc> {
+    let table = Table::new(&ctx);
+    for (index, zone) in zones.iter().enumerate() {
+        let value = Table::new(&ctx);
+        set_lua_string(value, ctx, "id", &zone.id);
+        let cells = Table::new(&ctx);
+        for (cell_index, point) in zone.cells.iter().enumerate() {
+            cells
+                .set(ctx, cell_index as i64 + 1, map_point_table(ctx, *point))
+                .unwrap();
+        }
+        value.set(ctx, "cells", cells).unwrap();
+        table.set(ctx, index as i64 + 1, value).unwrap();
+    }
+    table
+}
+
+fn transitions_table<'gc>(ctx: piccolo::Context<'gc>, transitions: &[MapTransition]) -> Table<'gc> {
+    let table = Table::new(&ctx);
+    for (index, transition) in transitions.iter().enumerate() {
+        let value = Table::new(&ctx);
+        set_lua_string(value, ctx, "id", &transition.id);
+        value
+            .set(ctx, "at", map_point_table(ctx, transition.at))
+            .unwrap();
+        set_lua_string(value, ctx, "target_map", &transition.target_map);
+        if let Some(target_entry) = &transition.target_entry {
+            set_lua_string(value, ctx, "target_entry", target_entry);
+        }
+        table.set(ctx, index as i64 + 1, value).unwrap();
+    }
+    table
+}
+
+fn encounter_anchors_table<'gc>(
+    ctx: piccolo::Context<'gc>,
+    anchors: &[EncounterAnchor],
+) -> Table<'gc> {
+    let table = Table::new(&ctx);
+    for (index, anchor) in anchors.iter().enumerate() {
+        let value = Table::new(&ctx);
+        set_lua_string(value, ctx, "id", &anchor.id);
+        value
+            .set(ctx, "at", map_point_table(ctx, anchor.at))
+            .unwrap();
+        value
+            .set(ctx, "tags", lua_strings(ctx, &anchor.tags))
+            .unwrap();
+        table.set(ctx, index as i64 + 1, value).unwrap();
     }
     table
 }
@@ -801,6 +1400,49 @@ mod tests {
     }
 
     #[test]
+    fn generator_returns_nested_tagged_lua_tables() {
+        let script = r#"
+            function call_gen(request_json, entropy, request)
+                return {
+                    type = "object",
+                    fields = {
+                        title = { type = "text", value = "river cache" },
+                        contents = {
+                            type = "list",
+                            values = {
+                                {
+                                    type = "item",
+                                    item = {
+                                        template = "demo:river-blade",
+                                        name = "River Blade",
+                                        tags = { "weapon", "river" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            end
+        "#;
+        let mut runtime = GeneratorRuntime::load(script, GeneratorLimits::default()).unwrap();
+        let mut tape = EntropyTape::from_seed(4);
+        let value = runtime.call(&generator_request(), &mut tape).unwrap().value;
+        let GenValue::Object { fields } = value else {
+            panic!("expected object proposal");
+        };
+        assert_eq!(
+            fields.get("title"),
+            Some(&GenValue::Text {
+                value: "river cache".to_owned()
+            })
+        );
+        assert!(matches!(
+            fields.get("contents"),
+            Some(GenValue::List { values }) if matches!(values.as_slice(), [GenValue::Item { .. }])
+        ));
+    }
+
+    #[test]
     fn declared_pack_fixture_runs_without_opening_undeclared_assets() {
         let root = std::env::temp_dir().join(format!(
             "isometry-generator-pack-{}-{}",
@@ -869,7 +1511,12 @@ end"#,
             )
             .unwrap();
         assert_eq!(record.request, request);
-        assert_eq!(record.proposal, GenValue::Text { value: "forge".to_owned() });
+        assert_eq!(
+            record.proposal,
+            GenValue::Text {
+                value: "forge".to_owned()
+            }
+        );
         assert_eq!(record.entropy, tape.draws[0]);
         pack.run_fixture(
             "demo:forge_item",
@@ -885,7 +1532,45 @@ end"#,
             )
             .is_err());
 
+        let catalog = GeneratorCatalog::discover([&root]);
+        assert!(catalog.diagnostics().is_empty());
+        assert_eq!(catalog.choices()[0].id, "demo:forge_item");
+
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn demo_pack_composes_an_inspectable_campaign_draft() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/packs/demo");
+        let pack = GeneratorPack::load(root).unwrap();
+        let request = GeneratorRequest {
+            generator: "demo:campaign".to_owned(),
+            args: GenValue::Text {
+                value: "river".to_owned(),
+            },
+            locks: BTreeMap::new(),
+        };
+        let mut tape = EntropyTape::from_seed(17);
+        let record = pack
+            .generate(
+                "generated.demo.campaign.1",
+                &request,
+                &mut tape,
+                GeneratorLimits::default(),
+            )
+            .unwrap();
+        let GenValue::Campaign { campaign } = record.proposal else {
+            panic!("expected campaign draft");
+        };
+        campaign.validate().unwrap();
+        assert_eq!(campaign.maps.len(), 3);
+        assert_eq!(campaign.world.factions.len(), 2);
+        assert_eq!(campaign.secrets.len(), 1);
+        assert!(campaign.world.laws.contains_key("iron-remembers"));
+        assert!(campaign
+            .world
+            .storylets
+            .contains_key(&campaign.final_storylet));
     }
 
     #[test]

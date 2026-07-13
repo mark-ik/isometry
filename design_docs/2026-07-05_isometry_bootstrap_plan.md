@@ -12,7 +12,7 @@ rules, 5e SRD first; the substrate/system split proven end to end
 (receipts in
 scry-shots/2026-07-07_isometry_{sheet_open,attack_rng,str14_attack}.png).
 Residue: a "new empty map" entry point; drag-to-reorder on the turn
-list; serval `.side` wheel-scroll (taller window meanwhile);
+list; genet `.side` wheel-scroll (taller window meanwhile);
 cross-machine run (unavailable here). The bootstrap arc is complete;
 isometry-web (browser player client) and campaign packs are the next
 horizons, each their own plan.
@@ -26,20 +26,22 @@ session.
 ## Decisions on file (2026-07-05 founding session)
 
 1. **Standalone repo, woodshed pattern.** Isometry consumes xilem-serval,
-   serval-layout, and netrender as git deps on the mark-ik remotes with
+   genet-layout, and netrender as git deps on the mark-ik remotes with
    the `[patch.crates-io]` mirror at the workspace root (stylo,
    stylo_atoms, taffy, ipc-channel; copy the current set from
    `repos/woodshed/Cargo.toml` when wiring I1, it is the maintained
-   model). Local serval checkouts override via a gitignored
-   `.cargo/config.toml`. Isometry becomes the third serval consumer app
+   model). Local genet checkouts override via a gitignored
+   `.cargo/config.toml`. Isometry becomes the third genet consumer app
    after meerkat and woodshed, pressuring lanes the other two do not:
    image sprites, drag and drop, pointer capture, form-heavy sheet UI.
-2. **DM-authority sessions over p2p transport.** The DM's app is the
-   authority; players connect over iroh and receive an ordered event
-   log the host validates and rebroadcasts. Late joiners get a snapshot
-   plus the log tail. Turn-based play makes rollback netcode and CRDTs
-   unnecessary; that machinery is out of scope by doctrine (CLAUDE.md
-   don'ts).
+2. **Hosted tactical sessions over p2p transport.** The DM's app sequences
+   the original play mode; players connect over Iroh and receive an ordered
+   event log the host validates and rebroadcasts. Late joiners get a snapshot
+   plus the log tail. This remains the tactical consistency model, not the
+   ownership model for a campaign. The 2026-07-11 revision in the
+   [shared-authority plan](2026-07-09_shared_authority_and_collaborative_building_plan.md)
+   adds signed multi-writer p2panda campaign spaces and keeps sequencing only
+   where a domain requires it.
 3. **Tile-as-DOM-element, viewport-windowed.** The map lives in
    isometry-core state at any size; the xilem_serval view function
    projects only the visible tile range plus a margin, the same move
@@ -80,9 +82,9 @@ per-edit full-scene paint emission, and animation churn. The probes turn
 those into go/no-go measurements at Isometry's actual scale:
 
 - **P1, pixelated sampling.** Verify `image-rendering: pixelated` (or an
-  equivalent nearest-neighbor path) survives serval's knockout set end to
+  equivalent nearest-neighbor path) survives genet's knockout set end to
   end at integer scale factors. Done when a test sprite renders crisp at
-  2x/3x/4x in a serval host window. If knocked out, un-knock in serval
+  2x/3x/4x in a genet host window. If knocked out, un-knock in genet
   rather than working around (standards-correct over host hacks).
 - **P2, element count.** A synthetic 30x30x3-layer board (roughly 2,700
   tile elements) plus 20 tokens: measure first build, settled frame,
@@ -97,7 +99,7 @@ those into go/no-go measurements at Isometry's actual scale:
 **Known dependency, camera pan.** Panning re-rasters the full viewport
 per frame today. The approved escape hatch (composite the cached surface
 texture at the camera offset during the gesture, re-render on settle,
-Mark 2026-07-04) lives on the serval/netrender side and is not landed.
+Mark 2026-07-04) lives on the genet/netrender side and is not landed.
 Isometry's fixed-camera aesthetic tolerates snap-scroll in the interim;
 the tactics references scroll in steps anyway. Track, do not block on it.
 
@@ -107,12 +109,12 @@ the tactics references scroll in steps anyway. Track, do not block on it.
   session events. Pure Rust, serde only.
 - `isometry-views` (I1): xilem_serval view functions plus the CSS sheets.
   Board view windows the visible tile range; chrome is panels and menus.
-- `isometry-serval` (I1): native winit host, borrowed from the meerkat
-  main.rs harness patterns and `woodshed-serval` (do not import either).
+- `isometry-genet` (I1): native winit host, borrowed from the meerkat
+  main.rs harness patterns and `woodshed-genet` (do not import either).
 - `isometry-net` (I4): iroh transport, host authority, snapshot and tail.
   Event semantics stay in core; this crate only moves bytes.
-- `isometry-web` (post-I6): browser player client via the serval-web
-  lane, generalized from `serval/examples/serval_web_smoke`.
+- `isometry-web` (post-I6): browser player client via the genet-web
+  lane, generalized from `genet/examples/genet_web_smoke`.
 
 ## Phases (done-conditions, not dates)
 
@@ -124,12 +126,12 @@ projection with round-trip tests, `MapDocument` with serde round-trip,
 `SessionEvent` apply with tests. **Done when** `cargo test -p
 isometry-core` passes. Landed; see Progress.
 
-### I1: serval host renders a board
+### I1: genet host renders a board
 
-Wire the serval/netrender git deps and patch mirror; stand up
-`isometry-views` and `isometry-serval`; render a static hand-authored
+Wire the genet/netrender git deps and patch mirror; stand up
+`isometry-views` and `isometry-genet`; render a static hand-authored
 board from a `MapDocument` with a placeholder tileset. Run probes P1-P3
-and record receipts in Findings. **Done when** a serval host window shows
+and record receipts in Findings. **Done when** a genet host window shows
 a correctly depth-sorted 30x30 board with crisp pixels and the three
 probe receipts are logged.
 
@@ -165,7 +167,7 @@ replication over a transport seam; the replicated unit is `GameEvent`
 log hash makes convergence checkable. Late join carries snapshot + the
 host's hash so joiners converge on the tail. The `iroh` feature binds a
 QUIC transport (one bi-stream per peer, postcard frames, ticket
-mint/parse). isometry-serval gets `--host`/`--join` over a background
+mint/parse). isometry-genet gets `--host`/`--join` over a background
 tokio runtime; in a session the view is Remote (play routes through the
 authority, no optimistic mutation). Verified as far as one machine
 allows: 5 replication tests, a real-QUIC loopback (mid-session join,
@@ -218,10 +220,10 @@ clicks (`_attack_rng.png`); bumping STR 10->14 via the stepper re-derives
 
 ## Design space on file (alternatives and open questions)
 
-- **Bevy or Godot instead of the serval stack.** Bevy: game-native
+- **Bevy or Godot instead of the genet stack.** Bevy: game-native
   (bevy_ecs_tilemap, matchbox), weak at form-heavy chrome, feeds nothing
   back into Merely. Godot: fastest to playable, same objection
-  stronger. Not chosen for the woodshed reasons. Revisit trigger: serval
+  stronger. Not chosen for the woodshed reasons. Revisit trigger: genet
   churn blocking Isometry shipping for an extended stretch, or probe
   P2/P3 failing without a landable engine fix.
 - **Transport.** iroh chosen for QUIC hole-punching and ticket-shaped
@@ -242,7 +244,7 @@ clicks (`_attack_rng.png`); bumping STR 10->14 via the stepper re-derives
   sharing becomes real.
 - **Megamaps.** Roll20-scale dungeon crawls (100x100+) are out of the
   design center. If they become a target: retained segment emission on
-  the serval side converts per-edit cost from O(scene) to O(edit)
+  the genet side converts per-edit cost from O(scene) to O(edit)
   (designed, deprioritized per the 2026-07-04 receipts), and ground
   chunking is the app-side fallback.
 
@@ -276,11 +278,11 @@ clicks (`_attack_rng.png`); bumping STR 10->14 via the stepper re-derives
   Templates are the same core-geometry shape as visibility/movement.
   Whispers are the one thing that is NOT the broadcast log: directed
   `Recipient::One`, verified by the sim (reaches only the named player,
-  never touches the replicated log). Text input avoided the serval
+  never touches the replicated log). Text input avoided the genet
   `text_field`/focus lane: the host captures keystrokes into a compose
   buffer directly, simpler and fully in our control. Panel growth forced
   a taller default window (820) + `.side { overflow-y: auto }`; the
-  wheel-scroll of `.side` did not visibly engage in a quick test (serval
+  wheel-scroll of `.side` did not visibly engage in a quick test (genet
   scroll-container wiring is a later check), so the height bump is the
   load-bearing fit for now.
 - 2026-07-06 (I4 architecture): the session layer keeps networking out
@@ -303,8 +305,12 @@ clicks (`_attack_rng.png`); bumping STR 10->14 via the stepper re-derives
   no network. Deadlock avoided by having the **host open** the stream
   and write the snapshot first (QUIC opens lazily; the party with data
   opens). Compiled clean first try; loopback converges over real QUIC.
-  Did NOT couple to mere's `murm/transport` (it's mere-internal, bound
-  to mere identity); harvested the pattern, kept isometry standalone.
+  Did NOT couple to mere's `murm/transport` (it was then Mere-internal and
+  bound to Mere identity); harvested the pattern, kept Isometry standalone.
+  **Superseded 2026-07-11:** shared transport now accepts provider-neutral raw
+  Ed25519 seed material, and Isometry's campaign collaboration lane consumes
+  the generic Mooting/Muniment p2panda store. The direct-Iroh session remains
+  only as the existing tactical sequencer pending network composition.
 - 2026-07-06 (verification limit + focus-free hook): driving one of two
   overlapping same-title windows via OS input (SetForegroundWindow /
   AppActivate + SendKeys) is unreliable — Windows foreground-lock meant
@@ -324,12 +330,12 @@ clicks (`_attack_rng.png`); bumping STR 10->14 via the stepper re-derives
   only on their turn, unlisted move freely) and token place/remove are
   covered by isometry-views state tests; TurnList and pathfinding by
   isometry-core tests (21 total).
-- 2026-07-06 (engine gap, found by sprite mirroring): serval conjugates
+- 2026-07-06 (engine gap, found by sprite mirroring): genet conjugates
   CSS transforms at the box origin; the spec default `transform-origin`
   is `50% 50%`, so `scaleX(-1)` reflects an element out of its own box
   (and its hit region with it, which is how it surfaced: flipped tokens
   missed clicks). App-side workaround: pre-translate by the width
-  (`translateX(24px) scaleX(-1)`). Worth a serval issue alongside the
+  (`translateX(24px) scaleX(-1)`). Worth a genet issue alongside the
   inset-sizing and paint/hit-divergence notes.
 - 2026-07-06 (CSS lesson, not an engine bug): state tints (reach, path,
   selected, hover) must sit after the tile-kind rules in the sheet;
@@ -347,8 +353,8 @@ clicks (`_attack_rng.png`); bumping STR 10->14 via the stepper re-derives
   DOM-per-tile design, pan included, before any of the listed
   optimizations (viewport windowing, retained emission, camera-offset
   composite).
-- 2026-07-06 (P1 fix landed, both repos): serval-layout paint emission
-  now reads computed `image-rendering` (commit in serval,
+- 2026-07-06 (P1 fix landed, both repos): genet-layout paint emission
+  now reads computed `image-rendering` (commit in genet,
   `paint_emit.rs`); netrender carries a `nearest` flag on
   `SceneImage`/`ScenePattern`, hashes it (and `clamp_to_uv`, a
   pre-existing hash gap) into tile deps, and maps it to vello's
@@ -356,7 +362,7 @@ clicks (`_attack_rng.png`); bumping STR 10->14 via the stepper re-derives
   list (`crisp-edges` and `pixelated` both lower to nearest). Token
   sprites are 8x12 data-URI PNGs at 3x under
   `image-rendering: pixelated`.
-- 2026-07-06 (engine gap, found by the sprite tokens): serval-layout's
+- 2026-07-06 (engine gap, found by the sprite tokens): genet-layout's
   retained `IncrementalLayout` never decoded CSS background/border
   images; every `emit_paint_list` passed a fresh empty
   `BackgroundImagePlane`, so `background-image` painted only on the
@@ -371,11 +377,11 @@ clicks (`_attack_rng.png`); bumping STR 10->14 via the stepper re-derives
   edges, gold pauldrons intact; P1 verified end to end.
 - 2026-07-06 (engine gap, found by the I2 click probe): absolute inset
   sizing (`position: absolute; left: 0; right: 0; top: 0; bottom: 0`
-  with auto width/height) is not honored by serval-layout. The app root
+  with auto width/height) is not honored by genet-layout. The app root
   sized to content (228px, the side panel), `hit_test` returned None
   everywhere right of it, while paint still drew the overflowing board,
   so the bug presented as "panel clicks work, board clicks vanish."
-  Two engine-side notes worth their own serval issue: inset sizing for
+  Two engine-side notes worth their own genet issue: inset sizing for
   absolutes, and the paint/hit divergence on content overflowing an
   undersized `overflow: hidden` box (paint did not clip where hit-test
   pruned). App-side fix: the woodshed root idiom
@@ -392,9 +398,9 @@ clicks (`_attack_rng.png`); bumping STR 10->14 via the stepper re-derives
   `<dir>/isometry_capture.png` with every presented frame via
   netrender_device texture readback, immune to window occlusion.
 - 2026-07-05 (I1, probe P1, code-grounded): `image-rendering: pixelated`
-  is knocked out at three seams. serval-layout's paint emission hardcodes
+  is knocked out at three seams. genet-layout's paint emission hardcodes
   `ImageRendering::Auto` at every image site
-  (`repos/serval/components/serval-layout/paint_emit.rs:1115` and
+  (`repos/genet/components/genet-layout/paint_emit.rs:1115` and
   siblings); paint_list_render's translator never reads the field; the
   vello image quality is never selected from it. `paint_list_api`
   already carries the `Pixelated` variant
@@ -420,12 +426,12 @@ clicks (`_attack_rng.png`); bumping STR 10->14 via the stepper re-derives
   correctly in front of and behind terrain; depth as plain z-index from
   `depth_key` holds. Cosmetic note: terraces read as dark rings under
   the placeholder tileset; a real tileset resolves it.
-- 2026-07-05 (I1, infrastructure): the serval GitHub tip (48c08ea) was
+- 2026-07-05 (I1, infrastructure): the genet GitHub tip (48c08ea) was
   mid-flight broken (the `invalidate.rs` fix sat uncommitted in the
   local working tree), the known transient-concurrent-work pattern. The
   gitignored `.cargo/config.toml` override to the sibling checkouts (the
   woodshed/mere pattern) is in place; committed manifests stay on git
-  deps and resolve once serval main is pushed green.
+  deps and resolve once genet main is pushed green.
 - 2026-07-05 (founding session, code-grounded): netrender tile
   invalidation hashes primitives per world-space tile
   (`repos/netrender/netrender/src/tile_cache/mod.rs`), so camera pan
@@ -433,7 +439,7 @@ clicks (`_attack_rng.png`); bumping STR 10->14 via the stepper re-derives
   receipts (debug, ~108-node session): steady chrome 4.3ms, structural
   frame 24.3ms chrome + 45ms raster, settled surfaces dirty_tiles=0.
   Full receipts in
-  `repos/serval/docs/2026-07-03_shell_paint_emission_raster_plan.md` and
+  `repos/genet/docs/2026-07-03_shell_paint_emission_raster_plan.md` and
   the mere render perf plan
   (`repos/mere/design_docs/mere_docs/implementation_strategy/2026-06-24_meerkat_render_perf_plan.md`).
 
@@ -446,7 +452,7 @@ clicks (`_attack_rng.png`); bumping STR 10->14 via the stepper re-derives
   `GameEvent::SheetSet` replication. Views: system-agnostic sheet overlay
   (fields with steppers, Lua-derived modifiers, action buttons),
   `open_or_bind_sheet` / `request_sheet_edit` / `request_action`,
-  `roll_labeled`. Serval: host loads `srd_5e()`, hands views a
+  `roll_labeled`. Genet: host loads `srd_5e()`, hands views a
   `SheetSchema`, and `pump_sheets` binds/edits/rolls and recomputes derived
   via Lua off the render path; dice reseeded with clock entropy. +3 system,
   +1 core tests. Receipts in
@@ -468,14 +474,14 @@ clicks (`_attack_rng.png`); bumping STR 10->14 via the stepper re-derives
   `visibility` module (radius Bresenham LOS + opacity, 4 tests); views
   fog state (viewer, visible/explored sets, three-state fog_level,
   token_visible, recompute_fog, cycle_viewer) with shroud rendering and
-  enemy-token hiding (1 test); serval `--as <player>` + `f` viewer
+  enemy-token hiding (1 test); genet `--as <player>` + `f` viewer
   cycle. Client-side render fog (host still sends full state). Receipts
   in scry-shots/2026-07-06_isometry_fog_*.png.
 - 2026-07-06 (I4): sessions landed. `isometry-net` crate (protocol +
   HostSession/ClientSession + sim + iroh_link behind the `iroh`
   feature); isometry-views gains a Remote net-mode (play/turn actions
   route as `GameEvent`s, render from the replicated snapshot);
-  isometry-serval gains `--host`/`--join` over a background tokio
+  isometry-genet gains `--host`/`--join` over a background tokio
   bridge. Receipts: 5 replication tests, real-QUIC loopback, two-window
   client-renders-host-board, focus-free host round-trip self-test.
   Session smoke example for a manual two-process demo. Residue noted in
@@ -492,13 +498,13 @@ clicks (`_attack_rng.png`); bumping STR 10->14 via the stepper re-derives
 - 2026-07-05: repo created. I0 landed: workspace, CLAUDE.md, doc set,
   isometry-core seed (grid, iso, map, event modules with tests).
 - 2026-07-05 (later): I1 largely landed. isometry-views (board view fn,
-  demo map, placeholder tileset CSS) + isometry-serval (winit host,
+  demo map, placeholder tileset CSS) + isometry-genet (winit host,
   woodshed harness shape, `ISOMETRY_PROFILE=1` frame timers). Demo board
   renders with hover, click-select, and arrow-key snap pan; P2/P3
   receipts in Findings. Residue for the next session: the P1 engine fix
-  in serval/netrender, a 30x30x3 synthetic P2 run, release-build
+  in genet/netrender, a 30x30x3 synthetic P2 run, release-build
   numbers, and a click-to-select edit-cost receipt.
-- 2026-07-06: P1 engine fix landed in serval + netrender (see Findings);
+- 2026-07-06: P1 engine fix landed in genet + netrender (see Findings);
   pixel-sprite tokens replace the colored rects. I2 largely landed:
   core `apply` returns inverse events and `TileGrid::flood_region`
   (undo primitive, 14 core tests); editor modes
@@ -508,7 +514,7 @@ clicks (`_attack_rng.png`); bumping STR 10->14 via the stepper re-derives
   `ISOMETRY_CAPTURE_DIR` self-capture. Scripted-drive receipts: paint,
   raise, undo, save, and load all applied, and the painted stroke
   survived the save/load round-trip on screen. Release + synthetic P2
-  numbers landed (see Findings), closing I1's residue. Serval-side,
+  numbers landed (see Findings), closing I1's residue. Genet-side,
   this phase surfaced and fixed two engine gaps (pixelated sampling,
   retained bg-image decode) and documented two more for later (absolute
   inset sizing; paint/hit divergence on clipped overflow). Remaining

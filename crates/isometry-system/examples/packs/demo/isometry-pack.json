@@ -6,8 +6,31 @@
   "generators": [
     {
       "id": "forge_item",
+      "name": "Forge item",
+      "default_args": { "type": "text", "value": "river" },
+      "lock_presets": [
+        {
+          "key": "culture",
+          "label": "River-clan culture",
+          "value": { "type": "text", "value": "river-clans" }
+        }
+      ],
       "script": "generators/forge_item.lua",
       "fixtures": ["fixtures/forge_item.json"]
+    },
+    {
+      "id": "local_map",
+      "name": "Local map",
+      "default_args": { "type": "text", "value": "river" },
+      "script": "generators/local_map.lua",
+      "fixtures": ["fixtures/local_map.json"]
+    },
+    {
+      "id": "campaign",
+      "name": "River campaign",
+      "default_args": { "type": "text", "value": "river" },
+      "script": "generators/campaign.lua",
+      "fixtures": []
     }
   ]
 }

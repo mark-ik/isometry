@@ -7,9 +7,10 @@
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Duration;
 
-use armillary::{ActorHandle, Emitter, Wake};
+use armillary::{ActorHandle, Correlated, Emitter, RequestId, RequestIds, Wake};
 use codicil::Codicil;
-use isometry_campaign::CampaignStore;
+use isometry_campaign::{CampaignStore, GenerationRecord};
+use isometry_core::TokenId;
 use isometry_net::iroh_link::{ClientNet, HostNet};
 use isometry_net::{GameEvent, GameSnapshot};
 
@@ -27,7 +28,15 @@ pub enum Role {
 
 enum BridgeCommand {
     Event(GameEvent),
-    Whisper { to: String, text: String },
+    Campaign {
+        request: RequestId,
+        record: GenerationRecord,
+        item_owner: Option<TokenId>,
+    },
+    Whisper {
+        to: String,
+        text: String,
+    },
 }
 
 enum BridgeUpdate {
@@ -45,6 +54,7 @@ enum BridgeUpdate {
     },
     ClientState(GameSnapshot),
     Whispers(Vec<(String, String)>),
+    CampaignFinished(Correlated<Result<(), String>>),
     Failed(String),
 }
 
@@ -59,6 +69,8 @@ pub struct NetBridge {
     ticket: Option<String>,
     inbox: Vec<(String, String)>,
     players: Vec<String>,
+    request_ids: RequestIds,
+    campaign_outcomes: Vec<Correlated<Result<(), String>>>,
     failure: Option<String>,
 }
 
@@ -85,6 +97,8 @@ impl NetBridge {
             ticket: None,
             inbox: Vec::new(),
             players: Vec::new(),
+            request_ids: RequestIds::default(),
+            campaign_outcomes: Vec::new(),
             failure: None,
         }
     }
@@ -124,6 +138,7 @@ impl NetBridge {
                     changed = true;
                 }
                 Ok(BridgeUpdate::Whispers(mut whispers)) => self.inbox.append(&mut whispers),
+                Ok(BridgeUpdate::CampaignFinished(outcome)) => self.campaign_outcomes.push(outcome),
                 Ok(BridgeUpdate::Failed(error)) => self.failure = Some(error),
                 Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
             }
@@ -139,6 +154,25 @@ impl NetBridge {
     /// Queue a local game event for the session actor.
     pub fn submit(&self, event: GameEvent) {
         let _ = self.actor.command(BridgeCommand::Event(event));
+    }
+
+    pub fn commit_campaign(
+        &mut self,
+        record: GenerationRecord,
+        item_owner: Option<TokenId>,
+    ) -> Option<RequestId> {
+        let request = self.request_ids.issue();
+        self.actor
+            .command(BridgeCommand::Campaign {
+                request,
+                record,
+                item_owner,
+            })
+            .then_some(request)
+    }
+
+    pub fn take_campaign_outcomes(&mut self) -> Vec<Correlated<Result<(), String>>> {
+        std::mem::take(&mut self.campaign_outcomes)
     }
 
     /// Host: send a directed whisper to a named player.
@@ -242,6 +276,16 @@ async fn run_host(
         for command in commands {
             match command {
                 BridgeCommand::Event(event) => host.local_event(event).await,
+                BridgeCommand::Campaign {
+                    request,
+                    record,
+                    item_owner,
+                } => {
+                    let result = host.commit_campaign(record, item_owner).await;
+                    out.emit(BridgeUpdate::CampaignFinished(Correlated::new(
+                        request, result,
+                    )));
+                }
                 BridgeCommand::Whisper { to, text } => host.whisper("dm", &to, &text).await,
             }
         }
@@ -283,8 +327,17 @@ async fn run_client(
             Err(()) => break,
         };
         for command in commands {
-            if let BridgeCommand::Event(event) = command {
-                let _ = client.intent(event).await;
+            match command {
+                BridgeCommand::Event(event) => {
+                    let _ = client.intent(event).await;
+                }
+                BridgeCommand::Campaign { request, .. } => {
+                    out.emit(BridgeUpdate::CampaignFinished(Correlated::new(
+                        request,
+                        Err("campaign commits require the host".to_owned()),
+                    )));
+                }
+                BridgeCommand::Whisper { .. } => {}
             }
         }
 
@@ -306,7 +359,9 @@ async fn run_client(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use isometry_campaign::{GenValue, GeneratorRequest};
     use isometry_core::{MapDocument, TurnList};
+    use std::collections::BTreeMap;
 
     fn snapshot() -> GameSnapshot {
         GameSnapshot {
@@ -316,6 +371,9 @@ mod tests {
             journal: Vec::new(),
             inventories: Default::default(),
             generations: Vec::new(),
+            maps: Default::default(),
+            active_map: None,
+            world: Default::default(),
         }
     }
 
@@ -350,5 +408,51 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         panic!("host command did not return through the actor update channel");
+    }
+
+    #[test]
+    fn rejected_campaign_is_correlated_without_failing_the_actor() {
+        let mut bridge = NetBridge::spawn(Role::Host {
+            state: snapshot(),
+            campaign: CampaignStore::new(),
+            history: Codicil::new(),
+        });
+        for _ in 0..100 {
+            bridge.poll();
+            if bridge.ticket().is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let record = GenerationRecord {
+            id: "not-a-campaign".to_owned(),
+            request: GeneratorRequest {
+                generator: "demo:text".to_owned(),
+                args: GenValue::Text {
+                    value: "text".to_owned(),
+                },
+                locks: BTreeMap::new(),
+            },
+            entropy: 1,
+            proposal: GenValue::Text {
+                value: "text".to_owned(),
+            },
+        };
+        let request = bridge
+            .commit_campaign(record, None)
+            .expect("actor accepts the command");
+
+        for _ in 0..100 {
+            bridge.poll();
+            let outcomes = bridge.take_campaign_outcomes();
+            if let Some(outcome) = outcomes.into_iter().next() {
+                assert_eq!(outcome.request, request);
+                assert!(outcome.value.is_err());
+                assert!(bridge.take_failure().is_none());
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        panic!("campaign outcome did not return through the actor update channel");
     }
 }

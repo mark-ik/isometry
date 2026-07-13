@@ -10,7 +10,7 @@
 
 use std::rc::Rc;
 
-use xilem_serval::{GridColumn, GridSpec, clickable, data_grid, el, on_wheel, text};
+use xilem_serval::{clickable, data_grid, el, on_wheel, text, GridColumn, GridSpec};
 
 use crate::board::UiChild;
 use crate::state::{CompendiumTab, ItemRow, MonsterRow, SpellRow, UiState};
@@ -99,7 +99,12 @@ fn text_cell(s: String) -> UiChild {
     Box::new(el::<_, UiState, ()>("span", text(s)).attr("class", "compendium-cell"))
 }
 
-fn grid(spec: &GridSpec, total: usize, scroll: f32, cell: impl Fn(usize, usize) -> UiChild) -> UiChild {
+fn grid(
+    spec: &GridSpec,
+    total: usize,
+    scroll: f32,
+    cell: impl Fn(usize, usize) -> UiChild,
+) -> UiChild {
     let g = data_grid::<UiState, ()>(
         spec,
         total,
@@ -133,9 +138,14 @@ fn monster_index(ui: &UiState) -> UiChild {
             3 => x.hp.cmp(&y.hp),
             _ => x.ac.cmp(&y.ac),
         };
-        if desc { o.reverse() } else { o }
+        if desc {
+            o.reverse()
+        } else {
+            o
+        }
     });
-    let rows: Rc<Vec<MonsterRow>> = Rc::new(order.iter().map(|&i| ui.bestiary[i].clone()).collect());
+    let rows: Rc<Vec<MonsterRow>> =
+        Rc::new(order.iter().map(|&i| ui.bestiary[i].clone()).collect());
     let spec = GridSpec {
         columns: vec![
             GridColumn::new("Name", 132.0),
@@ -177,7 +187,11 @@ fn spell_index(ui: &UiState) -> UiChild {
             2 => x.school.cmp(&y.school),
             _ => x.range.cmp(&y.range),
         };
-        if desc { o.reverse() } else { o }
+        if desc {
+            o.reverse()
+        } else {
+            o
+        }
     });
     let rows: Rc<Vec<SpellRow>> = Rc::new(order.iter().map(|&i| ui.spells[i].clone()).collect());
     let spec = GridSpec {
@@ -219,7 +233,11 @@ fn item_index(ui: &UiState) -> UiChild {
             2 => x.cost.cmp(&y.cost),
             _ => x.weight.cmp(&y.weight),
         };
-        if desc { o.reverse() } else { o }
+        if desc {
+            o.reverse()
+        } else {
+            o
+        }
     });
     let rows: Rc<Vec<ItemRow>> = Rc::new(order.iter().map(|&i| ui.items[i].clone()).collect());
     let spec = GridSpec {

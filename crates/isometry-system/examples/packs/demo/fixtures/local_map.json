@@ -1,0 +1,50 @@
+{
+  "name": "demo local-map fixture",
+  "seed": 11,
+  "request": {
+    "generator": "demo:local_map",
+    "args": { "type": "text", "value": "river" },
+    "locks": {}
+  },
+  "expected": {
+    "type": "local_map",
+    "map": {
+      "id": "demo:river-cache",
+      "name": "River Cache-2916839690478819406",
+      "width": 8,
+      "height": 6,
+      "default_ground": "grass",
+      "cells": [
+        { "col": 3, "row": 2, "ground": "stone", "elevation": 1 },
+        { "col": 4, "row": 2, "ground": "stone", "elevation": 1 },
+        { "col": 2, "row": 1, "prop": "tree" },
+        { "col": 5, "row": 4, "prop": "tree" }
+      ],
+      "spawn_zones": [
+        {
+          "id": "party",
+          "cells": [
+            { "col": 0, "row": 2 },
+            { "col": 0, "row": 3 }
+          ]
+        }
+      ],
+      "transitions": [
+        {
+          "id": "west-road",
+          "at": { "col": 7, "row": 3 },
+          "target_map": "demo:river-region",
+          "target_entry": "cache-road"
+        }
+      ],
+      "encounter_anchors": [
+        {
+          "id": "cache-guardian",
+          "at": { "col": 4, "row": 3 },
+          "tags": ["guardian", "river"]
+        }
+      ]
+    }
+  },
+  "expected_draws": [5833679380957638813]
+}

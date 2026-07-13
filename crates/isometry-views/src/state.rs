@@ -1,6 +1,9 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use isometry_campaign::{EquipmentSlot, GenValue, GenerationRecord, Inventory, ItemId};
+use isometry_campaign::{
+    CampaignMap, CampaignWorld, EquipmentSlot, GenValue, GenerationRecord, GeneratorChoice,
+    Inventory, ItemId,
+};
 use isometry_core::{
     apply, distance, reachable, roll, template_tiles, visible_tiles, Facing, IsoGeometry, Layer,
     MapDocument, MoveRules, Rng, RollRecord, SessionEvent, SightRules, TemplateKind, TileCoord,
@@ -255,6 +258,37 @@ pub enum GenerationRequest {
     Commit,
 }
 
+/// One host-projected candidate in an unresolved campaign-governance
+/// conflict. Labels are presentation data; signed proposal ids remain the
+/// request identity.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GovernanceBindingRow {
+    pub proposal: [u8; 32],
+    pub moot: String,
+    pub policy: String,
+    pub endorsements: u32,
+    pub required: u32,
+    pub claims: u32,
+}
+
+/// A conflict the collaboration actor has determined is eligible for an
+/// explicit adopt-or-branch decision.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GovernanceConflict {
+    pub candidates: Vec<GovernanceBindingRow>,
+    pub can_adopt: bool,
+    pub can_branch: bool,
+    pub restriction: Option<String>,
+}
+
+/// One-shot intent drained by the collaboration host. The host constructs,
+/// signs, and publishes the durable resolution proposal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GovernanceResolutionRequest {
+    Adopt { selected: [u8; 32] },
+    Branch { candidates: Vec<[u8; 32]> },
+}
+
 /// Runner state: the substrate document plus view-layer concerns
 /// (camera, selection, editor).
 pub struct UiState {
@@ -342,12 +376,23 @@ pub struct UiState {
     /// Public commit-result records mirrored from a session snapshot. The W2
     /// preview table will project this ledger; content scripts never run here.
     pub generations: Vec<GenerationRecord>,
+    pub campaign_maps: BTreeMap<String, CampaignMap>,
+    pub active_map: Option<String>,
+    pub world: CampaignWorld,
     /// Generator preview state is local to the host until `Commit`; players
     /// receive only the resulting public record through a snapshot.
     pub generator_open: bool,
     pub generator_preview: Option<GenerationRecord>,
+    pub generator_choices: Vec<GeneratorChoice>,
+    pub generator_selected: usize,
     pub generator_locks: BTreeMap<String, GenValue>,
     pub generation_request: Option<GenerationRequest>,
+    /// Host-fed competing-binding projection and one-shot resolution request.
+    /// The view never reads Moot stores or signs campaign operations.
+    pub governance_conflict: Option<GovernanceConflict>,
+    pub governance_conflict_open: bool,
+    pub governance_selected: usize,
+    pub governance_resolution_request: Option<GovernanceResolutionRequest>,
     /// Sprite the Token mode places.
     pub token_sprite: String,
     /// Play state: the substrate turn order.
@@ -430,10 +475,19 @@ impl UiState {
             inventory_request: None,
             can_edit_inventory: true,
             generations: Vec::new(),
+            campaign_maps: BTreeMap::new(),
+            active_map: None,
+            world: CampaignWorld::default(),
             generator_open: false,
             generator_preview: None,
+            generator_choices: Vec::new(),
+            generator_selected: 0,
             generator_locks: BTreeMap::new(),
             generation_request: None,
+            governance_conflict: None,
+            governance_conflict_open: false,
+            governance_selected: 0,
+            governance_resolution_request: None,
             bestiary: Vec::new(),
             compendium_open: false,
             compendium_scroll: 0.0,
@@ -520,10 +574,12 @@ impl UiState {
     /// Open the W2 host-only generator preview. The initial bundled pack has
     /// one item generator; later pack discovery will populate this selector.
     pub fn open_generator(&mut self) {
-        if self.can_edit_inventory {
-            self.generator_open = true;
-        } else {
+        if !self.can_edit_inventory {
             self.status = "generation requires the host".to_owned();
+        } else if self.generator_choices.is_empty() {
+            self.status = "no generator packs loaded".to_owned();
+        } else {
+            self.generator_open = true;
         }
     }
 
@@ -541,23 +597,39 @@ impl UiState {
         }
     }
 
-    /// The demo pack reads this visible worldbuilding constraint. A lock is
-    /// a value passed to each reroll, never a replay of past entropy.
-    pub fn toggle_demo_culture_lock(&mut self) {
+    pub fn cycle_generator(&mut self) {
+        if !self.generator_choices.is_empty() {
+            self.generator_selected = (self.generator_selected + 1) % self.generator_choices.len();
+            self.generator_preview = None;
+            self.generator_locks.clear();
+            self.generation_request = None;
+        }
+    }
+
+    pub fn selected_generator(&self) -> Option<&GeneratorChoice> {
+        self.generator_choices.get(self.generator_selected)
+    }
+
+    /// Toggle the selected generator's first declared lock preset. A lock is
+    /// a visible value passed to each reroll, never entropy replay.
+    pub fn toggle_generator_lock(&mut self) {
         if !self.can_edit_inventory {
             self.status = "generation requires the host".to_owned();
             return;
         }
-        if self.generator_locks.remove("culture").is_some() {
-            self.status = "unlocked culture".to_owned();
+        let Some(preset) = self
+            .selected_generator()
+            .and_then(|choice| choice.lock_presets.first())
+            .cloned()
+        else {
+            self.status = "selected generator has no lock presets".to_owned();
+            return;
+        };
+        if self.generator_locks.remove(&preset.key).is_some() {
+            self.status = format!("unlocked {}", preset.label);
         } else {
-            self.generator_locks.insert(
-                "culture".to_owned(),
-                GenValue::Text {
-                    value: "river-clans".to_owned(),
-                },
-            );
-            self.status = "locked culture: river-clans".to_owned();
+            self.generator_locks.insert(preset.key, preset.value);
+            self.status = format!("locked {}", preset.label);
         }
     }
 
@@ -571,6 +643,78 @@ impl UiState {
         self.generator_preview = None;
         self.generation_request = None;
         self.status = "discarded generation preview".to_owned();
+    }
+
+    pub fn open_governance_conflict(&mut self) {
+        if self
+            .governance_conflict
+            .as_ref()
+            .is_some_and(|conflict| conflict.candidates.len() >= 2)
+        {
+            self.governance_selected = self.governance_selected.min(
+                self.governance_conflict
+                    .as_ref()
+                    .map_or(0, |conflict| conflict.candidates.len() - 1),
+            );
+            self.governance_conflict_open = true;
+        } else {
+            self.status = "no competing campaign bindings".to_owned();
+        }
+    }
+
+    pub fn close_governance_conflict(&mut self) {
+        self.governance_conflict_open = false;
+    }
+
+    pub fn select_governance_candidate(&mut self, index: usize) {
+        if self
+            .governance_conflict
+            .as_ref()
+            .is_some_and(|conflict| index < conflict.candidates.len())
+        {
+            self.governance_selected = index;
+        }
+    }
+
+    pub fn request_governance_adopt(&mut self) {
+        let Some(conflict) = &self.governance_conflict else {
+            return;
+        };
+        if !conflict.can_adopt {
+            self.status = conflict
+                .restriction
+                .clone()
+                .unwrap_or_else(|| "this conflict cannot be adopted".to_owned());
+            return;
+        }
+        let Some(candidate) = conflict.candidates.get(self.governance_selected) else {
+            return;
+        };
+        self.governance_resolution_request = Some(GovernanceResolutionRequest::Adopt {
+            selected: candidate.proposal,
+        });
+        self.governance_conflict_open = false;
+    }
+
+    pub fn request_governance_branch(&mut self) {
+        let Some(conflict) = &self.governance_conflict else {
+            return;
+        };
+        if !conflict.can_branch {
+            self.status = conflict
+                .restriction
+                .clone()
+                .unwrap_or_else(|| "this conflict cannot be branched".to_owned());
+            return;
+        }
+        self.governance_resolution_request = Some(GovernanceResolutionRequest::Branch {
+            candidates: conflict
+                .candidates
+                .iter()
+                .map(|candidate| candidate.proposal)
+                .collect(),
+        });
+        self.governance_conflict_open = false;
     }
 
     /// Open the SRD compendium overlay.
@@ -1014,6 +1158,9 @@ impl UiState {
         self.roll_log = snap.roll_log;
         self.inventories = snap.inventories;
         self.generations = snap.generations;
+        self.campaign_maps = snap.maps;
+        self.active_map = snap.active_map;
+        self.world = snap.world;
         self.sheet_effective = None;
         if let Some(id) = self.selected_token {
             if self.map.token(id).is_none() {
@@ -1590,6 +1737,9 @@ mod tests {
             journal: Vec::new(),
             inventories: inventories.clone(),
             generations: Vec::new(),
+            maps: Default::default(),
+            active_map: None,
+            world: Default::default(),
         };
         ui.apply_snapshot(snap);
         assert_eq!(ui.map.token(TokenId(1)).unwrap().at, (before.0 + 1, before.1));
@@ -1624,8 +1774,22 @@ mod tests {
     #[test]
     fn generator_controls_keep_locks_visible_and_queue_host_work() {
         let mut ui = UiState::new(demo_map());
+        ui.generator_choices.push(GeneratorChoice {
+            id: "demo:forge_item".to_owned(),
+            name: "Forge item".to_owned(),
+            default_args: GenValue::Text {
+                value: "river".to_owned(),
+            },
+            lock_presets: vec![isometry_campaign::GeneratorLockPreset {
+                key: "culture".to_owned(),
+                label: "River-clan culture".to_owned(),
+                value: GenValue::Text {
+                    value: "river-clans".to_owned(),
+                },
+            }],
+        });
         ui.open_generator();
-        ui.toggle_demo_culture_lock();
+        ui.toggle_generator_lock();
         assert_eq!(
             ui.generator_locks.get("culture"),
             Some(&GenValue::Text {
@@ -1635,8 +1799,86 @@ mod tests {
         ui.request_generation();
         assert_eq!(ui.generation_request, Some(GenerationRequest::Generate));
 
-        ui.toggle_demo_culture_lock();
+        ui.toggle_generator_lock();
         assert!(!ui.generator_locks.contains_key("culture"));
+    }
+
+    #[test]
+    fn governance_conflict_queues_typed_adopt_and_branch_requests() {
+        let mut ui = UiState::new(demo_map());
+        ui.governance_conflict = Some(GovernanceConflict {
+            candidates: vec![
+                GovernanceBindingRow {
+                    proposal: [1; 32],
+                    moot: "North table".to_owned(),
+                    policy: "unanimous".to_owned(),
+                    endorsements: 2,
+                    required: 2,
+                    claims: 1,
+                },
+                GovernanceBindingRow {
+                    proposal: [2; 32],
+                    moot: "North table".to_owned(),
+                    policy: "threshold 2".to_owned(),
+                    endorsements: 2,
+                    required: 2,
+                    claims: 1,
+                },
+            ],
+            can_adopt: true,
+            can_branch: true,
+            restriction: None,
+        });
+
+        ui.open_governance_conflict();
+        ui.select_governance_candidate(1);
+        ui.request_governance_adopt();
+        assert_eq!(
+            ui.governance_resolution_request,
+            Some(GovernanceResolutionRequest::Adopt { selected: [2; 32] })
+        );
+        assert!(!ui.governance_conflict_open);
+
+        ui.open_governance_conflict();
+        ui.request_governance_branch();
+        assert_eq!(
+            ui.governance_resolution_request,
+            Some(GovernanceResolutionRequest::Branch {
+                candidates: vec![[1; 32], [2; 32]],
+            })
+        );
+    }
+
+    #[test]
+    fn governance_conflict_respects_host_restrictions() {
+        let mut ui = UiState::new(demo_map());
+        ui.governance_conflict = Some(GovernanceConflict {
+            candidates: vec![
+                GovernanceBindingRow {
+                    proposal: [1; 32],
+                    moot: "First table".to_owned(),
+                    policy: "unanimous".to_owned(),
+                    endorsements: 1,
+                    required: 1,
+                    claims: 1,
+                },
+                GovernanceBindingRow {
+                    proposal: [2; 32],
+                    moot: "Other table".to_owned(),
+                    policy: "unanimous".to_owned(),
+                    endorsements: 1,
+                    required: 1,
+                    claims: 1,
+                },
+            ],
+            can_adopt: false,
+            can_branch: false,
+            restriction: Some("no shared founding electorate".to_owned()),
+        });
+        ui.open_governance_conflict();
+        ui.request_governance_adopt();
+        assert!(ui.governance_resolution_request.is_none());
+        assert_eq!(ui.status, "no shared founding electorate");
     }
 
     #[test]
@@ -1732,7 +1974,10 @@ mod tests {
         ui.net_mode = NetMode::Remote;
         ui.viewer = Some("A".to_owned());
         ui.roll_dice("2d6");
-        assert!(ui.roll_log.is_empty(), "remote rolls come back via snapshot");
+        assert!(
+            ui.roll_log.is_empty(),
+            "remote rolls come back via snapshot"
+        );
         assert_eq!(ui.net_outbox.len(), 1);
     }
 

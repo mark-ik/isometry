@@ -44,8 +44,7 @@ pub fn sheet_overlay(ui: &UiState) -> Option<UiChild> {
                 el(
                     "div",
                     (
-                        el("span", text(format!("{label}: {val}")))
-                            .attr("class", "sheet-field"),
+                        el("span", text(format!("{label}: {val}"))).attr("class", "sheet-field"),
                         clickable(
                             el("span", text("-")).attr("class", "btn btn-mini"),
                             move |ui: &mut UiState, _| ui.request_sheet_edit(&dec, -1),
@@ -73,7 +72,9 @@ pub fn sheet_overlay(ui: &UiState) -> Option<UiChild> {
             .derived
             .iter()
             .filter_map(|(k, label)| {
-                ui.sheet_derived.get(k).map(|v| (label.clone(), format!("{v:+}")))
+                ui.sheet_derived
+                    .get(k)
+                    .map(|v| (label.clone(), format!("{v:+}")))
             })
             .collect();
         body.push(crate::widgets::stat_list(pairs, "sheet-mods"));
@@ -148,11 +149,17 @@ pub fn sheet_overlay(ui: &UiState) -> Option<UiChild> {
             let carried: Vec<UiChild> = inventory
                 .items
                 .values()
-                .filter(|item| !inventory.equipped.values().any(|equipped| equipped == &item.id))
+                .filter(|item| {
+                    !inventory
+                        .equipped
+                        .values()
+                        .any(|equipped| equipped == &item.id)
+                })
                 .map(|item| {
                     let id = item.id.clone();
                     Box::new(clickable(
-                        el("span", text(format!("equip {}", item.name))).attr("class", "btn btn-mini"),
+                        el("span", text(format!("equip {}", item.name)))
+                            .attr("class", "btn btn-mini"),
                         move |ui: &mut UiState, _| ui.request_equip(id.clone()),
                     )) as UiChild
                 })

@@ -8,6 +8,8 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
+use crate::GenValue;
+
 /// The current JSON format for an Isometry content-pack manifest.
 pub const CONTENT_PACK_FORMAT: u32 = 1;
 
@@ -30,9 +32,32 @@ pub struct ContentPackManifest {
 pub struct GeneratorEntry {
     /// Local id within its pack, for example `forge_item`.
     pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub default_args: Option<GenValue>,
+    #[serde(default)]
+    pub lock_presets: Vec<GeneratorLockPreset>,
     pub script: String,
     #[serde(default)]
     pub fixtures: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GeneratorLockPreset {
+    pub key: String,
+    pub label: String,
+    pub value: GenValue,
+}
+
+/// Host-neutral row used by generator selectors. Paths and Lua runtimes stay
+/// in `isometry-system`; views receive only declared authoring data.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GeneratorChoice {
+    pub id: String,
+    pub name: String,
+    pub default_args: GenValue,
+    pub lock_presets: Vec<GeneratorLockPreset>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -43,6 +68,7 @@ pub enum ContentPackError {
     MissingPackName,
     MissingGeneratorId,
     DuplicateGenerator(String),
+    InvalidLockPreset(String),
     UnsafePath(String),
 }
 
@@ -77,6 +103,18 @@ impl ContentPackManifest {
                     return Err(ContentPackError::UnsafePath(fixture.clone()));
                 }
             }
+            let mut lock_keys = BTreeSet::new();
+            for preset in &generator.lock_presets {
+                if preset.key.trim().is_empty()
+                    || preset.label.trim().is_empty()
+                    || !lock_keys.insert(&preset.key)
+                {
+                    return Err(ContentPackError::InvalidLockPreset(format!(
+                        "{}:{}",
+                        generator.id, preset.key
+                    )));
+                }
+            }
         }
         Ok(())
     }
@@ -92,18 +130,50 @@ impl ContentPackManifest {
             .iter()
             .find(|entry| self.generator_id(entry) == id)
     }
+
+    pub fn generator_choices(&self) -> Vec<GeneratorChoice> {
+        self.generators
+            .iter()
+            .map(|entry| GeneratorChoice {
+                id: self.generator_id(entry),
+                name: if entry.name.trim().is_empty() {
+                    entry.id.clone()
+                } else {
+                    entry.name.clone()
+                },
+                default_args: entry
+                    .default_args
+                    .clone()
+                    .unwrap_or_else(|| GenValue::Text {
+                        value: String::new(),
+                    }),
+                lock_presets: entry.lock_presets.clone(),
+            })
+            .collect()
+    }
 }
 
 impl std::fmt::Display for ContentPackError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::UnsupportedFormat(format) => write!(f, "unsupported content-pack format: {format}"),
+            Self::UnsupportedFormat(format) => {
+                write!(f, "unsupported content-pack format: {format}")
+            }
             Self::MissingPackId => write!(f, "content-pack id is required"),
             Self::InvalidPackId(id) => write!(f, "content-pack id cannot contain ':': {id}"),
             Self::MissingPackName => write!(f, "content-pack name is required"),
-            Self::MissingGeneratorId => write!(f, "content-pack generator id is required and cannot contain ':'"),
+            Self::MissingGeneratorId => write!(
+                f,
+                "content-pack generator id is required and cannot contain ':'"
+            ),
             Self::DuplicateGenerator(id) => write!(f, "duplicate content-pack generator: {id}"),
-            Self::UnsafePath(path) => write!(f, "content-pack asset path must stay below the pack root: {path}"),
+            Self::InvalidLockPreset(id) => {
+                write!(f, "invalid or duplicate generator lock preset: {id}")
+            }
+            Self::UnsafePath(path) => write!(
+                f,
+                "content-pack asset path must stay below the pack root: {path}"
+            ),
         }
     }
 }
@@ -133,6 +203,11 @@ mod tests {
             version: "0.1.0".to_owned(),
             generators: vec![GeneratorEntry {
                 id: "forge_item".to_owned(),
+                name: "Forge item".to_owned(),
+                default_args: Some(GenValue::Text {
+                    value: "river".to_owned(),
+                }),
+                lock_presets: Vec::new(),
                 script: "generators/forge_item.lua".to_owned(),
                 fixtures: vec!["fixtures/forge_item.json".to_owned()],
             }],

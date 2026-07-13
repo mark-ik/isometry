@@ -10,22 +10,35 @@
 //! displays these objects; system plugins interpret them.
 
 mod fact;
+mod collaboration;
 mod generator;
 mod item;
+mod map;
 mod pack;
 mod store;
+mod world;
 
 pub use fact::{RevealCondition, SecretFact, Visibility, WorldFact};
+pub use collaboration::{CampaignProposal, CampaignProposalError, CampaignProposalMode};
 pub use generator::{
-    CastRoleRequest, EntropyTape, GenValue, GenValueError, GenerationRecord,
-    GenerationRecordError, GeneratorFixture, GeneratorRequest, ItemProposal, MapPatchProposal,
-    NpcProposal, StoryletProposal,
+    CastRoleRequest, EntropyTape, GenValue, GenValueError, GenerationRecord, GenerationRecordError,
+    GeneratorFixture, GeneratorRequest, ItemProposal, MapPatchProposal, NpcProposal,
 };
 pub use item::{
     EquipmentSlot, HiddenItemModifier, Inventory, InventoryError, ItemId, ItemInstance,
     ItemModifier, ItemModifierKind, ItemModifierReveal,
 };
+pub use map::{
+    CampaignMap, EncounterAnchor, LocalMapProposal, MapCellProposal, MapPoint, MapProposalError,
+    MapScale, MapTransition, SpawnZone, MAX_GENERATED_MAP_EDGE,
+};
 pub use pack::{
-    ContentPackError, ContentPackManifest, GeneratorEntry, CONTENT_PACK_FORMAT,
+    ContentPackError, ContentPackManifest, GeneratorChoice, GeneratorEntry, GeneratorLockPreset,
+    CONTENT_PACK_FORMAT,
 };
 pub use store::CampaignStore;
+pub use world::{
+    CampaignDraft, CampaignWorld, DraftMap, HistoryEvent, RoleSlot, StoryletEffect, StoryletError,
+    StoryletProposal, StoryletRequirements, StoryletResolution, WorldCharacter, WorldError,
+    WorldEvent, WorldFaction, WorldLaw, WorldPlace, WorldRoute,
+};

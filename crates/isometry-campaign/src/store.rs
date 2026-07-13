@@ -52,6 +52,10 @@ impl CampaignStore {
         self.secrets.values()
     }
 
+    pub fn secret_ids(&self) -> impl Iterator<Item = &str> {
+        self.secrets.keys().map(String::as_str)
+    }
+
     pub fn len(&self) -> usize {
         self.secrets.len()
     }

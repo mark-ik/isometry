@@ -1,8 +1,9 @@
 # Worldbuilding Generation Plan
 
 **Date:** 2026-07-09
-**Status:** plan. Created from the hidden-modifiers / generated-worlds
-discussion. This plan extends the campaign-pack lane with generator and
+**Status:** W0-W5 implementation ladder landed 2026-07-11. The later
+simulation rungs and signed pack distribution remain expansion work. Created
+from the hidden-modifiers / generated-worlds discussion. This plan extends the campaign-pack lane with generator and
 worldbuilding machinery. It does not replace the existing substrate/system
 split: Isometry's substrate stores geometry, turns, and inspectable generated
 state; system plugins decide what game rules mean; campaign packs supply taste.
@@ -441,7 +442,7 @@ Lua marshalling and the sheet view skip/summarize nested fields until
 W1/W2 give them real consumers. Follow-up implementation tightened the host
 boundary: `HostSession` owns the private `CampaignStore`; reveals move through
 a durable pending state, so an interrupted reveal can either finalize or
-recover after restore; and the Serval host saves GM state through Muniment's
+recover after restore; and the Genet host saves GM state through Muniment's
 typed slot over its transactional redb backend, beside the shareable map JSON.
 
 **W0b checkpoint landed 2026-07-09.** The desktop host now stores a versioned
@@ -526,7 +527,8 @@ Define the pack-side generator API before broadening to maps/campaigns.
 **W2a substrate landed 2026-07-09.** `isometry-campaign` now owns typed
 `GenValue` proposals, visible value locks, a cast-role request shape, and a
 persistable SplitMix64 host entropy tape. `isometry-system` runs a pack's
-`call_gen(request_json, entropy) -> result_json` in a Piccolo core sandbox,
+`call_gen(request_json, entropy, request) -> tagged_table_or_json` in a Piccolo
+core sandbox,
 with one recorded host draw per call, a total fuel cap, output-size cap, and
 decoded-value depth cap. It returns a proposal only: it cannot commit state.
 The `GeneratorFixture` API also asserts a fixed-seed proposal and its exact
@@ -537,8 +539,8 @@ beside it. Commit-result mode now has a typed, idempotent public generation
 ledger: the host records the visible request, entropy draw, and proposal in the
 ordered log; peers and restores receive result data without executing pack code.
 Lowering an accepted result into an item, NPC, map, or storylet remains explicit
-and type-specific. Host preview/reroll/lock UI and campaign-pool role casting
-remain open.
+and type-specific. W2c-W2e subsequently landed the preview UI, catalog, typed
+return tables, and campaign-pool role casting.
 
 **W2b pack envelope landed 2026-07-09.** `ContentPackManifest` defines a
 versioned `isometry-pack.json`, namespaced generator ids, and slash-only asset
@@ -549,8 +551,8 @@ demo pack and `pack_fixture` command are included. `GeneratorPack::generate`
 turns a declared request plus host-owned entropy tape into the public
 `GenerationRecord` passed to `HostSession::commit_generation`, without making
 the replication core depend on Piccolo. Pack content identity now has a durable
-author-facing shape; content hashing, signatures, P2P acquisition, and the
-preview/commit UI are later work.
+author-facing shape. W2c-W2e subsequently landed preview/commit and discovery;
+content hashing, signatures, and P2P acquisition remain distribution work.
 
 **W2c demo preview landed 2026-07-10.** The desktop host now exposes the
 bundled pack through a host-only preview table: generate, reroll, lock/unlock a
@@ -565,10 +567,19 @@ UI is intentionally a worked-pack proof rather than a general pack browser.
 structured `request` argument beside the compatible `request_json` and entropy:
 `{ generator, args, locks }`, with recursively tagged `GenValue` tables. Packs
 can therefore inspect a visible lock directly (`request.locks.culture.value`)
-without parsing JSON or relying on an ad-hoc host helper. Output remains typed
-JSON until the return-side table ABI is designed. Pack discovery/selection,
-proposal lowering, content hashes/signatures, and campaign-pool casting remain
-open.
+without parsing JSON or relying on an ad-hoc host helper.
+
+**W2e general pack/runtime path landed 2026-07-11.** Generators may return
+recursively tagged Lua tables for ordinary proposal types, with legacy JSON
+still accepted. `GeneratorCatalog` discovers direct pack directories and
+immediate children from the bundled pack, `./packs`, and
+`ISOMETRY_PACK_DIRS`; duplicate IDs and invalid packs remain visible
+diagnostics. Manifest-declared names, default arguments, and lock presets feed
+the host selector. Accepted item, fact, map, storylet, and campaign proposals
+lower through explicit host operations. Storylet roles cast from committed
+campaign characters before effects are accepted. Content hashing, signatures,
+and P2P acquisition remain campaign-pack distribution work, outside this
+runtime done-condition.
 
 - `call_gen(args) -> GenValue`, where `GenValue` can be text, object, list,
   item, NPC, map patch, world fact, or storylet proposal.
@@ -599,6 +610,14 @@ Use the generator ABI to create `MapDocument` outputs.
 **Done when:** a generated local map is playable, hand-editable, saveable, and
 committed as result data.
 
+**Landed 2026-07-11.** `LocalMapProposal` carries sparse ground/elevation/prop
+cells, spawn zones, transitions, and encounter anchors, and validates/lower to
+an ordinary `MapDocument`. `GameSnapshot::maps` retains campaign maps while
+`active_map` projects one into the normal editor. Store/activate events are
+host-only, edits mirror back into the registry, checkpoints retain the map set,
+and late joiners receive result data without Lua. The demo pack supplies a
+fixed-seed local-map fixture.
+
 ### W4: World facts, laws, and storylets
 
 Add the campaign-state layer: factions, places, laws, history events, secrets,
@@ -607,6 +626,14 @@ and storylets.
 **Done when:** a storylet can require a faction tag and a hidden fact, generate
 an encounter/map/item proposal, and commit its effects to campaign state.
 
+**Landed 2026-07-11.** `CampaignWorld` now stores factions, places, castable
+characters, routes, custom laws, chronological history, and storylets as typed
+public state. Storylet resolution checks faction tags and law IDs publicly,
+checks only private fact IDs against `CampaignStore`, and casts role slots from
+existing tagged characters. The host prevalidates the whole effect batch before
+committing public facts, history, item rewards, and encounter maps through
+ordinary replicated events. A focused test covers that full path.
+
 ### W5: Region/world/campaign generator
 
 Compose the prior pieces into an editable campaign draft.
@@ -614,6 +641,16 @@ Compose the prior pieces into an editable campaign draft.
 **Done when:** one pack can generate a small campaign: world graph, one region,
 two local maps, faction conflict, hidden secrets, custom law, item reward, and a
 final encounter, all inspectable before commit.
+
+**Landed 2026-07-11.** `CampaignDraft` composes typed world state, scaled maps,
+private secrets, rewards, a starting map, and a final storylet. The bundled
+`demo:campaign` generator produces the River Oath: one region, two local maps,
+two opposed factions, route graph, conflict history, a hidden witness-blade
+truth, the `iron-remembers` law, a reward, and a cast final encounter. The
+host-only preview enumerates every part including GM secret text. Commit stages
+both stores, then publishes only the generation record, world events, maps,
+reward inventory, and active map; networked hosts perform the same operation in
+their Armillary-owned authority session.
 
 ## Findings
 
@@ -670,8 +707,10 @@ final encounter, all inspectable before commit.
    and displays conditions without interpreting them (same posture as laws),
    the DM can always reveal manually, and hooks arrive with W2's ABI.
 7. Does the world-graph rung eventually ride chartulary's container-graph
-   substrate instead of a bespoke pointcrawl struct? Plan already says start
-   small and pure; revisit after W5 when the shape is known.
+   substrate instead of a bespoke pointcrawl struct? *Resolved 2026-07-11:*
+   W5 confirms `CampaignWorld` as small, typed deterministic data. Revisit
+   chartulary only if graph scale or querying outgrows the `BTreeMap` model;
+   ordinary packs should not depend on it.
 
 ## Progress
 
@@ -702,3 +741,14 @@ final encounter, all inspectable before commit.
   projections, radiant quests from faction deficits, and factions as
   playable entities (BitD crew shape; permissions per the shared-authority
   doc).
+- 2026-07-11: W1-W5 implementation ladder completed. Generated equipment and
+  hidden modifiers, bounded pack execution, general discovery/selection,
+  tagged Lua returns, local and campaign-map lowering, typed world state,
+  private-fact storylet matching, existing-character casting, atomic effects,
+  and the River Oath campaign draft all use the normal host authority,
+  checkpoint, and result-replication paths.
+- 2026-07-11: The campaign authority path propagated generic request
+  correlation into Armillary (`RequestId`, `RequestIds`, `Correlated<T>`).
+  Isometry now reports campaign acceptance/rejection against the initiating
+  request and reserves bridge failure for actor/runtime failure. Merecat's
+  action/effect plan and Strophe's project-worker plan point at the same seam.
