@@ -13,9 +13,12 @@ use isometry_campaign::{
     StoryletProposal, StoryletRequirements, WorldCharacter, WorldEvent, WorldFact, WorldFaction,
     WorldLaw,
 };
-use isometry_core::{Facing, MapDocument, SessionEvent, Token, TokenId, TurnList};
+use isometry_core::{
+    Beat, Facing, MapDocument, RollRecord, SessionEvent, SheetData, SheetDelta, Token, TokenId,
+    TurnList,
+};
 use isometry_net::sim::Sim;
-use isometry_net::{GameEvent, GameSnapshot, HostSession, PeerId};
+use isometry_net::{ActionResolved, GameEvent, GameSnapshot, HostSession, PeerId};
 
 fn snapshot() -> GameSnapshot {
     let mut map = MapDocument::new("net demo", 8, 8);
@@ -49,7 +52,53 @@ fn snapshot() -> GameSnapshot {
         maps: Default::default(),
         active_map: None,
         world: Default::default(),
+        last_action: None,
+        action_seq: 0,
     }
+}
+
+/// Bind a sheet to a token so it can take part in an adjudicated action.
+fn sheet(name: &str, hp: i64, ac: i64) -> SheetData {
+    let mut s = SheetData::new("5e-srd");
+    s.set_text("name", name);
+    s.set_int("hp_current", hp);
+    s.set_int("hp_max", hp);
+    s.set_int("ac", ac);
+    s
+}
+
+/// A hit for `damage` on the goblin, shaped exactly as the system resolver
+/// produces it. The net crate never builds one of these itself: it only carries
+/// what the rules decided.
+fn attack_hit(damage: i64) -> GameEvent {
+    GameEvent::ActionResolved(ActionResolved {
+        actor: TokenId(1),
+        target: TokenId(2),
+        action_key: "attack".to_owned(),
+        label: "Attack".to_owned(),
+        attack: RollRecord {
+            by: "Knight".to_owned(),
+            expr: "1d20+5".to_owned(),
+            dice: vec![14],
+            total: 19,
+        },
+        hit: true,
+        damage: Some(RollRecord {
+            by: "Knight".to_owned(),
+            expr: "1d8+3".to_owned(),
+            dice: vec![4],
+            total: damage as i32,
+        }),
+        deltas: vec![SheetDelta {
+            token: TokenId(2),
+            key: "hp_current".to_owned(),
+            add: -damage,
+        }],
+        beats: vec![
+            Beat::new(TokenId(1), "strike"),
+            Beat::new(TokenId(2), "recoil"),
+        ],
+    })
 }
 
 fn generation_record(id: &str) -> GenerationRecord {
@@ -181,6 +230,91 @@ fn invalid_intent_is_rejected_without_divergence() {
 
     assert_eq!(sim.host.seq(), seq, "rejected intents changed the log");
     assert_eq!(sim.host.log_hash(), hash);
+    assert_converged(&sim);
+}
+
+#[test]
+fn a_resolved_attack_replicates_and_lands_on_every_peer() {
+    let mut sim = Sim::new(HostSession::new(snapshot()));
+    sim.connect(PeerId(10));
+    sim.host_event(GameEvent::SheetSet {
+        token: TokenId(1),
+        sheet: sheet("Knight", 12, 16),
+    });
+    sim.host_event(GameEvent::SheetSet {
+        token: TokenId(2),
+        sheet: sheet("Goblin", 7, 15),
+    });
+
+    sim.host_event(attack_hit(5));
+
+    // The goblin took the hit on the host and on the client, identically.
+    let hp = |s: &GameSnapshot| s.map.sheet(TokenId(2)).unwrap().int("hp_current");
+    assert_eq!(hp(sim.host.state()), Some(2), "7 hp less 5 damage");
+    assert_eq!(hp(sim.clients[&PeerId(10)].state().unwrap()), Some(2));
+    // The attacker is untouched: a resolution changes only what it addresses.
+    assert_eq!(sim.host.state().map.sheet(TokenId(1)).unwrap().int("hp_current"), Some(12));
+    // Both rolls reached the shared log, and the beats reached the client so it
+    // can play the exchange rather than merely read about it.
+    assert_eq!(sim.host.state().roll_log.len(), 2);
+    let last = sim.clients[&PeerId(10)]
+        .state()
+        .unwrap()
+        .last_action
+        .as_ref()
+        .expect("the client sees the action it must represent");
+    assert_eq!(last.beats.len(), 2);
+    assert!(last.hit);
+    assert_converged(&sim);
+}
+
+#[test]
+fn a_client_cannot_pronounce_its_own_verdict() {
+    let mut sim = Sim::new(HostSession::new(snapshot()));
+    sim.connect(PeerId(10));
+    sim.host_event(GameEvent::SheetSet {
+        token: TokenId(1),
+        sheet: sheet("Knight", 12, 16),
+    });
+    sim.host_event(GameEvent::SheetSet {
+        token: TokenId(2),
+        sheet: sheet("Goblin", 7, 15),
+    });
+    let seq = sim.host.seq();
+    let hash = sim.host.log_hash();
+
+    // A client proposing a resolution is proposing that it hit and for how
+    // much. The rules run on the sequencer; a client asks, it never decides.
+    sim.client_intent(PeerId(10), attack_hit(999));
+
+    assert_eq!(sim.host.seq(), seq, "a forged verdict entered the log");
+    assert_eq!(sim.host.log_hash(), hash);
+    assert_eq!(
+        sim.host.state().map.sheet(TokenId(2)).unwrap().int("hp_current"),
+        Some(7),
+        "the goblin took damage from an unadjudicated claim"
+    );
+    assert_converged(&sim);
+}
+
+#[test]
+fn a_resolution_addressing_an_unsheeted_token_is_refused_whole() {
+    let mut sim = Sim::new(HostSession::new(snapshot()));
+    sim.connect(PeerId(10));
+    // Only the attacker is statted; the goblin was never bound a sheet.
+    sim.host_event(GameEvent::SheetSet {
+        token: TokenId(1),
+        sheet: sheet("Knight", 12, 16),
+    });
+    let seq = sim.host.seq();
+
+    sim.host_event(attack_hit(5));
+
+    assert_eq!(
+        sim.host.seq(),
+        seq,
+        "a half-appliable resolution entered the log"
+    );
     assert_converged(&sim);
 }
 

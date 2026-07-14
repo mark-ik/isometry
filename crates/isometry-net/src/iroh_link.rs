@@ -396,6 +396,8 @@ mod tests {
             maps: Default::default(),
             active_map: None,
             world: Default::default(),
+            last_action: None,
+            action_seq: 0,
         }
     }
 

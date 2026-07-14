@@ -62,6 +62,22 @@ impl FieldValue {
     }
 }
 
+/// One typed change to one integer field of one token's sheet: the only
+/// way a resolved action reaches game state.
+///
+/// The substrate applies it without knowing what the field means, exactly
+/// as it stores a sheet without interpreting it. A system plugin decides
+/// that `hp_current` is hit points and that a sword subtracts from it; the
+/// core only knows how to add a signed number to a named integer. No clamp
+/// is applied here: whether a value may go negative (death saves, debt,
+/// overheal) is a rule, so the system owns it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SheetDelta {
+    pub token: crate::map::TokenId,
+    pub key: String,
+    pub add: i64,
+}
+
 /// A character sheet's data: which system defines it, plus the field
 /// values keyed by field name (ordered, so serde and any hashing are
 /// deterministic).
@@ -93,6 +109,13 @@ impl SheetData {
 
     pub fn set_text(&mut self, key: impl Into<String>, s: impl Into<String>) {
         self.fields.insert(key.into(), FieldValue::Text(s.into()));
+    }
+
+    /// Add `add` to an integer field, creating it at zero when absent. The
+    /// substrate's whole understanding of a resolved action.
+    pub fn add_int(&mut self, key: &str, add: i64) {
+        let cur = self.int(key).unwrap_or(0);
+        self.set_int(key, cur + add);
     }
 }
 

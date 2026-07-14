@@ -4,7 +4,9 @@ use isometry_campaign::{
     CampaignMap, CampaignWorld, GenerationRecord, Inventory, ItemId, ItemModifierReveal,
     WorldEvent, WorldFact,
 };
-use isometry_core::{MapDocument, RollRecord, SessionEvent, SheetData, TokenId, TurnList};
+use isometry_core::{
+    Beat, MapDocument, RollRecord, SessionEvent, SheetData, SheetDelta, TokenId, TurnList,
+};
 use serde::{Deserialize, Serialize};
 
 /// A peer's identity within a session. For the iroh transport this wraps
@@ -50,10 +52,51 @@ pub struct GameSnapshot {
     /// Public world state. Secret fact bodies stay in `CampaignStore`.
     #[serde(default)]
     pub world: CampaignWorld,
+    /// The most recently applied action, kept so that *every* peer can play its
+    /// beats, not just the one that resolved it. A client renders from the
+    /// snapshot, so without this the defender's recoil would only ever be seen
+    /// on the host.
+    ///
+    /// This is representation, not truth: `action_seq` exists so a view can tell
+    /// "a new action landed" from "the same action re-delivered", and identical
+    /// consecutive attacks still each play. Neither field feeds a rule.
+    #[serde(default)]
+    pub last_action: Option<ActionResolved>,
+    #[serde(default)]
+    pub action_seq: u64,
 }
 
 /// Rolls kept in the shared log; older ones drop off.
 pub const ROLL_LOG_CAP: usize = 50;
+
+/// One adjudicated action, resolved by whoever held the sequencer, applied by
+/// everyone.
+///
+/// This is the fact that a rules system produced; it is *not* the rules system.
+/// Every field is substrate vocabulary (tokens, rolls, integer deltas, beat
+/// names), so this crate replicates a resolved attack without knowing that
+/// `hp_current` means hit points or that `1d8` is a longsword. Peers apply the
+/// deltas verbatim: they never rerun the script and never reroll, which is what
+/// keeps one machine's Lua the only Lua that runs and the convergence hash
+/// meaningful.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ActionResolved {
+    pub actor: TokenId,
+    pub target: TokenId,
+    pub action_key: String,
+    /// Human label for the log ("Attack").
+    pub label: String,
+    /// The public attack roll. Everyone sees the dice that decided it.
+    pub attack: RollRecord,
+    pub hit: bool,
+    /// The effect roll, present only on a hit.
+    pub damage: Option<RollRecord>,
+    /// The consequences. Empty on a miss: a miss changes nothing.
+    pub deltas: Vec<SheetDelta>,
+    /// How to show it. Purely representational; a peer that ignores every beat
+    /// still converges on the same state and the same hash.
+    pub beats: Vec<Beat>,
+}
 
 /// The replicated unit: a map mutation or a turn-order change. The host
 /// orders these into one log every peer replays; `MapDocument` and
@@ -106,6 +149,15 @@ pub enum GameEvent {
     MapActivated { id: String },
     /// Apply one idempotent public world-state change. Host-committed only.
     World(WorldEvent),
+    /// One adjudicated action: the only event by which one token changes
+    /// another. Applying it appends its rolls to the shared log and its deltas
+    /// to the addressed sheets.
+    ///
+    /// Appended at the end deliberately. Postcard encodes the variant index, so
+    /// inserting this next to `Rolled` (where it belongs by meaning) would
+    /// silently re-tag every later variant and misread existing saved
+    /// checkpoints.
+    ActionResolved(ActionResolved),
 }
 
 /// One message on the wire. The host is the authority: clients send

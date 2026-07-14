@@ -29,10 +29,11 @@ use isometry_campaign::{
     CampaignStore, EntropyTape, GenValue, GeneratorRequest, ItemId, ItemInstance, MapScale,
     WorldFact,
 };
-use isometry_core::FieldValue;
-use isometry_net::{apply_game, GameEvent, GameSnapshot, HostSession};
+use isometry_core::{FieldValue, Rng, TokenId};
+use isometry_net::{apply_game, ActionResolved, GameEvent, GameSnapshot, HostSession};
 use isometry_system::{
-    srd_5e, srd_bestiary, srd_items, srd_spells, GeneratorCatalog, GeneratorLimits, System,
+    monster_sheet, srd_5e, srd_bestiary, srd_items, srd_spells, ActionError, GeneratorCatalog,
+    GeneratorLimits, System,
 };
 use isometry_views::{
     board_css, board_root, demo_map, synth_map, ActionRow, GenerationRequest, InventoryRequest,
@@ -85,6 +86,14 @@ struct App {
     /// Origin of the CSS animation clock. `tick_animations` takes seconds
     /// since an arbitrary but monotonic zero; the process start is that zero.
     clock: Instant,
+    /// Host entropy for adjudication. Every die an action rolls comes from here,
+    /// so a fixed seed replays a session's combat exactly; peers never roll.
+    action_rng: Rng,
+    /// True while a beat is on screen, so the beats can be cleared the moment
+    /// the engine's clock reports the last one finished. Without this the class
+    /// would still be set when the next strike lands, and an unchanged class
+    /// restyles nothing, so the second swing would never animate.
+    beats_playing: bool,
     sheet: String,
     cursor: (f32, f32),
     modifiers: ModifiersState,
@@ -121,6 +130,11 @@ struct App {
     /// round-trip is verifiable without OS input automation (Windows
     /// foreground-lock makes driving one of two windows unreliable).
     net_selftest: bool,
+    /// `ISOMETRY_COMBAT_SELFTEST`: drive a short adjudicated exchange on boot.
+    combat_selftest: bool,
+    /// Swings left to throw, and when the last one landed.
+    combat_swings: u8,
+    last_swing: Option<Instant>,
     /// Session start instant, for the self-test delay.
     started: Option<Instant>,
     selftest_fired: bool,
@@ -217,6 +231,13 @@ impl App {
                     }
                     self.layout = Some(layout);
                     self.layout_size = (lw, lh);
+                    // A fresh session cascades with its animation clock still at
+                    // zero, so any @keyframes it starts is stamped `start_time =
+                    // 0`. Our clock must share that origin, or the very next tick
+                    // hands the engine a `now` seconds past the animation's end
+                    // and a 420ms beat expires before its first frame. Rebasing
+                    // here keeps the two in one timebase.
+                    self.clock = Instant::now();
                 }
             }
             // Advance the CSS animation clock. A transition or @keyframes run
@@ -415,6 +436,8 @@ impl App {
                                     maps: ui.campaign_maps.clone(),
                                     active_map: ui.active_map.clone(),
                                     world: ui.world.clone(),
+                                    last_action: None,
+                                    action_seq: 0,
                                 },
                             ));
                         }
@@ -625,19 +648,22 @@ impl App {
         if self.system.is_none() {
             return;
         }
-        let (bind, edit, action, inventory_request, open) = match self.runner.as_ref() {
-            Some(r) => {
-                let s = r.state();
-                (
-                    s.bind_sheet_request,
-                    s.sheet_edit.clone(),
-                    s.sheet_action.clone(),
-                    s.inventory_request.clone(),
-                    s.open_sheet,
-                )
-            }
-            None => return,
-        };
+        let (bind, edit, action, inventory_request, open, intent, spawn_sheet) =
+            match self.runner.as_ref() {
+                Some(r) => {
+                    let s = r.state();
+                    (
+                        s.bind_sheet_request,
+                        s.sheet_edit.clone(),
+                        s.sheet_action.clone(),
+                        s.inventory_request.clone(),
+                        s.open_sheet,
+                        s.action_intent.clone(),
+                        s.spawn_sheet_request.clone(),
+                    )
+                }
+                None => return,
+            };
         let open_changed = open != self.last_sheet_open;
         let effective_missing = self
             .runner
@@ -647,6 +673,8 @@ impl App {
             && edit.is_none()
             && action.is_none()
             && inventory_request.is_none()
+            && intent.is_none()
+            && spawn_sheet.is_none()
             && !open_changed
             && !effective_missing
         {
@@ -821,6 +849,156 @@ impl App {
             }
         }
 
+        // A spawned monster becomes statted: the compendium stat block reaches a
+        // real sheet, which is what makes it a thing that can be fought rather
+        // than a sprite standing on a diamond.
+        if let Some((token, key)) = spawn_sheet {
+            let sheet = srd_bestiary()
+                .iter()
+                .find(|m| m.key == key)
+                .map(monster_sheet);
+            runner.update(|ui| {
+                ui.spawn_sheet_request = None;
+                let Some(sheet) = sheet else {
+                    ui.status = format!("no stat block for {key}");
+                    return;
+                };
+                ui.map.set_sheet(token, sheet.clone());
+                if ui.net_mode == NetMode::Remote {
+                    ui.net_outbox.push(GameEvent::SheetSet { token, sheet });
+                }
+            });
+        }
+
+        // Adjudicate a targeted action. This is the whole slice: the one path
+        // from "I attack that goblin" to the goblin actually being hurt.
+        //
+        // The host validates what the substrate can see (both tokens exist, it
+        // is the actor's turn, the victim is in reach), and the system decides
+        // everything else. Only the resolved outcome is replicated, so peers
+        // apply it without rerunning a line of Lua.
+        if let Some((actor, target, key)) = intent {
+            let (actor_sheet, actor_inv, target_sheet, target_inv, reach, turn_ok) = {
+                let s = runner.state();
+                let dist = match (s.map.token(actor), s.map.token(target)) {
+                    (Some(a), Some(t)) => Some(isometry_core::distance(a.at, t.at)),
+                    _ => None,
+                };
+                // An empty turn order means free play (the editor, a hot-seat
+                // skirmish before initiative); once initiative exists, only the
+                // active token may act.
+                let turn_ok = s.turns.active().map_or(true, |active| active == actor);
+                (
+                    s.map.sheet(actor).cloned(),
+                    s.inventories.get(&actor).cloned(),
+                    s.map.sheet(target).cloned(),
+                    s.inventories.get(&target).cloned(),
+                    dist,
+                    turn_ok,
+                )
+            };
+
+            let outcome: Result<_, String> = (|| {
+                let dist = reach.ok_or_else(|| "no such target".to_owned())?;
+                if !turn_ok {
+                    return Err("not your turn".to_owned());
+                }
+                let actor_sheet = actor_sheet.ok_or_else(|| "attacker has no sheet".to_owned())?;
+                let target_sheet =
+                    target_sheet.ok_or_else(|| "target has no sheet".to_owned())?;
+                // Equipment counts: resolve against the effective sheets, so a
+                // magic sword's bonus lands and armour raises the AC it is
+                // compared against.
+                let actor_eff = system.effective_sheet(&actor_sheet, actor_inv.as_ref());
+                let target_eff = system.effective_sheet(&target_sheet, target_inv.as_ref());
+                system
+                    .resolve_action(
+                        &key,
+                        actor,
+                        &actor_eff,
+                        target,
+                        &target_eff,
+                        dist,
+                        &mut self.action_rng,
+                    )
+                    .map_err(|e| match e {
+                        ActionError::OutOfRange { range, distance } => {
+                            format!("out of reach ({distance} tiles, reach {range})")
+                        }
+                        ActionError::SelfTarget => "cannot target yourself".to_owned(),
+                        other => format!("action failed: {other:?}"),
+                    })
+            })();
+
+            let label = system
+                .actions
+                .iter()
+                .find(|a| a.key == key)
+                .map(|a| a.label.clone())
+                .unwrap_or_else(|| key.clone());
+
+            runner.update(|ui| {
+                ui.action_intent = None;
+                let resolution = match outcome {
+                    Ok(r) => r,
+                    Err(reason) => {
+                        // A refused intent changes nothing at all: no dice, no
+                        // deltas, no turn spent.
+                        ui.status = reason;
+                        return;
+                    }
+                };
+                let victim = ui
+                    .map
+                    .token(target)
+                    .and_then(|_| ui.map.sheet(target))
+                    .and_then(|s| s.text("name").map(str::to_owned))
+                    .unwrap_or_else(|| "target".to_owned());
+                ui.status = if resolution.hit {
+                    let dmg = resolution.damage.as_ref().map_or(0, |d| d.total);
+                    format!(
+                        "{} hits {victim} ({}) for {dmg}",
+                        resolution.attack.by, resolution.attack.total
+                    )
+                } else {
+                    format!(
+                        "{} misses {victim} ({})",
+                        resolution.attack.by, resolution.attack.total
+                    )
+                };
+
+                let event = GameEvent::ActionResolved(ActionResolved {
+                    actor,
+                    target,
+                    action_key: key.clone(),
+                    label,
+                    attack: resolution.attack,
+                    hit: resolution.hit,
+                    damage: resolution.damage,
+                    deltas: resolution.deltas,
+                    beats: resolution.beats,
+                });
+                if ui.net_mode == NetMode::Remote {
+                    // In session the authority applies it and mirrors the
+                    // snapshot back, which is where the beats get staged (so a
+                    // joined player sees the exchange too, not just the DM).
+                    ui.net_outbox.push(event);
+                } else if let GameEvent::ActionResolved(res) = &event {
+                    // Solo: no authority to route through, so apply it here.
+                    for delta in &res.deltas {
+                        ui.map.apply_delta(delta);
+                    }
+                    ui.push_roll(res.attack.clone());
+                    if let Some(damage) = &res.damage {
+                        ui.push_roll(damage.clone());
+                    }
+                    let seq = ui.beat_seq.wrapping_add(1);
+                    ui.stage_beats(seq, &res.beats);
+                }
+                ui.sheet_effective = None;
+            });
+        }
+
         // Recompute derived stats for the open sheet.
         if let Some(tok) = open {
             let (sheet, inventory) = {
@@ -881,6 +1059,8 @@ impl App {
                         maps: ui.campaign_maps.clone(),
                         active_map: ui.active_map.clone(),
                         world: ui.world.clone(),
+                        last_action: None,
+                        action_seq: 0,
                     });
                 }
             });
@@ -1124,6 +1304,88 @@ impl App {
         }
     }
 
+    /// `ISOMETRY_COMBAT_SELFTEST=1`: a focus-free proof of the adjudication
+    /// loop. It stats both duelists, stands the goblin in reach, and swings.
+    ///
+    /// The app drives itself rather than being driven by synthetic clicks,
+    /// because SendKeys loses the foreground race on a machine someone is
+    /// actually using and silently types into their editor. Same rationale as
+    /// `ISOMETRY_NET_SELFTEST`.
+    fn maybe_combat_selftest(&mut self) {
+        if !self.combat_selftest || self.combat_swings == 0 {
+            return;
+        }
+        // Wait 2s for the first swing, then one per second: long enough for a
+        // 420ms beat to finish and be cleared, so the *next* swing has to
+        // genuinely restart the animation rather than find its class still set.
+        let due = match self.last_swing {
+            None => self
+                .started
+                .is_some_and(|t| t.elapsed() > Duration::from_secs(2)),
+            Some(last) => last.elapsed() > Duration::from_millis(1000),
+        };
+        if !due {
+            return;
+        }
+        let first = self.last_swing.is_none();
+        self.last_swing = Some(Instant::now());
+        self.combat_swings -= 1;
+
+        let Some(system) = self.system.as_mut() else {
+            return;
+        };
+        let mut knight = system.default_sheet();
+        knight.set_text("name", "Knight");
+        knight.set_int("str", 18); // +4
+        knight.set_int("prof", 3); // so the swing is 1d20+7 against AC 15
+        let Some(goblin) = srd_bestiary().iter().find(|m| m.key == "goblin").map(monster_sheet)
+        else {
+            eprintln!("[isometry] combat selftest: no goblin in the bestiary");
+            return;
+        };
+        let Some(runner) = self.runner.as_mut() else {
+            return;
+        };
+        runner.update(|ui| {
+            if first {
+                // Stand the goblin within reach of the knight, and stat them
+                // both. After that the board carries its own state: each swing
+                // hits whatever hit points the last one left behind.
+                if let Some(at) = ui.map.token(TokenId(1)).map(|t| t.at) {
+                    if let Some(g) = ui.map.tokens.iter_mut().find(|t| t.id == TokenId(2)) {
+                        g.at = (at.0 + 1, at.1);
+                    }
+                }
+                ui.map.set_sheet(TokenId(1), knight.clone());
+                ui.map.set_sheet(TokenId(2), goblin.clone());
+                ui.open_sheet = Some(TokenId(1));
+                ui.recompute_fog();
+                eprintln!(
+                    "[isometry] combat selftest: knight@{:?} vs goblin@{:?} | goblin hp {:?}, ac {:?} (1d20+7 to hit)",
+                    ui.map.token(TokenId(1)).map(|t| t.at),
+                    ui.map.token(TokenId(2)).map(|t| t.at),
+                    ui.map.sheet(TokenId(2)).and_then(|s| s.int("hp_current")),
+                    ui.map.sheet(TokenId(2)).and_then(|s| s.int("ac")),
+                );
+            }
+            // The intent, exactly as a target-pick click would produce it.
+            ui.action_intent = Some((TokenId(1), TokenId(2), "attack".to_owned()));
+        });
+        self.pump_sheets();
+        if let Some(runner) = self.runner.as_ref() {
+            let ui = runner.state();
+            eprintln!(
+                "[isometry] combat selftest: {} | goblin hp = {:?} | beats = {:?}",
+                ui.status,
+                ui.map.sheet(TokenId(2)).and_then(|s| s.int("hp_current")),
+                ui.beats,
+            );
+        }
+        if let Some(window) = self.window.as_ref() {
+            window.request_redraw();
+        }
+    }
+
     fn key(&mut self, event: &WinitKeyEvent) {
         if event.state != ElementState::Pressed {
             return;
@@ -1131,6 +1393,17 @@ impl App {
         let Some(runner) = self.runner.as_mut() else {
             return;
         };
+        // Escape backs out of target-pick before anything else reads it, so an
+        // armed attack is always cancellable without spending a turn.
+        if runner.state().picking_target()
+            && matches!(event.logical_key, WinitKey::Named(WinitNamedKey::Escape))
+        {
+            runner.update(|ui| ui.cancel_action_pick());
+            if let Some(window) = self.window.as_ref() {
+                window.request_redraw();
+            }
+            return;
+        }
         // While composing a whisper, keys go to the draft.
         if runner.state().composing {
             match &event.logical_key {
@@ -1350,6 +1623,8 @@ impl ApplicationHandler for App {
                     maps: ui.campaign_maps.clone(),
                     active_map: ui.active_map.clone(),
                     world: ui.world.clone(),
+                    last_action: None,
+                    action_seq: 0,
                 };
                 self.net = Some(NetBridge::spawn(Role::Host {
                     state: snapshot,
@@ -1369,9 +1644,9 @@ impl ApplicationHandler for App {
             }
             None => {}
         }
-        if self.net.is_some() {
-            self.started = Some(Instant::now());
-        }
+        // Boot clock. The net selftest waits on it, and so does the combat
+        // selftest, which runs solo (there is no session to wait for).
+        self.started = Some(Instant::now());
         // Fog viewer from `--as`. Applies in any mode: a client sees
         // through its player's tokens, and a solo run can preview a side.
         if let Some(v) = self.viewer_arg.take() {
@@ -1403,6 +1678,14 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.maybe_combat_selftest();
+        // A still board parks on `Wait`, which blocks until input arrives, so an
+        // armed selftest would never reach its own deadline. Tick until it fires.
+        if self.combat_selftest && self.combat_swings > 0 {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                Instant::now() + Duration::from_millis(100),
+            ));
+        }
         // In a session, poll the bridge ~10Hz so remote changes (a peer's
         // move) reach the view without local input driving the loop.
         if self.net.is_some() {
@@ -1418,17 +1701,29 @@ impl ApplicationHandler for App {
         // clock-based and settles on its own, so the loop drops back to `Wait`
         // the moment the last animation ends: the board is idle-cheap again
         // without app state tracking "am I animating".
-        if self
+        let animating = self
             .layout
             .as_ref()
-            .is_some_and(IncrementalLayout::has_active_animations)
-        {
+            .is_some_and(IncrementalLayout::has_active_animations);
+        if animating {
+            self.beats_playing = true;
             if let Some(window) = self.window.as_ref() {
                 window.request_redraw();
             }
             event_loop.set_control_flow(ControlFlow::WaitUntil(
                 Instant::now() + Duration::from_millis(16),
             ));
+        } else if self.beats_playing {
+            // The last beat just ended. Drop the classes so the *next* strike is
+            // a genuine change and restarts the animation; leaving them set
+            // would restyle nothing and the second swing would stand still.
+            self.beats_playing = false;
+            if let Some(runner) = self.runner.as_mut() {
+                runner.update(|ui| ui.clear_beats());
+            }
+            if let Some(window) = self.window.as_ref() {
+                window.request_redraw();
+            }
         }
     }
 
@@ -1698,7 +1993,7 @@ fn schema_of(system: &System) -> SheetSchema {
         actions: system
             .actions
             .iter()
-            .map(|a| (a.key.clone(), a.label.clone()))
+            .map(|a| (a.key.clone(), a.label.clone(), a.target.is_some()))
             .collect(),
     }
 }
@@ -1736,6 +2031,10 @@ fn main() {
         layout: None,
         layout_size: (0.0, 0.0),
         clock: Instant::now(),
+        // A fixed seed keeps a solo session reproducible and makes the headed
+        // verification deterministic. A real table seeds this per session.
+        action_rng: Rng::new(0x15D_0BE),
+        beats_playing: false,
         sheet: board_css(),
         cursor: (0.0, 0.0),
         modifiers: ModifiersState::empty(),
@@ -1752,6 +2051,9 @@ fn main() {
         net: None,
         last_net_version: 0,
         net_selftest: std::env::var_os("ISOMETRY_NET_SELFTEST").is_some(),
+        combat_selftest: std::env::var_os("ISOMETRY_COMBAT_SELFTEST").is_some(),
+        combat_swings: 4,
+        last_swing: None,
         started: None,
         selftest_fired: false,
         system: None,

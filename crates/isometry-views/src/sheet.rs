@@ -88,10 +88,13 @@ pub fn sheet_overlay(ui: &UiState) -> Option<UiChild> {
         let actions: Vec<UiChild> = schema
             .actions
             .iter()
-            .map(|(k, label)| {
+            .map(|(k, label, targeted)| {
                 let key = k.clone();
+                // A targeted action reads as a verb aimed at someone, so mark it
+                // rather than letting it look like another passive check.
+                let class = if *targeted { "btn btn-attack" } else { "btn" };
                 Box::new(clickable(
-                    el("div", text(label.clone())).attr("class", "btn"),
+                    el("div", text(label.clone())).attr("class", class),
                     move |ui: &mut UiState, _| ui.request_action(&key),
                 )) as UiChild
             })

@@ -28,6 +28,9 @@ pub enum GameError {
     UnknownItem(ItemId),
     DuplicateItem(ItemId),
     SameInventoryTransfer(TokenId),
+    /// A resolution addressed a token with no sheet, so it could not be applied
+    /// whole. Rejected rather than half-applied.
+    UnsheetedTarget(TokenId),
     ConflictingGeneration(String),
     InvalidGeneration(GenerationRecordError),
     UnknownMap(String),
@@ -36,6 +39,18 @@ pub enum GameError {
 }
 
 const MAX_GENERATION_VALUE_DEPTH: usize = 16;
+
+/// Append a roll to the shared log, dropping the oldest past the cap.
+fn push_roll(state: &mut GameSnapshot, record: &isometry_core::RollRecord) {
+    state.roll_log.push(record.clone());
+    let overflow = state
+        .roll_log
+        .len()
+        .saturating_sub(crate::protocol::ROLL_LOG_CAP);
+    if overflow > 0 {
+        state.roll_log.drain(0..overflow);
+    }
+}
 
 pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), GameError> {
     match event {
@@ -62,14 +77,33 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
             Ok(())
         }
         GameEvent::Rolled(record) => {
-            state.roll_log.push(record.clone());
-            let overflow = state
-                .roll_log
-                .len()
-                .saturating_sub(crate::protocol::ROLL_LOG_CAP);
-            if overflow > 0 {
-                state.roll_log.drain(0..overflow);
+            push_roll(state, record);
+            Ok(())
+        }
+        GameEvent::ActionResolved(res) => {
+            require_token(state, res.actor)?;
+            require_token(state, res.target)?;
+            // Every delta must address a token that actually has a sheet. A
+            // resolution that would half-apply is rejected whole, so a peer
+            // either takes all of an action or none of it and the hashes cannot
+            // drift apart.
+            if res
+                .deltas
+                .iter()
+                .any(|d| state.map.sheet(d.token).is_none())
+            {
+                return Err(GameError::UnsheetedTarget(res.target));
             }
+            for delta in &res.deltas {
+                state.map.apply_delta(delta);
+            }
+            push_roll(state, &res.attack);
+            if let Some(damage) = &res.damage {
+                push_roll(state, damage);
+            }
+            state.last_action = Some(res.clone());
+            state.action_seq = state.action_seq.wrapping_add(1);
+            sync_active_map(state);
             Ok(())
         }
         GameEvent::SheetSet { token, sheet } => {
@@ -578,6 +612,21 @@ impl HostSession {
         match msg {
             // Campaign reveals are DM-committed only (`local_event`); a
             // client cannot make a hidden record public by proposing it.
+            // A resolution is a *verdict*, and a peer cannot pronounce its own.
+            // Accepting this as an intent would let a client choose whether it
+            // hit and how much damage it dealt. The rules run on the sequencer;
+            // a client asks, it does not decide. (The ask itself, an action
+            // intent a client can send, is the next step: it needs a message the
+            // host app can drain and resolve with its system plugin, since this
+            // crate is deliberately rules-blind.)
+            NetMessage::Intent {
+                event: GameEvent::ActionResolved(_),
+            } => vec![(
+                Recipient::One(from),
+                NetMessage::Rejected {
+                    reason: "actions are adjudicated by the host".to_owned(),
+                },
+            )],
             NetMessage::Intent {
                 event:
                     GameEvent::Fact(_)

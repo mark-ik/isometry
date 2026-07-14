@@ -91,6 +91,19 @@ impl MapDocument {
         self.sheets.insert(id, sheet);
     }
 
+    /// Apply one resolved delta to the addressed token's sheet. Returns false
+    /// when that token has no sheet, which is the only failure the substrate
+    /// can see: it has no opinion about the field, the sign, or the magnitude.
+    pub fn apply_delta(&mut self, delta: &crate::sheet::SheetDelta) -> bool {
+        match self.sheets.get_mut(&delta.token) {
+            Some(sheet) => {
+                sheet.add_int(&delta.key, delta.add);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Register a tile kind, returning its id; existing names are reused.
     pub fn intern_tile_kind(&mut self, name: &str) -> TileKindId {
         if let Some(i) = self.tile_kinds.iter().position(|k| k == name) {

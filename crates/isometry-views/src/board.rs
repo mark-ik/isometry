@@ -207,12 +207,34 @@ fn token_el(ui: &UiState, token: &Token) -> UiChild {
         class.push_str(" token-flip");
     }
     let id = token.id;
+
+    // A1: the beat rides on a wrapper, not on the sprite. `.token-flip` already
+    // owns the sprite's `transform` for facing, and a CSS animation on
+    // `transform` outranks a normal declaration, so a beat on the same box would
+    // strip a west/south-facing token of its mirror mid-swing. Two boxes: the
+    // wrapper is placed and beats, the sprite inside is drawn and flipped. They
+    // compose instead of fighting.
+    let mut wrapper = "beat".to_owned();
+    if let Some(beat) = ui.beats.get(&id) {
+        wrapper.push_str(" beat-");
+        wrapper.push_str(beat);
+    }
+    if ui.picking_target() {
+        wrapper.push_str(" beat-targetable");
+    }
+    let sprite: Vec<UiChild> = vec![Box::new(el("div", ()).attr("class", class))];
     Box::new(clickable(
-        el("div", ())
-            .attr("class", class)
+        el("div", sprite)
+            .attr("class", wrapper)
             .attr("style", format!("left: {x}px; top: {y}px; z-index: {z};")),
         move |ui: &mut UiState, _| {
-            ui.click_token(id);
+            // In target-pick mode a click on a token names the victim rather
+            // than selecting it.
+            if ui.picking_target() {
+                ui.pick_action_target(id);
+            } else {
+                ui.click_token(id);
+            }
         },
     ))
 }

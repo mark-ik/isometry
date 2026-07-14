@@ -7,12 +7,14 @@
 //! sandboxed, behind the [`System`] type so a host never touches Lua
 //! directly.
 //!
-//! The Lua boundary is deliberately narrow: every script function takes a
-//! character table and returns an **integer** (a modifier or bonus). The
-//! dice expression an action rolls is assembled in Rust (`base` die +
-//! signed bonus), so no Lua string ever has to cross the GC boundary.
-//! Rich content generators can loosen this later; formulas do not need
-//! it.
+//! The Lua boundary stays narrow: every script function returns an **integer**,
+//! and the dice expressions are assembled in Rust, so no Lua string has to cross
+//! the GC boundary. It now takes up to three arguments, `f(c, t, n)`: the actor's
+//! character table, an optional *target* table, and an optional scalar (a roll).
+//! Lua ignores arguments a function does not declare, so `m_str(c)` is unchanged
+//! by the widening while `a_attack_hit(c, t, roll)` can compare a roll against a
+//! defender's AC. That target context is what lets the *system* decide what a hit
+//! is, instead of hardcoding d20-versus-AC into Rust.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -23,7 +25,7 @@ use isometry_campaign::{
     MapCellProposal, MapPatchProposal, MapPoint, MapTransition, NpcProposal, SpawnZone,
     StoryletProposal, WorldFact,
 };
-use isometry_core::{FieldValue, SheetData};
+use isometry_core::{roll, Beat, FieldValue, Rng, RollRecord, SheetData, SheetDelta, TokenId};
 use piccolo::{Closure, Executor, Fuel, IntoValue, Lua, StashedExecutor, Table, Value};
 
 mod bestiary;
@@ -57,6 +59,63 @@ pub struct ActionDef {
     pub base: String,
     /// Lua function name; takes the character table, returns the bonus.
     pub func: String,
+    /// `None` for an untargeted roll (an ability check): it produces a number
+    /// for the table to read and changes nothing. `Some` makes the action
+    /// *adjudicated*: it names a victim, asks the system whether it lands, and
+    /// resolves into typed deltas.
+    pub target: Option<TargetSpec>,
+}
+
+/// What an adjudicated action needs in order to resolve against a defender.
+///
+/// Every rule here is data or Lua, never Rust. The resolver rolls the dice, asks
+/// the script whether the roll lands, and writes the answer to the named field.
+/// Swapping d20-versus-AC for a roll-under, a degrees-of-success ladder, or a
+/// non-d20 system is a different script and a different `base`, not a code change.
+pub struct TargetSpec {
+    /// Maximum Chebyshev distance in tiles. 1 is adjacent melee.
+    pub range: u32,
+    /// Lua `f(c, t, roll) -> 1|0`: given the actor, the target, and the actor's
+    /// total roll, did it land? This is where "beats AC" lives.
+    pub hit_func: String,
+    /// Dice rolled for effect on a hit.
+    pub damage: String,
+    /// Lua `f(c, t) -> int`: the effect's flat bonus.
+    pub damage_func: String,
+    /// The target-sheet field the effect subtracts from.
+    pub damage_field: String,
+    /// Beat played by the actor, and by the target on a hit or a miss. Pack
+    /// vocabulary; the substrate never looks inside these names.
+    pub actor_beat: String,
+    pub hit_beat: String,
+    pub miss_beat: String,
+}
+
+/// Why an intent was refused. Every one of these is checked before any die is
+/// rolled, so a rejected intent changes nothing at all.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ActionError {
+    UnknownAction(String),
+    NotTargeted(String),
+    SelfTarget,
+    OutOfRange { range: u32, distance: u32 },
+    ScriptFailed(String),
+    BadDice(String),
+}
+
+/// A fully resolved action: the single fact that crosses the wire.
+///
+/// It carries its own evidence (the public dice), its verdict, its consequences
+/// (typed deltas), and its representation (beats). Peers *apply* this. They never
+/// rerun the script and never reroll, so one machine's Lua is the only Lua that
+/// runs and the convergence hash stays meaningful.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Resolution {
+    pub attack: RollRecord,
+    pub hit: bool,
+    pub damage: Option<RollRecord>,
+    pub deltas: Vec<SheetDelta>,
+    pub beats: Vec<Beat>,
 }
 
 /// A loaded game system: schema + a live sandboxed Lua interpreter with
@@ -1127,42 +1186,71 @@ impl System {
 
     /// Call a Lua function `func(character)` returning an int.
     fn call_int(&mut self, func: &str, sheet: &SheetData) -> Option<i64> {
+        self.call_int_ctx(func, sheet, None, None)
+    }
+
+    /// Call `func(c, t, n) -> int`, where `t` is an optional target sheet and
+    /// `n` an optional scalar (the actor's total roll).
+    ///
+    /// Lua discards arguments a function does not declare, so the existing
+    /// one-argument scripts (`m_str(c)`, `a_attack(c)`) are unaffected by the
+    /// extra parameters, while a targeted script can read `t.ac`. That is the
+    /// whole ABI widening: no tagged returns, no new marshalling, one call path.
+    fn call_int_ctx(
+        &mut self,
+        func: &str,
+        sheet: &SheetData,
+        target: Option<&SheetData>,
+        extra: Option<i64>,
+    ) -> Option<i64> {
         // The `try_enter` closure is higher-ranked over `'gc`, so it can
-        // capture only owned data; copy the sheet fields and the name in.
+        // capture only owned data; copy the sheets and the name in.
         let func = func.to_owned();
-        let fields: Vec<(String, FieldValue)> = sheet
-            .fields
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
+        let own = |s: &SheetData| -> Vec<(String, FieldValue)> {
+            s.fields.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        };
+        let fields = own(sheet);
+        let target_fields = target.map(own);
         let ex = self
             .lua
             .try_enter(move |ctx| {
-                let table = Table::new(&ctx);
-                for (k, v) in &fields {
-                    // Intern the key into a `'gc` Lua string so no borrow
-                    // of `fields` crosses the higher-ranked `'gc` boundary.
-                    let key = piccolo::String::from_slice(&ctx, k.as_bytes());
-                    match v {
-                        FieldValue::Int(n) => table.set(ctx, key, *n)?,
-                        FieldValue::Bool(b) => table.set(ctx, key, *b)?,
-                        FieldValue::Text(s) => {
-                            let ls = piccolo::String::from_slice(&ctx, s.as_bytes());
-                            table.set(ctx, key, ls)?
-                        }
-                        FieldValue::Float(f) => table.set(ctx, key, *f)?,
-                        // Nested values reach Lua with the W2 generator
-                        // ABI (worldbuilding plan); scalar rules don't
-                        // see them yet.
-                        FieldValue::List(_) | FieldValue::Map(_) => Value::Nil,
-                    };
-                }
+                // Intern each key into a `'gc` Lua string so no borrow of the
+                // owned field vectors crosses the higher-ranked `'gc` boundary.
+                let build = |fields: &[(String, FieldValue)]| -> Result<Table<'_>, piccolo::Error<'_>> {
+                    let table = Table::new(&ctx);
+                    for (k, v) in fields {
+                        let key = piccolo::String::from_slice(&ctx, k.as_bytes());
+                        match v {
+                            FieldValue::Int(n) => table.set(ctx, key, *n)?,
+                            FieldValue::Bool(b) => table.set(ctx, key, *b)?,
+                            FieldValue::Text(s) => {
+                                let ls = piccolo::String::from_slice(&ctx, s.as_bytes());
+                                table.set(ctx, key, ls)?
+                            }
+                            FieldValue::Float(f) => table.set(ctx, key, *f)?,
+                            // Nested values reach Lua with the W2 generator
+                            // ABI (worldbuilding plan); scalar rules don't
+                            // see them yet.
+                            FieldValue::List(_) | FieldValue::Map(_) => Value::Nil,
+                        };
+                    }
+                    Ok(table)
+                };
+                let table = build(&fields)?;
+                let t = match &target_fields {
+                    Some(f) => Value::Table(build(f)?),
+                    None => Value::Nil,
+                };
+                let n = match extra {
+                    Some(n) => Value::Integer(n),
+                    None => Value::Nil,
+                };
                 let fname = piccolo::String::from_slice(&ctx, func.as_bytes());
                 let f = ctx.globals().get(ctx, fname);
                 let Value::Function(f) = f else {
                     return Err("not a function".into_value(ctx).into());
                 };
-                Ok(ctx.stash(Executor::start(ctx, f, (table,))))
+                Ok(ctx.stash(Executor::start(ctx, f, (table, t, n))))
             })
             .ok()?;
         self.lua.execute::<i64>(&ex).ok()
@@ -1195,6 +1283,162 @@ impl System {
         let bonus = self.call_int(&func, sheet)?;
         Some(format!("{base}{bonus:+}"))
     }
+
+    /// Whether an action names a victim (and so must be resolved rather than
+    /// merely rolled). The view uses this to decide if clicking the button
+    /// enters target-pick mode.
+    pub fn is_targeted(&self, action_key: &str) -> bool {
+        self.actions
+            .iter()
+            .any(|a| a.key == action_key && a.target.is_some())
+    }
+
+    /// Adjudicate one action of `actor` against `target`, `distance` tiles away.
+    ///
+    /// This is the whole of "the app adjudicates". It rolls the attack, asks the
+    /// system's script whether that roll lands, rolls the effect, and returns the
+    /// typed consequences plus the beats that represent them. It is the *only*
+    /// path from an intent to a change in game state.
+    ///
+    /// Determinism: every die comes from `rng`, so a fixed entropy tape yields a
+    /// byte-identical `Resolution`. That is what lets one machine resolve and
+    /// every other machine merely apply.
+    pub fn resolve_action(
+        &mut self,
+        action_key: &str,
+        actor: TokenId,
+        actor_sheet: &SheetData,
+        target: TokenId,
+        target_sheet: &SheetData,
+        distance: u32,
+        rng: &mut Rng,
+    ) -> Result<Resolution, ActionError> {
+        if actor == target {
+            return Err(ActionError::SelfTarget);
+        }
+        let Some(def) = self.actions.iter().find(|a| a.key == action_key) else {
+            return Err(ActionError::UnknownAction(action_key.to_owned()));
+        };
+        let Some(spec) = def.target.as_ref() else {
+            return Err(ActionError::NotTargeted(action_key.to_owned()));
+        };
+        if distance > spec.range {
+            return Err(ActionError::OutOfRange {
+                range: spec.range,
+                distance,
+            });
+        }
+        // Copy out of the borrow so the Lua calls can take `&mut self`.
+        let (base, func) = (def.base.clone(), def.func.clone());
+        let spec = TargetSpec {
+            range: spec.range,
+            hit_func: spec.hit_func.clone(),
+            damage: spec.damage.clone(),
+            damage_func: spec.damage_func.clone(),
+            damage_field: spec.damage_field.clone(),
+            actor_beat: spec.actor_beat.clone(),
+            hit_beat: spec.hit_beat.clone(),
+            miss_beat: spec.miss_beat.clone(),
+        };
+        let by = actor_sheet.text("name").unwrap_or("?").to_owned();
+
+        // 1. The attack: base die plus the actor's Lua bonus.
+        let bonus = self
+            .call_int(&func, actor_sheet)
+            .ok_or_else(|| ActionError::ScriptFailed(func.clone()))?;
+        let (raw, dice) = roll(&base, rng).ok_or_else(|| ActionError::BadDice(base.clone()))?;
+        let total = raw + bonus as i32;
+        let attack = RollRecord {
+            by: by.clone(),
+            expr: format!("{base}{bonus:+}"),
+            dice,
+            total,
+        };
+
+        // 2. The verdict. The script owns it, seeing both sheets and the roll,
+        //    so "beats AC" is a rule and not a Rust branch.
+        let hit = self
+            .call_int_ctx(
+                &spec.hit_func,
+                actor_sheet,
+                Some(target_sheet),
+                Some(total as i64),
+            )
+            .ok_or_else(|| ActionError::ScriptFailed(spec.hit_func.clone()))?
+            != 0;
+
+        // 3. The consequence.
+        let mut damage = None;
+        let mut deltas = Vec::new();
+        if hit {
+            let dmg_bonus = self
+                .call_int_ctx(&spec.damage_func, actor_sheet, Some(target_sheet), None)
+                .ok_or_else(|| ActionError::ScriptFailed(spec.damage_func.clone()))?;
+            let (dmg_raw, dmg_dice) = roll(&spec.damage, rng)
+                .ok_or_else(|| ActionError::BadDice(spec.damage.clone()))?;
+            // Damage never heals: a big negative modifier floors at zero rather
+            // than restoring the victim.
+            let dmg_total = (dmg_raw + dmg_bonus as i32).max(0);
+            damage = Some(RollRecord {
+                by,
+                expr: format!("{}{dmg_bonus:+}", spec.damage),
+                dice: dmg_dice,
+                total: dmg_total,
+            });
+            deltas.push(SheetDelta {
+                token: target,
+                key: spec.damage_field.clone(),
+                add: -(dmg_total as i64),
+            });
+        }
+
+        // 4. The representation.
+        let beats = vec![
+            Beat::new(actor, spec.actor_beat.clone()),
+            Beat::new(
+                target,
+                if hit {
+                    spec.hit_beat.clone()
+                } else {
+                    spec.miss_beat.clone()
+                },
+            ),
+        ];
+
+        Ok(Resolution {
+            attack,
+            hit,
+            damage,
+            deltas,
+            beats,
+        })
+    }
+}
+
+/// Build a 5e sheet from a compendium stat block, so a spawned monster arrives
+/// on the board already statted.
+///
+/// Without this the goblin is a sprite: its 7 hit points and AC 15 sit in the
+/// compendium and never reach a [`SheetData`], so nothing can be done to it.
+pub fn monster_sheet(m: &Monster) -> SheetData {
+    let mut sheet = SheetData::new("5e-srd");
+    sheet.set_text("name", m.name.clone());
+    for (key, score) in ["str", "dex", "con", "int", "wis", "cha"]
+        .iter()
+        .zip(m.abilities)
+    {
+        sheet.set_int(*key, score as i64);
+    }
+    // Proficiency by CR, the SRD's own table flattened to its low end; the
+    // compendium does not carry it as a field.
+    let prof = if m.challenge_rating >= 5.0 { 3 } else { 2 };
+    sheet.set_int("prof", prof);
+    sheet.set_int("level", 1);
+    sheet.set_int("hp_max", m.hit_points as i64);
+    sheet.set_int("hp_current", m.hit_points as i64);
+    sheet.set_int("ac", m.armor_class as i64);
+    sheet.set_int("attack_bonus", 0);
+    sheet
 }
 
 /// The 5e SRD system (CC-BY-4.0 material): six ability scores, level,
@@ -1229,8 +1473,13 @@ pub fn srd_5e() -> System {
             default: FieldValue::Int(1),
         },
         FieldDef {
-            key: "hp".to_owned(),
+            key: "hp_current".to_owned(),
             label: "HP".to_owned(),
+            default: FieldValue::Int(10),
+        },
+        FieldDef {
+            key: "hp_max".to_owned(),
+            label: "HP max".to_owned(),
             default: FieldValue::Int(10),
         },
         FieldDef {
@@ -1255,6 +1504,9 @@ pub fn srd_5e() -> System {
         label: format!("{} check", ab.to_uppercase()),
         base: "1d20".to_owned(),
         func: format!("m_{ab}"),
+        // A check is a number for the table to read; it names no victim and
+        // changes nothing.
+        target: None,
     };
     let actions = vec![
         ActionDef {
@@ -1262,6 +1514,18 @@ pub fn srd_5e() -> System {
             label: "Attack".to_owned(),
             base: "1d20".to_owned(),
             func: "a_attack".to_owned(),
+            target: Some(TargetSpec {
+                // Adjacent melee. Reach weapons and ranged attacks are the same
+                // spec with a larger number.
+                range: 1,
+                hit_func: "a_attack_hit".to_owned(),
+                damage: "1d8".to_owned(),
+                damage_func: "a_attack_dmg".to_owned(),
+                damage_field: "hp_current".to_owned(),
+                actor_beat: "strike".to_owned(),
+                hit_beat: "recoil".to_owned(),
+                miss_beat: "dodge".to_owned(),
+            }),
         },
         check("str"),
         check("dex"),
@@ -1287,6 +1551,16 @@ pub fn srd_5e() -> System {
         function m_wis(c) return ab_mod(c.wis) end
         function m_cha(c) return ab_mod(c.cha) end
         function a_attack(c) return ab_mod(c.str) + c.prof + c.attack_bonus end
+
+        -- The hit rule. This is the line that makes Isometry adjudicate rather
+        -- than merely roll, and it lives in the system, not the substrate: the
+        -- core never learns what AC is. `roll` is the actor's total (die +
+        -- a_attack), `t` is the defender's sheet. Crits and fumbles need the
+        -- raw die, which the ABI does not pass yet.
+        function a_attack_hit(c, t, roll)
+            if roll >= t.ac then return 1 else return 0 end
+        end
+        function a_attack_dmg(c) return ab_mod(c.str) end
     "#;
     System::load("5e-srd", "5e SRD", fields, derived, actions, script)
         .expect("builtin 5e system loads")
@@ -1608,6 +1882,128 @@ end"#,
         sheet.set_int("str", 6); // -2
         sheet.set_int("prof", 0);
         assert_eq!(sys.action_expr("attack", &sheet).as_deref(), Some("1d20-2"));
+    }
+
+    /// A knight who reliably hits, and a victim whose AC is the only variable.
+    fn duel(target_ac: i64, target_hp: i64) -> (System, SheetData, SheetData) {
+        let mut sys = srd_5e();
+        let mut knight = sys.default_sheet();
+        knight.set_text("name", "Knight");
+        knight.set_int("str", 16); // +3, plus prof 2 => 1d20+5
+        let mut goblin = sys.default_sheet();
+        goblin.set_text("name", "Goblin");
+        goblin.set_int("ac", target_ac);
+        goblin.set_int("hp_current", target_hp);
+        goblin.set_int("hp_max", target_hp);
+        (sys, knight, goblin)
+    }
+
+    const KNIGHT: TokenId = TokenId(1);
+    const GOBLIN: TokenId = TokenId(2);
+
+    #[test]
+    fn a_hit_subtracts_from_the_target_and_nothing_else() {
+        // AC 1: the attack cannot fail, so this isolates the consequence.
+        let (mut sys, knight, goblin) = duel(1, 7);
+        let mut rng = Rng::new(42);
+        let r = sys
+            .resolve_action("attack", KNIGHT, &knight, GOBLIN, &goblin, 1, &mut rng)
+            .expect("resolves");
+
+        assert!(r.hit);
+        assert_eq!(r.attack.expr, "1d20+5");
+        let dmg = r.damage.as_ref().expect("a hit rolls damage");
+        assert!(dmg.total > 0, "damage never heals");
+        // Exactly one consequence, and it lands on the victim's hit points.
+        assert_eq!(r.deltas.len(), 1);
+        assert_eq!(r.deltas[0].token, GOBLIN);
+        assert_eq!(r.deltas[0].key, "hp_current");
+        assert_eq!(r.deltas[0].add, -(dmg.total as i64));
+        // And it represents itself.
+        assert_eq!(r.beats.len(), 2);
+        assert_eq!(r.beats[0], Beat::new(KNIGHT, "strike"));
+        assert_eq!(r.beats[1], Beat::new(GOBLIN, "recoil"));
+    }
+
+    #[test]
+    fn a_miss_changes_nothing() {
+        // AC 100 is unreachable by 1d20+5.
+        let (mut sys, knight, goblin) = duel(100, 7);
+        let mut rng = Rng::new(42);
+        let r = sys
+            .resolve_action("attack", KNIGHT, &knight, GOBLIN, &goblin, 1, &mut rng)
+            .expect("resolves");
+
+        assert!(!r.hit);
+        assert!(r.damage.is_none());
+        assert!(r.deltas.is_empty(), "a miss must not touch game state");
+        assert_eq!(r.beats[1], Beat::new(GOBLIN, "dodge"));
+    }
+
+    #[test]
+    fn a_fixed_entropy_tape_yields_an_identical_resolution() {
+        // The property the whole replication model rests on: one machine
+        // resolves, every other machine applies, and they agree.
+        let (mut a, knight, goblin) = duel(12, 7);
+        let (mut b, _, _) = duel(12, 7);
+        let first = a
+            .resolve_action("attack", KNIGHT, &knight, GOBLIN, &goblin, 1, &mut Rng::new(7))
+            .expect("resolves");
+        let second = b
+            .resolve_action("attack", KNIGHT, &knight, GOBLIN, &goblin, 1, &mut Rng::new(7))
+            .expect("resolves");
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn an_invalid_intent_is_refused_before_any_die_is_rolled() {
+        let (mut sys, knight, goblin) = duel(1, 7);
+        let mut rng = Rng::new(42);
+
+        // Out of reach: melee has range 1.
+        assert_eq!(
+            sys.resolve_action("attack", KNIGHT, &knight, GOBLIN, &goblin, 3, &mut rng),
+            Err(ActionError::OutOfRange {
+                range: 1,
+                distance: 3
+            })
+        );
+        // No hitting yourself.
+        assert_eq!(
+            sys.resolve_action("attack", KNIGHT, &knight, KNIGHT, &knight, 0, &mut rng),
+            Err(ActionError::SelfTarget)
+        );
+        // An ability check names no victim, so it cannot be resolved at one.
+        assert_eq!(
+            sys.resolve_action("str_check", KNIGHT, &knight, GOBLIN, &goblin, 1, &mut rng),
+            Err(ActionError::NotTargeted("str_check".to_owned()))
+        );
+        assert!(sys.is_targeted("attack"));
+        assert!(!sys.is_targeted("str_check"));
+
+        // The rng was never drawn from, so a refused intent is truly inert.
+        let mut fresh = Rng::new(42);
+        let a = sys
+            .resolve_action("attack", KNIGHT, &knight, GOBLIN, &goblin, 1, &mut rng)
+            .expect("resolves");
+        let b = sys
+            .resolve_action("attack", KNIGHT, &knight, GOBLIN, &goblin, 1, &mut fresh)
+            .expect("resolves");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn a_spawned_goblin_arrives_statted() {
+        let goblin = srd_bestiary()
+            .into_iter()
+            .find(|m| m.name == "Goblin")
+            .expect("goblin in the SRD bestiary");
+        let sheet = monster_sheet(&goblin);
+        // The stat block reaches the sheet, which is what makes it attackable.
+        assert_eq!(sheet.int("hp_current"), Some(7));
+        assert_eq!(sheet.int("hp_max"), Some(7));
+        assert_eq!(sheet.int("ac"), Some(15));
+        assert_eq!(sheet.text("name"), Some("Goblin"));
     }
 
     #[test]

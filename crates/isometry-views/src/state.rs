@@ -31,8 +31,9 @@ pub struct SheetSchema {
     pub fields: Vec<(String, String, bool)>,
     /// Derived display stats: `(key, label)`.
     pub derived: Vec<(String, String)>,
-    /// Rollable actions: `(key, label)`.
-    pub actions: Vec<(String, String)>,
+    /// Rollable actions: `(key, label, targeted)`. A targeted action names a
+    /// victim and is adjudicated; an untargeted one just produces a number.
+    pub actions: Vec<(String, String, bool)>,
 }
 
 /// How initiative builds the turn order (a system choice over the same
@@ -369,6 +370,23 @@ pub struct UiState {
     pub bind_sheet_request: Option<TokenId>,
     pub sheet_edit: Option<(TokenId, String, i64)>,
     pub sheet_action: Option<(TokenId, String)>,
+    /// Target-pick mode: `(actor, action_key)` is waiting for the player to
+    /// click a victim. An untargeted action never enters this state; it just
+    /// rolls. Escape cancels.
+    pub action_pick: Option<(TokenId, String)>,
+    /// A committed intent the host drains, validates, and adjudicates:
+    /// `(actor, target, action_key)`. The view never resolves anything itself.
+    pub action_intent: Option<(TokenId, TokenId, String)>,
+    /// Beats currently playing, token to beat name. Purely representational:
+    /// the view sets a class, the engine's animation clock runs it, and it is
+    /// cleared when the clock says nothing is animating.
+    pub beats: BTreeMap<TokenId, String>,
+    /// The `action_seq` whose beats have already been staged, so a replicated
+    /// action plays once rather than on every snapshot mirror.
+    pub beat_seq: u64,
+    /// A monster spawn awaiting its stat block: `(token, monster key)`. The host
+    /// owns the system, so it is what turns a compendium row into a sheet.
+    pub spawn_sheet_request: Option<(TokenId, String)>,
     pub inventory_request: Option<InventoryRequest>,
     /// False for a joined player. The host still validates its own event path;
     /// this only keeps DM authoring controls out of player UI.
@@ -472,6 +490,11 @@ impl UiState {
             bind_sheet_request: None,
             sheet_edit: None,
             sheet_action: None,
+            action_pick: None,
+            action_intent: None,
+            beats: BTreeMap::new(),
+            beat_seq: 0,
+            spawn_sheet_request: None,
             inventory_request: None,
             can_edit_inventory: true,
             generations: Vec::new(),
@@ -797,15 +820,21 @@ impl UiState {
         let Some(m) = self.bestiary.iter().find(|m| m.key == key) else {
             return;
         };
-        let (sprite, name) = (m.sprite.clone(), m.name.clone());
+        let (sprite, name, key) = (m.sprite.clone(), m.name.clone(), m.key.clone());
         let at = self.free_spawn_tile();
+        let id = self.next_token_id();
         self.apply_step(vec![SessionEvent::TokenPlaced(Token {
-            id: self.next_token_id(),
+            id,
             at,
             facing: Facing::South,
             sprite,
             owner: None,
         })]);
+        // Ask the host to bind the stat block. Without this the monster is a
+        // sprite: its hit points and AC stay in the compendium and nothing can
+        // be done to it. The view does not build the sheet itself, because what
+        // fields a 5e creature has is the system's business, not the board's.
+        self.spawn_sheet_request = Some((id, key));
         self.status = format!("spawned {name}");
         self.compendium_open = false;
         self.compendium_selected = None;
@@ -833,9 +862,87 @@ impl UiState {
     }
 
     /// Queue an action roll; the host evaluates it against the system.
+    /// Click an action on the open sheet.
+    ///
+    /// An untargeted action (an ability check) rolls immediately, as it always
+    /// has. A targeted one cannot: it needs a victim, so it arms target-pick
+    /// mode and the next click on a token becomes the intent.
     pub fn request_action(&mut self, key: &str) {
-        if let Some(id) = self.open_sheet {
+        let Some(id) = self.open_sheet else {
+            return;
+        };
+        let targeted = self
+            .sheet_schema
+            .actions
+            .iter()
+            .any(|(k, _, targeted)| k == key && *targeted);
+        if targeted {
+            let label = self
+                .sheet_schema
+                .actions
+                .iter()
+                .find(|(k, _, _)| k == key)
+                .map(|(_, l, _)| l.clone())
+                .unwrap_or_else(|| key.to_owned());
+            self.action_pick = Some((id, key.to_owned()));
+            self.status = format!("{label}: pick a target (Esc to cancel)");
+        } else {
             self.sheet_action = Some((id, key.to_owned()));
+        }
+    }
+
+    /// Whether the board is waiting for the player to click a victim.
+    pub fn picking_target(&self) -> bool {
+        self.action_pick.is_some()
+    }
+
+    /// Cancel target-pick without spending anything.
+    pub fn cancel_action_pick(&mut self) {
+        if self.action_pick.take().is_some() {
+            self.status = "action cancelled".to_owned();
+        }
+    }
+
+    /// Commit the victim. This only *asks*: the host validates reach and turn
+    /// ownership and the system decides the outcome. Nothing is resolved here.
+    pub fn pick_action_target(&mut self, target: TokenId) {
+        let Some((actor, key)) = self.action_pick.take() else {
+            return;
+        };
+        if actor == target {
+            self.status = "cannot target yourself".to_owned();
+            return;
+        }
+        self.action_intent = Some((actor, target, key));
+    }
+
+    /// Stage the beats of a freshly applied action, so the board plays the
+    /// exchange. Idempotent per `seq`: a re-delivered snapshot does not replay.
+    pub fn stage_beats(&mut self, seq: u64, beats: &[isometry_core::Beat]) {
+        if seq == self.beat_seq {
+            return;
+        }
+        self.beat_seq = seq;
+        self.beats.clear();
+        for beat in beats {
+            self.beats.insert(beat.token, beat.name.clone());
+        }
+    }
+
+    /// Drop every playing beat. The host calls this once the engine's animation
+    /// clock reports nothing is animating, which is what lets the *next* strike
+    /// restart the animation instead of finding the class already set.
+    pub fn clear_beats(&mut self) {
+        self.beats.clear();
+    }
+
+    /// Append to the local shared log, dropping the oldest past the cap. In
+    /// session the authority's log arrives with the snapshot instead.
+    pub fn push_roll(&mut self, record: RollRecord) {
+        self.roll_log.push(record);
+        let overflow = self.roll_log.len().saturating_sub(ROLL_LOG_CAP);
+        if overflow > 0 {
+            self.roll_log.drain(0..overflow);
         }
     }
 
@@ -856,11 +963,7 @@ impl UiState {
         if self.net_mode == NetMode::Remote {
             self.net_outbox.push(GameEvent::Rolled(record));
         } else {
-            self.roll_log.push(record);
-            let overflow = self.roll_log.len().saturating_sub(ROLL_LOG_CAP);
-            if overflow > 0 {
-                self.roll_log.drain(0..overflow);
-            }
+            self.push_roll(record);
         }
     }
 
@@ -1153,6 +1256,12 @@ impl UiState {
     /// recomputes for whatever token is selected. Selection and camera
     /// are local and survive.
     pub fn apply_snapshot(&mut self, snap: GameSnapshot) {
+        // Beats first: a client renders from the snapshot, so this is the only
+        // place it learns that an exchange happened and can play it. Keyed on
+        // `action_seq`, so mirroring the same snapshot twice does not re-strike.
+        if let Some(action) = &snap.last_action {
+            self.stage_beats(snap.action_seq, &action.beats);
+        }
         self.map = snap.map;
         self.turns = snap.turns;
         self.roll_log = snap.roll_log;
@@ -1740,6 +1849,8 @@ mod tests {
             maps: Default::default(),
             active_map: None,
             world: Default::default(),
+            last_action: None,
+            action_seq: 0,
         };
         ui.apply_snapshot(snap);
         assert_eq!(ui.map.token(TokenId(1)).unwrap().at, (before.0 + 1, before.1));

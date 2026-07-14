@@ -189,9 +189,21 @@ pub fn board_css() -> String {
     clip-path: polygon(50% 0%, 100% 78%, 62% 78%, 62% 100%, 38% 100%, 38% 78%, 0% 78%);
 }
 
+/* The beat box: what a token *does*. It carries the board position and plays
+   the beat. The sprite inside carries appearance and facing. They are two boxes
+   because `.token-flip` already owns the sprite's `transform`, and a CSS
+   animation on `transform` outranks a normal declaration: one box would mean a
+   west-facing knight loses his mirror the instant he swings. */
+.beat {
+    position: absolute;
+    width: 24px;
+    height: 36px;
+}
 /* Tokens: 8x12 pixel sprites at 3x, nearest-neighbor (probe P1). */
 .token {
     position: absolute;
+    left: 0;
+    top: 0;
     width: 24px;
     height: 36px;
     background-repeat: no-repeat;
@@ -202,6 +214,45 @@ pub fn board_css() -> String {
    `.token-layer-effect-flame`. A full rig may supply its own layer rule; this
    starter rule makes the W1 equipment projection visible on the live board. */
 .token-layer-effect-flame { box-shadow: 0 0 0 2px #e38a34, 0 -3px 0 #ffd766; }
+
+/* Beats: the representation half of a resolved action, played by the engine's
+   own CSS animation clock (genet `tick_animations`) rather than any tween loop
+   of ours. The host drives frames only while something is animating, so a still
+   board costs one frame.
+
+   `translate` only, deliberately: it is the one transform independent of
+   `transform-origin`, which genet conjugates at the box origin rather than the
+   spec's 50% 50%. It also keeps the tick on a repaint with no relayout.
+
+   This vocabulary belongs to the pack, not the app. A campaign that wants a
+   different swing draws a different swing; nothing above this line changes. */
+@keyframes iso-strike {
+    0%   { transform: translate(0px, 0px); }
+    30%  { transform: translate(7px, -5px); }
+    55%  { transform: translate(7px, -5px); }
+    100% { transform: translate(0px, 0px); }
+}
+@keyframes iso-recoil {
+    0%   { transform: translate(0px, 0px); }
+    25%  { transform: translate(4px, -2px); }
+    60%  { transform: translate(-2px, 1px); }
+    100% { transform: translate(0px, 0px); }
+}
+@keyframes iso-dodge {
+    0%   { transform: translate(0px, 0px); }
+    35%  { transform: translate(-3px, 3px); }
+    100% { transform: translate(0px, 0px); }
+}
+.beat-strike { animation: iso-strike 420ms ease-out; }
+.beat-recoil { animation: iso-recoil 380ms ease-out; }
+.beat-dodge  { animation: iso-dodge 320ms ease-in-out; }
+
+/* Target-pick mode: everything clickable reads as a victim. */
+.beat-targetable { cursor: crosshair; }
+
+/* An adjudicated action is a verb aimed at someone, not another passive check. */
+.btn-attack { background-color: #5a2b2b; color: #ffd9d9; }
+.btn-attack:hover { background-color: #7a3a3a; }
 "#
     .to_owned();
     // Voxel-baked pixel tileset: the pixel sprites this sheet was waiting for

@@ -1,9 +1,12 @@
 # Adjudication and representation
 
 **Date:** 2026-07-14
-**Status:** active plan (2026-07-14). A0 landed (animation clock, measured). A1-A5
-planned. This is the game lane: it answers the fork the project has been walking
-around since 2026-07-07.
+**Status:** active plan (2026-07-14). **A0-A3 landed: Isometry adjudicates.** A
+knight now swings at a goblin, the app decides whether it lands, the goblin loses
+hit points, and the exchange plays out on the board. A4 (emotes) and A5 (pack
+choreography) are planned and cheap, because they reuse the same primitive.
+This is the game lane: it answers the fork the project has been walking around
+since 2026-07-07.
 
 **Related:**
 [next_horizons_landscape](2026-07-07_next_horizons_landscape.md) (this answers its
@@ -42,7 +45,7 @@ B.4 releases it.
 
 Three layers, one event.
 
-```
+```text
 ActionIntent { actor, target, action_key }        // a player asks
         |
         v  host (or turn-leader) resolves: turn ownership, range, prerequisites,
@@ -190,6 +193,27 @@ the part that is actually Isometry's.
     that survived two rounds of measurement. Unset with `Remove-Item Env:X` or
     `[NullString]::Value`, and verify with a child process before trusting a run.
 
+11. **A fresh layout session resets the animation clock to zero, and the spike
+    masked it.** A beat's class change produces a *structural* mutation batch, so
+    `redraw` rebuilds `IncrementalLayout` from scratch. A fresh session cascades with
+    its animation clock still at zero, so stylo stamps the new `@keyframes` with
+    `start_time = 0`. The host then ticked the clock to `self.clock.elapsed()` (two
+    seconds of uptime), and a 420ms beat was already "over" before its first frame:
+    `has_active_animations()` returned false and nothing moved. Fixed by rebasing
+    `self.clock` whenever a fresh session is built, so host and engine share one
+    timebase. **The A0 spike could not have caught this**, because its probe
+    animation was `infinite` and an endless animation never ends no matter how far
+    the clock jumps. A one-shot beat is the first thing that could expose it. The
+    lesson generalizes: a synthetic probe that differs from the real case in one
+    property (here, `infinite`) can validate the plumbing and still miss the bug.
+
+12. **A spawned monster had no sheet.** `spawn_monster` placed a token with a sprite
+    and nothing else, so the goblin's 7 hit points and AC 15 lived in the compendium
+    and never reached a `SheetData`. Nothing could be done to it because there was
+    nothing to do it *to*. The view now asks the host to bind the stat block
+    (`spawn_sheet_request`), because what fields a creature has is the system's
+    business rather than the board's.
+
 ## Phases
 
 ### A0. The animation clock (LANDED 2026-07-14)
@@ -205,7 +229,7 @@ Drive genet's CSS animation clock from the isometry host.
 loop sustains frames for the animation's duration and stops afterwards; an idle board
 draws one frame. **All three verified** (finding 4 and 5).
 
-### A1. The beat element
+### A1. The beat element (LANDED 2026-07-14)
 
 Give the beat its own box so it stops fighting the facing flip (finding 7).
 
@@ -218,7 +242,12 @@ Give the beat its own box so it stops fighting the facing flip (finding 7).
 east-facing token is visually identical to before; the emitted element count grows by
 exactly one per visible token.
 
-### A2. The targeted action loop (the slice)
+**Verified 2026-07-14:** the wrapper (`.beat`) carries board position and the beat;
+the sprite inside carries `.token`, its sprite class, layer classes, and
+`.token-flip`. The board renders unchanged through the new box (headed capture), and
+clicks still reach the handler through it.
+
+### A2. The targeted action loop (LANDED 2026-07-14)
 
 The first action that changes the game.
 
@@ -239,7 +268,17 @@ host entropy tape; an out-of-range, wrong-turn, or missing-target intent changes
 nothing; a hit changes only the target's `hp_current`; and an attack resolves without
 a GM editing sheet fields by hand.
 
-### A3. Beats on resolution
+**Verified 2026-07-14.** Unit: a fixed tape yields an identical `Resolution`; a hit
+subtracts only from the victim; a miss changes nothing; out-of-range, self-target,
+and untargeted-action intents are refused *before any die is rolled* (proved by the
+rng being undrawn afterwards). Replication: the hit lands identically on host and
+client, a client proposing its own verdict is rejected, and a resolution addressing an
+unsheeted token is refused whole rather than half-applied. In-app
+(`ISOMETRY_COMBAT_SELFTEST=1`): a knight adjacent to a statted goblin swings four
+times, missing on 11 and 9 and hitting for 7 and 12, taking the goblin from 7 hit
+points to 0 and below. 134 workspace tests green.
+
+### A3. Beats on resolution (LANDED 2026-07-14)
 
 Wire A1 and A2 together: the resolved event drives the representation.
 
@@ -252,6 +291,14 @@ Wire A1 and A2 together: the resolved event drives the representation.
 **Done when:** a hit and a miss are visually distinguishable on the board with the
 roll log covered; beats replay identically from the log on a late joiner; a peer that
 skips the beats still converges on the same hash.
+
+**Verified 2026-07-14:** a hit plays `recoil` on the victim and a miss plays `dodge`,
+so the two read differently with the log covered. Each of four swings animated (71
+frames against the 1 a still board draws), which also proves the beat-clearing
+lifecycle: the class is dropped once the engine's clock reports the last beat done,
+so the *next* strike is a genuine restyle and animates rather than standing still.
+The late-joiner replay is not yet exercised (`last_action` rides the snapshot, so a
+joiner receives the most recent exchange rather than the whole history).
 
 ### A4. Emotes
 
@@ -286,6 +333,19 @@ it costs no new rendering or replication machinery.
    one. Default: beats never block input.
 4. **Do conditions become substrate-visible?** next-horizons B.5, still open, and A2
    does not force it. Deferred.
+5. **Nothing dies yet.** The core applies a delta without clamping, on the grounds
+   that whether a value may go negative is a rule. It is, but no rule currently reads
+   it: the selftest's goblin sits at -12 hit points and can still be attacked. Defeat
+   was always a named follow-on, and this is the shape it should take: a system-owned
+   condition (`hp_current <= 0` implies `defeated`) that the substrate can see well
+   enough to skip a turn and grey a token, which is next-horizons B.5 arriving from
+   the other direction.
+6. **A client cannot yet attack.** The host adjudicates, and a client that proposes a
+   resolution is rejected (as it must be, or a player picks their own damage). What is
+   missing is the *ask*: a `NetMessage::ActionIntent` the host app can drain and
+   resolve with its system plugin, since `isometry-net` is deliberately rules-blind and
+   holds no `System`. Until then combat is DM-driven, which is the model the app
+   already ships. This is the next piece of A2, not a design question.
 
 ## Progress
 
@@ -297,5 +357,13 @@ it costs no new rendering or replication machinery.
   mirror, which had left the workspace unbuildable at HEAD after the Genet rename
   (finding 9). Spike scaffolding (a beat-probe stylesheet and two diagnostics, one of
   them inside genet) was reverted; the clock is all that remains.
-</content>
-</invoke>
+- **2026-07-14 (later):** **A1, A2, and A3 landed. Isometry adjudicates.** The
+  substrate learned `SheetDelta` and `Beat` without learning what either means; the
+  Lua ABI widened to `f(c, t, roll)` so a script can see its target, and the hit rule
+  became one line of Lua rather than a Rust branch; `GameEvent::ActionResolved` now
+  carries the verdict, the deltas, and the beats, and a client that proposes its own
+  verdict is refused. Verified in the app: a knight swings four times at an adjacent
+  goblin, misses (11), hits for 7 (7 hp to 0), misses (9), hits for 12, with each
+  exchange animating (71 frames against the 1 a still board draws). 134 workspace
+  tests green. Also fixed a real animation bug the spike had masked (finding 11) and
+  closed the spawn-without-a-sheet gap (finding 12).

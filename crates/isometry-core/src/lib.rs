@@ -6,6 +6,7 @@
 //! (schema plus scripts) in a later phase. Keep this crate free of UI,
 //! I/O, networking, and genet dependencies.
 
+mod beat;
 mod dice;
 mod event;
 mod grid;
@@ -18,8 +19,9 @@ mod template;
 mod turn;
 mod visibility;
 
+pub use beat::Beat;
 pub use dice::{roll, Rng, RollRecord};
-pub use sheet::{FieldValue, SheetData};
+pub use sheet::{FieldValue, SheetData, SheetDelta};
 pub use template::{distance, template_tiles, TemplateKind};
 pub use event::{EventError, SessionEvent, apply};
 pub use grid::TileGrid;
