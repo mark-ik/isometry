@@ -12,7 +12,7 @@ use codicil::Codicil;
 use isometry_campaign::{CampaignStore, GenerationRecord};
 use isometry_core::TokenId;
 use isometry_net::iroh_link::{ClientNet, HostNet};
-use isometry_net::{GameEvent, GameSnapshot};
+use isometry_net::{ActionIntent, GameEvent, GameSnapshot};
 
 /// Which side of the session this process runs.
 pub enum Role {
@@ -28,6 +28,8 @@ pub enum Role {
 
 enum BridgeCommand {
     Event(GameEvent),
+    /// A *client* asking the host to resolve an action. Carries no verdict.
+    Action(ActionIntent),
     Campaign {
         request: RequestId,
         record: GenerationRecord,
@@ -53,6 +55,10 @@ enum BridgeUpdate {
         players: Vec<String>,
     },
     ClientState(GameSnapshot),
+    /// Client action requests the host must adjudicate. They surface here rather
+    /// than being answered inside the session, because `isometry-net` is
+    /// rules-blind: only the app holds a `System` that can say whether you hit.
+    ActionIntents(Vec<ActionIntent>),
     Whispers(Vec<(String, String)>),
     CampaignFinished(Correlated<Result<(), String>>),
     Failed(String),
@@ -72,6 +78,7 @@ pub struct NetBridge {
     request_ids: RequestIds,
     campaign_outcomes: Vec<Correlated<Result<(), String>>>,
     failure: Option<String>,
+    action_intents: Vec<ActionIntent>,
 }
 
 impl NetBridge {
@@ -100,6 +107,7 @@ impl NetBridge {
             request_ids: RequestIds::default(),
             campaign_outcomes: Vec::new(),
             failure: None,
+            action_intents: Vec::new(),
         }
     }
 
@@ -137,6 +145,10 @@ impl NetBridge {
                     self.set_snapshot(snapshot);
                     changed = true;
                 }
+                Ok(BridgeUpdate::ActionIntents(mut intents)) => {
+                    self.action_intents.append(&mut intents);
+                    changed = true;
+                }
                 Ok(BridgeUpdate::Whispers(mut whispers)) => self.inbox.append(&mut whispers),
                 Ok(BridgeUpdate::CampaignFinished(outcome)) => self.campaign_outcomes.push(outcome),
                 Ok(BridgeUpdate::Failed(error)) => self.failure = Some(error),
@@ -154,6 +166,17 @@ impl NetBridge {
     /// Queue a local game event for the session actor.
     pub fn submit(&self, event: GameEvent) {
         let _ = self.actor.command(BridgeCommand::Event(event));
+    }
+
+    /// Ask the host to resolve an action (client side). The client decides
+    /// nothing: it names an actor, a victim and an action, and waits.
+    pub fn submit_action(&self, intent: ActionIntent) {
+        let _ = self.actor.command(BridgeCommand::Action(intent));
+    }
+
+    /// Drain client action requests awaiting adjudication (host side).
+    pub fn take_action_intents(&mut self) -> Vec<ActionIntent> {
+        std::mem::take(&mut self.action_intents)
     }
 
     pub fn commit_campaign(
@@ -276,6 +299,12 @@ async fn run_host(
         for command in commands {
             match command {
                 BridgeCommand::Event(event) => host.local_event(event).await,
+                // The DM resolves its own swings directly (it *is* the rules
+                // system), so it never routes one through here. Handled anyway,
+                // as the same request a player would send.
+                BridgeCommand::Action(intent) => {
+                    out.emit(BridgeUpdate::ActionIntents(vec![intent]));
+                }
                 BridgeCommand::Campaign {
                     request,
                     record,
@@ -288,6 +317,11 @@ async fn run_host(
                 }
                 BridgeCommand::Whisper { to, text } => host.whisper("dm", &to, &text).await,
             }
+        }
+
+        let intents = host.take_action_intents().await;
+        if !intents.is_empty() {
+            out.emit(BridgeUpdate::ActionIntents(intents));
         }
 
         let seq = host.seq().await;
@@ -330,6 +364,11 @@ async fn run_client(
             match command {
                 BridgeCommand::Event(event) => {
                     let _ = client.intent(event).await;
+                }
+                // The player asks; the host answers. Nothing about the outcome
+                // travels with this.
+                BridgeCommand::Action(intent) => {
+                    let _ = client.action(intent).await;
                 }
                 BridgeCommand::Campaign { request, .. } => {
                     out.emit(BridgeUpdate::CampaignFinished(Correlated::new(

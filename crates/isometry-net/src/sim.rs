@@ -75,6 +75,15 @@ impl Sim {
         }
     }
 
+    /// A client asks the host to resolve an action.
+    pub fn client_action(&mut self, peer: PeerId, intent: crate::protocol::ActionIntent) {
+        if let Some(client) = self.clients.get(&peer) {
+            let out = client.action(intent);
+            self.enqueue_from_client(peer, vec![out]);
+            self.settle();
+        }
+    }
+
     /// A client announces its player name to the host.
     pub fn client_hello(&mut self, peer: PeerId, name: &str) {
         if let Some(client) = self.clients.get(&peer) {

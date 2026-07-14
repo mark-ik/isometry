@@ -4,8 +4,8 @@
 **Status:** active plan (2026-07-14). **A0-A4 landed, plus defeat and force: a fight
 can be won, and blows land physically.** A knight swings at a goblin, the app decides whether it lands, the goblin
 loses hit points, drops at zero, stops taking turns, and stops being a legal target;
-the winner cheers. A5 (choreography as pack data) and client-initiated attacks
-remain. This is the game lane: it answers the fork the project had been walking
+the winner cheers, and **a joined player can swing for themselves** while still being
+unable to pronounce their own verdict. A5 (choreography as pack data) remains. This is the game lane: it answers the fork the project had been walking
 around since 2026-07-07.
 
 **Related:**
@@ -343,6 +343,30 @@ and the rng is left undrawn. Replication: defeat reaches the client (or it would
 still offer a corpse as a target), and turn advance skips the fallen on every peer,
 computed from state each already holds rather than being told. In-app: the goblin
 takes 7, drops to 0, falls, and the next two swings are refused.
+
+### A2d. A player may act (LANDED 2026-07-14)
+
+Closes open question 6. Combat was DM-only, because a client that proposed an
+`ActionResolved` was refused (rightly: that is a verdict, and a peer cannot pronounce
+its own). What was missing was the **ask**.
+
+- `NetMessage::Action(ActionIntent { actor, target, action_key })`. Deliberately *not*
+  a `GameEvent`: it carries no roll, no damage, no outcome. The client asks; the host
+  answers.
+- `HostSession` checks the only two things a rules-blind crate can (the actor exists,
+  and it is yours) and **queues** the request. It cannot adjudicate: it holds no
+  `System`. That is why this needed a channel rather than another event variant.
+- The host *app*, which does hold the rules, drains the queue and resolves each
+  request through the **same** `adjudicate` path its own swings take. One resolver,
+  one entropy source, one set of rules, whoever asked.
+
+**Done when:** a player's swing is resolved by the host and lands on every peer; a
+player cannot act with a token it does not own; and an ask, by itself, changes
+nothing.
+
+**Verified 2026-07-14.** An ask does not enter the log (`seq` unchanged), is queued
+once and drained once, and a client is refused when it swings someone else's sword.
+The DM's own swings still resolve unchanged (in-app regression run).
 
 ### A3. Beats on resolution (LANDED 2026-07-14)
 

@@ -14,7 +14,8 @@ use isometry_campaign::{
 use isometry_core::{apply, EventError, TokenId};
 
 use crate::protocol::{
-    fold_event, GameEvent, GameSnapshot, NetMessage, Outbound, PeerId, Recipient, FNV_OFFSET,
+    fold_event, ActionIntent, GameEvent, GameSnapshot, NetMessage, Outbound, PeerId, Recipient,
+    FNV_OFFSET,
 };
 
 /// Apply one [`GameEvent`] to the replicated state, or reject it
@@ -300,6 +301,12 @@ pub struct HostSession {
     /// Player name each connected peer announced (via `Hello`), so the
     /// DM can whisper by name.
     peer_names: HashMap<PeerId, String>,
+    /// Client action requests awaiting adjudication. They sit here because this
+    /// crate is deliberately rules-blind: it can validate that you own the token
+    /// you are swinging, but it has no `System` and so cannot say whether you
+    /// hit. The host *app* drains these, resolves them with its rules plugin, and
+    /// commits the outcome back through `local_event`.
+    pending_actions: Vec<ActionIntent>,
 }
 
 impl HostSession {
@@ -331,7 +338,16 @@ impl HostSession {
             log_hash,
             history,
             peer_names: HashMap::new(),
+            pending_actions: Vec::new(),
         }
+    }
+
+    /// Drain the client action requests awaiting adjudication.
+    ///
+    /// The host app calls this, resolves each with its rules system, and commits
+    /// the outcome. Nothing here has been decided: these are asks.
+    pub fn take_action_intents(&mut self) -> Vec<ActionIntent> {
+        std::mem::take(&mut self.pending_actions)
     }
 
     pub fn state(&self) -> &GameSnapshot {
@@ -680,6 +696,23 @@ impl HostSession {
                     reason: "you can only emote your own tokens".to_owned(),
                 },
             )],
+            // A player asking to act. Two things are checkable without any rules
+            // at all, so they are checked here: the actor exists, and it is
+            // yours. Everything else -- reach, turn, whether it hits, what it
+            // costs -- is the rules system's, so the request is queued for the
+            // host app to adjudicate and commit.
+            NetMessage::Action(intent) => {
+                if !self.peer_owns(from, intent.actor) {
+                    return vec![(
+                        Recipient::One(from),
+                        NetMessage::Rejected {
+                            reason: "you can only act with your own tokens".to_owned(),
+                        },
+                    )];
+                }
+                self.pending_actions.push(intent);
+                Vec::new()
+            }
             NetMessage::Intent { event } => match self.try_commit(event) {
                 Ok(out) => out,
                 Err(reason) => vec![(Recipient::One(from), NetMessage::Rejected { reason })],
@@ -825,6 +858,12 @@ impl ClientSession {
         (Recipient::Host, NetMessage::Intent { event })
     }
 
+    /// Ask the host to resolve an action. The client never decides the outcome,
+    /// so this carries no roll, no damage and no verdict: only the request.
+    pub fn action(&self, intent: ActionIntent) -> Outbound {
+        (Recipient::Host, NetMessage::Action(intent))
+    }
+
     /// Handle a message from the host. Returns any follow-on outbound
     /// (none today; the shape leaves room for acks).
     pub fn on_message(&mut self, msg: NetMessage) -> Vec<Outbound> {
@@ -849,7 +888,10 @@ impl ClientSession {
             NetMessage::Whisper { from, text } => {
                 self.inbox.push((from, text));
             }
-            NetMessage::Intent { .. } | NetMessage::Rejected { .. } | NetMessage::Hello { .. } => {}
+            NetMessage::Intent { .. }
+            | NetMessage::Rejected { .. }
+            | NetMessage::Hello { .. }
+            | NetMessage::Action(_) => {}
         }
         Vec::new()
     }

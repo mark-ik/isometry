@@ -39,7 +39,7 @@ codicil = { git = "https://github.com/mark-ik/codicil.git", branch = "main" }
 armillary = { git = "https://github.com/mark-ik/armillary.git", branch = "main" }
 personae = { git = "https://github.com/mark-ik/personae.git", branch = "master" }
 mooting = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
-moothold = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+gemot = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 transport = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 murm = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 p2panda-core = "0.6.1"

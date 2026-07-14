@@ -211,6 +211,24 @@ pub enum NetMessage {
     /// Host to one peer: a private message (a GM whisper). Directed, not
     /// broadcast, so it never enters the replicated log.
     Whisper { from: String, text: String },
+    /// Client to host: "I swing at that goblin." The *ask*, not the answer.
+    ///
+    /// This is deliberately not a `GameEvent`. A client may not propose an
+    /// `ActionResolved`, because that is a verdict and a peer cannot pronounce
+    /// its own. It asks, and the host's rules system decides. The host queues
+    /// these for its app to drain, because this crate is rules-blind and holds no
+    /// `System` to resolve them with.
+    ///
+    /// Appended at the end: postcard tags variants by index.
+    Action(ActionIntent),
+}
+
+/// A player asking to act. Everything about the outcome is the host's to say.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActionIntent {
+    pub actor: TokenId,
+    pub target: TokenId,
+    pub action_key: String,
 }
 
 /// Where a produced message goes. The transport resolves this to actual

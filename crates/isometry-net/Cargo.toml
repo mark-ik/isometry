@@ -28,7 +28,7 @@ campaign-p2p-net = [
     "dep:p2panda-sync",
     "dep:tokio",
 ]
-campaign-moot = ["campaign-p2p", "dep:moothold", "dep:tokio"]
+campaign-moot = ["campaign-p2p", "dep:gemot", "dep:tokio"]
 campaign-murm = ["dep:murm", "dep:thiserror"]
 
 [dependencies]
@@ -42,7 +42,7 @@ postcard = { version = "1", features = ["alloc"] }
 personae = { workspace = true, optional = true }
 muniment = { workspace = true, optional = true }
 mooting = { workspace = true, optional = true }
-moothold = { workspace = true, optional = true }
+gemot = { workspace = true, optional = true }
 p2panda-core = { workspace = true, optional = true }
 p2panda-net = { workspace = true, optional = true }
 p2panda-store = { workspace = true, optional = true }

@@ -1,6 +1,6 @@
 //! Host composition between a live Moot roster and campaign materialization.
 
-use moothold::moot::{MootRoster, MootStore, MootStoreError};
+use gemot::moot::{MootRoster, MootStore, MootStoreError};
 use mooting::{RecognitionContext, RecognitionPolicy};
 
 use crate::campaign_space::{
@@ -71,7 +71,7 @@ impl CampaignMootContext {
 #[cfg(test)]
 mod tests {
     use isometry_campaign::{CampaignProposal, CampaignProposalMode};
-    use moothold::moot::MootEvent;
+    use gemot::moot::MootEvent;
     use muniment::MemoryBackend;
     use personae::Ed25519Keypair;
 

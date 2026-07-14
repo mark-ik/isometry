@@ -233,6 +233,12 @@ impl HostNet {
         self.session.lock().await.state().clone()
     }
 
+    /// Drain client action requests awaiting adjudication. The host app resolves
+    /// each with its rules system and commits the outcome via `local_event`.
+    pub async fn take_action_intents(&self) -> Vec<crate::protocol::ActionIntent> {
+        self.session.lock().await.take_action_intents()
+    }
+
     /// A host-only copy for durable save or future host handoff. This never
     /// travels through the public session stream.
     pub async fn campaign(&self) -> CampaignStore {
@@ -337,6 +343,13 @@ impl ClientNet {
     /// Propose an event to the host.
     pub async fn intent(&self, event: GameEvent) -> Result<(), String> {
         let (_, msg) = self.session.lock().await.intent(event);
+        let mut send = self.send.lock().await;
+        write_frame(&mut send, &msg).await
+    }
+
+    /// Ask the host to resolve an action. No verdict travels with it.
+    pub async fn action(&self, intent: crate::protocol::ActionIntent) -> Result<(), String> {
+        let (_, msg) = self.session.lock().await.action(intent);
         let mut send = self.send.lock().await;
         write_frame(&mut send, &msg).await
     }

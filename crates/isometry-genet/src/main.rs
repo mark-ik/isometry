@@ -30,7 +30,9 @@ use isometry_campaign::{
     WorldFact,
 };
 use isometry_core::{FieldValue, Rng, TileCoord, TokenId};
-use isometry_net::{apply_game, ActionResolved, GameEvent, GameSnapshot, HostSession};
+use isometry_net::{
+    apply_game, ActionIntent, ActionResolved, GameEvent, GameSnapshot, HostSession,
+};
 use isometry_system::{
     monster_sheet, srd_5e, srd_bestiary, srd_items, srd_spells, ActionError, GeneratorCatalog,
     GeneratorLimits, System,
@@ -116,6 +118,10 @@ struct App {
     /// What session, if any, this process runs (from `--host`/`--join`),
     /// consumed once at `resumed`.
     net_intent: Option<NetIntent>,
+    /// True when this process is the authority. Only the host adjudicates, so a
+    /// client must *ask* rather than resolve: otherwise two machines would each
+    /// roll their own dice for the same swing.
+    net_is_host: bool,
     /// `--as <player>`: the fog viewer this process plays as. `None` is
     /// omniscient (the DM / a spectator).
     viewer_arg: Option<String>,
@@ -872,14 +878,94 @@ impl App {
             });
         }
 
-        // Adjudicate a targeted action. This is the whole slice: the one path
-        // from "I attack that goblin" to the goblin actually being hurt.
+        // Where does an action get adjudicated? On the authority, always.
         //
+        // A joined player *asks*: the intent goes over the wire as an
+        // `ActionIntent` carrying no roll and no verdict, and the host's rules
+        // system answers. If a client resolved its own swing it would be rolling
+        // its own dice and choosing its own damage, which is precisely what the
+        // host refuses elsewhere.
+        //
+        // Everyone else (the DM, and solo play) *is* the authority, so they fall
+        // through to the resolver below.
+        let mut intent = intent;
+        if let Some((actor, target, key)) = intent.clone() {
+            if self.net.is_some() && !self.net_is_host {
+                if let Some(net) = self.net.as_ref() {
+                    net.submit_action(ActionIntent {
+                        actor,
+                        target,
+                        action_key: key,
+                    });
+                }
+                runner.update(|ui| {
+                    ui.action_intent = None;
+                    ui.status = "asking the host...".to_owned();
+                });
+                intent = None;
+            }
+        }
+
+        // The host also adjudicates its players' requests, through this same
+        // path: one resolver, one entropy source, one set of rules, whoever asked.
+        let mut queued: Vec<(TokenId, TokenId, String)> = Vec::new();
+        if self.net_is_host {
+            if let Some(net) = self.net.as_mut() {
+                queued = net
+                    .take_action_intents()
+                    .into_iter()
+                    .map(|i| (i.actor, i.target, i.action_key))
+                    .collect();
+            }
+        }
+        for pending in intent.into_iter().chain(queued) {
+            self.adjudicate(pending);
+        }
+
+        // Recompute derived stats for the open sheet.
+        let Some(system) = self.system.as_mut() else {
+            return;
+        };
+        let Some(runner) = self.runner.as_mut() else {
+            return;
+        };
+        if let Some(tok) = open {
+            let (sheet, inventory) = {
+                let state = runner.state();
+                (
+                    state.map.sheet(tok).cloned(),
+                    state.inventories.get(&tok).cloned(),
+                )
+            };
+            if let Some(sheet) = sheet {
+                let effective = system.effective_sheet(&sheet, inventory.as_ref());
+                let derived = system.derived(&effective);
+                runner.update(|ui| {
+                    ui.sheet_effective = Some(effective);
+                    ui.sheet_derived = derived;
+                });
+            }
+        }
+        if let Some(window) = self.window.as_ref() {
+            window.request_redraw();
+        }
+    }
+
+    /// Resolve one action request and commit its outcome. The only path from
+    /// "I swing at that goblin" to the goblin being hurt, taken by the DM's own
+    /// swings and by a player's request alike.
+    fn adjudicate(&mut self, (actor, target, key): (TokenId, TokenId, String)) {
+        let Some(system) = self.system.as_mut() else {
+            return;
+        };
+        let Some(runner) = self.runner.as_mut() else {
+            return;
+        };
         // The host validates what the substrate can see (both tokens exist, it
         // is the actor's turn, the victim is in reach), and the system decides
         // everything else. Only the resolved outcome is replicated, so peers
         // apply it without rerunning a line of Lua.
-        if let Some((actor, target, key)) = intent {
+        {
             let (actor_sheet, actor_inv, target_sheet, target_inv, tiles, turn_ok) = {
                 let s = runner.state();
                 let tiles = match (s.map.token(actor), s.map.token(target)) {
@@ -1044,27 +1130,6 @@ impl App {
             });
         }
 
-        // Recompute derived stats for the open sheet.
-        if let Some(tok) = open {
-            let (sheet, inventory) = {
-                let state = runner.state();
-                (
-                    state.map.sheet(tok).cloned(),
-                    state.inventories.get(&tok).cloned(),
-                )
-            };
-            if let Some(sheet) = sheet {
-                let effective = system.effective_sheet(&sheet, inventory.as_ref());
-                let derived = system.derived(&effective);
-                runner.update(|ui| {
-                    ui.sheet_effective = Some(effective);
-                    ui.sheet_derived = derived;
-                });
-            }
-        }
-        if let Some(window) = self.window.as_ref() {
-            window.request_redraw();
-        }
     }
 
     /// Evaluate or commit a host-owned generator preview. The view asks for a
@@ -1680,6 +1745,7 @@ impl ApplicationHandler for App {
         // view is Remote, so play routes through the session.
         match self.net_intent.take() {
             Some(NetIntent::Host) => {
+                self.net_is_host = true;
                 ui.net_mode = NetMode::Remote;
                 let snapshot = GameSnapshot {
                     map: ui.map.clone(),
@@ -2114,6 +2180,7 @@ fn main() {
         profile: std::env::var_os("ISOMETRY_PROFILE").is_some(),
         capture_dir: std::env::var_os("ISOMETRY_CAPTURE_DIR").map(Into::into),
         net_intent: parse_net_intent(),
+        net_is_host: false,
         viewer_arg: parse_viewer(),
         campaign_arg: parse_campaign(),
         net: None,

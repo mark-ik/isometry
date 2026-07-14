@@ -18,7 +18,7 @@ use isometry_core::{
     TurnList,
 };
 use isometry_net::sim::Sim;
-use isometry_net::{ActionResolved, GameEvent, GameSnapshot, HostSession, PeerId};
+use isometry_net::{ActionIntent, ActionResolved, GameEvent, GameSnapshot, HostSession, PeerId};
 
 fn snapshot() -> GameSnapshot {
     let mut map = MapDocument::new("net demo", 8, 8);
@@ -387,6 +387,59 @@ fn forced_movement_is_truth_and_lands_on_the_same_tile_everywhere() {
         at(sim.clients[&PeerId(10)].state().unwrap()),
         (7, 6),
         "forced movement is game truth, so it cannot be left to each peer"
+    );
+    assert_converged(&sim);
+}
+
+#[test]
+fn a_client_asks_and_the_host_adjudicates() {
+    let mut sim = Sim::new(HostSession::new(snapshot()));
+    sim.connect(PeerId(10));
+    sim.client_hello(PeerId(10), "A"); // token 1 is A's knight
+
+    // The player swings. What crosses the wire is a *request*: no roll, no
+    // damage, no verdict. The host holds the rules; the client holds none.
+    sim.client_action(
+        PeerId(10),
+        ActionIntent {
+            actor: TokenId(1),
+            target: TokenId(2),
+            action_key: "attack".to_owned(),
+        },
+    );
+
+    // It changes nothing by itself. It is not an event and never enters the log;
+    // it waits for the host's rules system to answer it.
+    assert_eq!(sim.host.seq(), 0, "an ask is not a fact");
+    let queued = sim.host.take_action_intents();
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].actor, TokenId(1));
+    assert_eq!(queued[0].action_key, "attack");
+    // Drained exactly once: the host app resolves it, and it does not linger to
+    // be resolved twice.
+    assert!(sim.host.take_action_intents().is_empty());
+    assert_converged(&sim);
+}
+
+#[test]
+fn a_client_may_only_act_with_its_own_tokens() {
+    let mut sim = Sim::new(HostSession::new(snapshot()));
+    sim.connect(PeerId(10));
+    sim.client_hello(PeerId(10), "B"); // B owns token 2, not token 1
+
+    // Swinging *someone else's* sword is refused before the rules are consulted:
+    // ownership is one of the two things the rules-blind session can check.
+    sim.client_action(
+        PeerId(10),
+        ActionIntent {
+            actor: TokenId(1), // player A's knight
+            target: TokenId(2),
+            action_key: "attack".to_owned(),
+        },
+    );
+    assert!(
+        sim.host.take_action_intents().is_empty(),
+        "B queued an action for A's knight"
     );
     assert_converged(&sim);
 }
