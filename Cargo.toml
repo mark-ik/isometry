@@ -52,7 +52,7 @@ thiserror = "1"
 # owned repos so any machine resolves; local checkouts override via the
 # gitignored .cargo/config.toml source-specific [patch] entries. Cambium
 # supplies the view toolkit while Genet supplies the engine and host crates.
-xilem-serval = { package = "cambium", git = "https://github.com/mark-ik/cambium.git", branch = "main" }
+cambium = { git = "https://github.com/mark-ik/cambium.git", branch = "main" }
 layout-dom-api = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 genet-scripted-dom = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 genet-layout = { git = "https://github.com/mark-ik/genet.git", branch = "main" }

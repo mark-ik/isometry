@@ -56,7 +56,7 @@ use winit::event::{
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey as WinitNamedKey};
 use winit::window::{Window, WindowId};
-use xilem_serval::{PointerClick, Propagation, GenetAppRunner};
+use cambium::{GenetAppRunner, PointerClick, Propagation};
 
 type Runner = GenetAppRunner<UiState, fn(&UiState) -> UiChild, UiChild>;
 
