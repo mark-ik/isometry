@@ -3,7 +3,7 @@
 //! there is one implementation. View compositions, host-agnostic; promote to
 //! the cross-repo catalog only when another repo needs them.
 
-use xilem_serval::{clickable, el, text};
+use cambium::{clickable, el, text};
 
 use crate::board::UiChild;
 use crate::state::UiState;

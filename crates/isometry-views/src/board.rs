@@ -9,7 +9,7 @@
 use std::collections::HashSet;
 
 use isometry_core::{depth_key, path_to, MapDocument, TileCoord, TileKindId, Token};
-use xilem_serval::{clickable, el, text, AnyView, GenetCtx, GenetElement};
+use cambium::{AnyView, GenetCtx, GenetElement, clickable, el, text};
 
 use crate::panel::side_panel;
 use crate::state::{EditMode, FogLevel, UiState};

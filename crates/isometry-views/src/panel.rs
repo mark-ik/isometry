@@ -4,7 +4,7 @@
 //! board uses, so the palette can never drift from the tileset.
 
 use isometry_core::{TemplateKind, TileKindId, TokenId};
-use xilem_serval::{clickable, el, text};
+use cambium::{clickable, el, text};
 
 use crate::board::UiChild;
 use crate::state::{EditMode, UiState};

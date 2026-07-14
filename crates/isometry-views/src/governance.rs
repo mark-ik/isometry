@@ -1,6 +1,6 @@
 //! Host-fed resolution surface for competing campaign-governance bindings.
 
-use xilem_serval::{clickable, el, text};
+use cambium::{clickable, el, text};
 
 use crate::board::UiChild;
 use crate::state::{GovernanceBindingRow, UiState};

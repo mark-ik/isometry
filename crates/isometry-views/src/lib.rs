@@ -1,4 +1,4 @@
-//! Isometry's xilem_serval view layer.
+//! Isometry's Cambium view layer.
 //!
 //! View functions project [`isometry_core`] state into DOM-shaped views:
 //! every visible tile, prop, and token is an element positioned by the

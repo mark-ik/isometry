@@ -6,7 +6,7 @@
 
 use isometry_campaign::EquipmentSlot;
 use isometry_core::FieldValue;
-use xilem_serval::{clickable, el, text};
+use cambium::{clickable, el, text};
 
 use crate::board::UiChild;
 use crate::state::UiState;

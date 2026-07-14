@@ -14,7 +14,7 @@ isometry-views = { workspace = true }
 isometry-net = { workspace = true, features = ["iroh"] }
 isometry-system = { workspace = true }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time"] }
-xilem-serval = { workspace = true }
+cambium = { workspace = true }
 layout-dom-api = { workspace = true }
 genet-scripted-dom = { workspace = true }
 genet-layout = { workspace = true }
