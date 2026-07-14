@@ -48,12 +48,11 @@ p2panda-store = { version = "0.6.1", default-features = false }
 p2panda-sync = "0.6.1"
 thiserror = "1"
 
-# UI: the genet host stack (I1, the woodshed pattern). GIT deps on the
+# UI: the Genet host stack (I1, the Woodshed pattern). Git deps on the
 # owned repos so any machine resolves; local checkouts override via the
-# gitignored .cargo/config.toml source-specific [patch] entries. genet's
-# internal path deps resolve inside its git checkout; only the crates
-# isometry names appear here.
-xilem-serval = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
+# gitignored .cargo/config.toml source-specific [patch] entries. Cambium
+# supplies the view toolkit while Genet supplies the engine and host crates.
+xilem-serval = { package = "cambium", git = "https://github.com/mark-ik/cambium.git", branch = "main" }
 layout-dom-api = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 genet-scripted-dom = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 genet-layout = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
