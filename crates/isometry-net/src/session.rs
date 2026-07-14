@@ -108,6 +108,14 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
             for delta in &res.deltas {
                 state.map.apply_delta(delta);
             }
+            // Forced movement is truth, so it lands here, in the ordered log,
+            // where every peer applies the identical tile. A stagger beat never
+            // reaches this function at all.
+            for (token, to) in &res.displaced {
+                if let Some(t) = state.map.tokens.iter_mut().find(|t| t.id == *token) {
+                    t.at = *to;
+                }
+            }
             for token in &res.defeated {
                 state.map.set_defeated(*token, true);
             }
@@ -661,6 +669,17 @@ impl HostSession {
                     reason: "campaign authoring is committed by the DM".to_owned(),
                 },
             )],
+            // An emote needs no adjudication (there is no verdict to forge), but
+            // it does need ownership: waving is harmless, and puppeteering the
+            // DM's monsters is not. A player emotes their own tokens.
+            NetMessage::Intent {
+                event: GameEvent::Emoted { token, .. },
+            } if !self.peer_owns(from, token) => vec![(
+                Recipient::One(from),
+                NetMessage::Rejected {
+                    reason: "you can only emote your own tokens".to_owned(),
+                },
+            )],
             NetMessage::Intent { event } => match self.try_commit(event) {
                 Ok(out) => out,
                 Err(reason) => vec![(Recipient::One(from), NetMessage::Rejected { reason })],
@@ -671,6 +690,19 @@ impl HostSession {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// Whether the peer's announced player name owns `token`. A DM-controlled
+    /// token (`owner: None`) belongs to nobody, so no client owns it.
+    fn peer_owns(&self, peer: PeerId, token: TokenId) -> bool {
+        let Some(name) = self.peer_names.get(&peer) else {
+            return false;
+        };
+        self.state
+            .map
+            .token(token)
+            .and_then(|t| t.owner.as_deref())
+            .is_some_and(|owner| owner == name)
     }
 
     /// The DM whispers to the player named `to`. Returns a directed

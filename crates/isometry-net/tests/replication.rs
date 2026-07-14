@@ -99,6 +99,7 @@ fn attack_hit(damage: i64) -> GameEvent {
             Beat::new(TokenId(2), "recoil"),
         ],
         defeated: Vec::new(),
+        displaced: Vec::new(),
     })
 }
 
@@ -307,6 +308,8 @@ fn a_killing_blow_replicates_and_the_fallen_lose_their_turn() {
 fn a_player_may_emote_for_itself_without_the_host_adjudicating() {
     let mut sim = Sim::new(HostSession::new(snapshot()));
     sim.connect(PeerId(10));
+    // Token 2 belongs to player B; token 1 to player A.
+    sim.client_hello(PeerId(10), "B");
 
     // Unlike an attack, a client's own emote is accepted: there is no verdict to
     // forge and no state to change, so the worst a liar can do is wave.
@@ -329,8 +332,19 @@ fn a_player_may_emote_for_itself_without_the_host_adjudicating() {
     assert!(sim.host.state().roll_log.is_empty());
     assert_converged(&sim);
 
-    // An emote for a token that does not exist is still refused.
+    // But only your own: a wave is harmless, and puppeteering someone else's
+    // token (or the DM's monsters) is not.
     let seq = sim.host.seq();
+    sim.client_intent(
+        PeerId(10),
+        GameEvent::Emoted {
+            token: TokenId(1), // player A's knight
+            beat: "taunt".to_owned(),
+        },
+    );
+    assert_eq!(sim.host.seq(), seq, "B puppeteered A's knight");
+
+    // And an emote for a token that does not exist is still refused.
     sim.client_intent(
         PeerId(10),
         GameEvent::Emoted {
@@ -339,6 +353,41 @@ fn a_player_may_emote_for_itself_without_the_host_adjudicating() {
         },
     );
     assert_eq!(sim.host.seq(), seq);
+    assert_converged(&sim);
+}
+
+#[test]
+fn forced_movement_is_truth_and_lands_on_the_same_tile_everywhere() {
+    let mut sim = Sim::new(HostSession::new(snapshot()));
+    sim.connect(PeerId(10));
+    sim.host_event(GameEvent::SheetSet {
+        token: TokenId(2),
+        sheet: sheet("Goblin", 7, 15),
+    });
+    sim.host_event(GameEvent::SheetSet {
+        token: TokenId(1),
+        sheet: sheet("Knight", 12, 16),
+    });
+
+    // A shove: the goblin genuinely relocates. Unlike a stagger beat, which
+    // peers may render however they like, this changes what the goblin can
+    // reach and see, so every peer must land it on exactly the same tile.
+    let mut shove = attack_hit(0);
+    if let GameEvent::ActionResolved(res) = &mut shove {
+        res.action_key = "shove".to_owned();
+        res.deltas.clear();
+        res.displaced = vec![(TokenId(2), (7, 6))];
+        res.beats[1] = Beat::new(TokenId(2), "shoved-e");
+    }
+    sim.host_event(shove);
+
+    let at = |s: &GameSnapshot| s.map.token(TokenId(2)).unwrap().at;
+    assert_eq!(at(sim.host.state()), (7, 6), "the goblin was pushed");
+    assert_eq!(
+        at(sim.clients[&PeerId(10)].state().unwrap()),
+        (7, 6),
+        "forced movement is game truth, so it cannot be left to each peer"
+    );
     assert_converged(&sim);
 }
 

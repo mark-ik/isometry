@@ -300,7 +300,61 @@ pub fn board_css() -> String {
     // (design_docs/2026-07-08_campaign_packs_plan.md). Knight is the demo rig;
     // goblin is the same rig recoloured, proving palette-swap on the board.
     css.push_str(&voxel_token_css());
+    css.push_str(&force_css());
     css.push_str(COMPENDIUM_CSS);
+    css
+}
+
+/// The directional force beats, generated from the projection so a shove lands
+/// exactly one tile away rather than a guessed number of pixels.
+///
+/// Two families, one geometry, and the whole design in eight lines of output:
+///
+/// - `staggered-<dir>`: **a flourish.** Out one tile, hold, walk back. The token
+///   never leaves its square, so nothing here is state and peers are free to
+///   disagree about the sprite's position mid-stagger.
+/// - `shoved-<dir>`: **truth.** The board has already put the token on its new
+///   tile, so this runs the other way: start where it *used* to be and slide in.
+///   Same keyframes, reversed, and the only difference that matters is that one
+///   of them changed the game and the other did not.
+fn force_css() -> String {
+    let geo = isometry_core::IsoGeometry::default();
+    let mut css = String::from("\n/* Force beats: see force_css(). */\n");
+    for (dcol, drow) in [
+        (0, -1),
+        (1, -1),
+        (1, 0),
+        (1, 1),
+        (0, 1),
+        (-1, 1),
+        (-1, 0),
+        (-1, -1),
+    ] {
+        let dir = isometry_core::compass((dcol, drow)).expect("unit step has a compass name");
+        // The same projection the board uses: one tile step in screen pixels.
+        let dx = (dcol - drow) as f32 * (geo.tile_w / 2.0);
+        let dy = (dcol + drow) as f32 * (geo.tile_h / 2.0);
+        css.push_str(&format!(
+            "\
+@keyframes iso-stagger-{dir} {{
+    0%   {{ transform: translate(0px, 0px); }}
+    18%  {{ transform: translate({dx}px, {dy}px); }}
+    55%  {{ transform: translate({dx}px, {dy}px); }}
+    100% {{ transform: translate(0px, 0px); }}
+}}
+@keyframes iso-shoved-{dir} {{
+    0%   {{ transform: translate({nx}px, {ny}px); }}
+    100% {{ transform: translate(0px, 0px); }}
+}}
+.beat-staggered-{dir} {{ animation: iso-stagger-{dir} 1600ms ease-out; }}
+.beat-shoved-{dir}    {{ animation: iso-shoved-{dir} 420ms ease-out; }}
+",
+            // The shove beat starts at the tile it came *from*, which is the
+            // step negated: the board already moved it.
+            nx = -dx,
+            ny = -dy,
+        ));
+    }
     css
 }
 

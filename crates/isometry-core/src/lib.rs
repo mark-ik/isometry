@@ -22,7 +22,7 @@ mod visibility;
 pub use beat::Beat;
 pub use dice::{roll, Rng, RollRecord};
 pub use sheet::{FieldValue, SheetData, SheetDelta};
-pub use template::{distance, template_tiles, TemplateKind};
+pub use template::{away, compass, distance, push_path, template_tiles, TemplateKind};
 pub use event::{EventError, SessionEvent, apply};
 pub use grid::TileGrid;
 pub use iso::{IsoGeometry, ScreenPoint, TileCoord, depth_key};

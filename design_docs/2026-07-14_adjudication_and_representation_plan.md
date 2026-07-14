@@ -1,8 +1,8 @@
 # Adjudication and representation
 
 **Date:** 2026-07-14
-**Status:** active plan (2026-07-14). **A0-A4 landed, plus defeat: a fight can now
-be won.** A knight swings at a goblin, the app decides whether it lands, the goblin
+**Status:** active plan (2026-07-14). **A0-A4 landed, plus defeat and force: a fight
+can be won, and blows land physically.** A knight swings at a goblin, the app decides whether it lands, the goblin
 loses hit points, drops at zero, stops taking turns, and stops being a legal target;
 the winner cheers. A5 (choreography as pack data) and client-initiated attacks
 remain. This is the game lane: it answers the fork the project had been walking
@@ -97,6 +97,46 @@ architecture. Nothing below has to change for that to grow.
 stylesheet, exactly as tile appearance already does (pillar 3: modding is folders and
 stylesheets). A campaign that wants a different swing draws a different swing. This
 is where the homebrewing belongs.
+
+## Force: a stagger is a flourish, a shove is the truth
+
+The two look alike on screen and are opposites underneath, so they are separate
+fields on the resolution and separate Lua hooks on the action.
+
+| | Stagger | Forced movement |
+| --- | --- | --- |
+| Example | any solid blow rocks you back | Shove, Thunderwave, repelling blast |
+| Tile changes? | **no** | **yes** |
+| Replicated? | no: it is a beat | yes: `ActionResolved.displaced` |
+| Who decides where it lands | nobody: it returns | the **board** (`push_path`) |
+| May a rule read it? | **never** | of course |
+| Peers must agree? | no | exactly |
+
+**Why a stagger must not move anybody.** It is tempting to have the shove be real
+and let the victim walk back. That buys a scheduler, a pathfinder, a "what if there
+is no path home" case, and a class of desync bugs, in exchange for nothing: a token
+that always returns to its square never changed the square. Once the displacement is
+transient it is representation, and representation is already local by design. Peers
+may disagree about exactly where a sprite is mid-flinch and still hold byte-identical
+game state, which is the same bargain Helldivers makes with its physics.
+
+**Why it must not be derived from the animation.** The tempting version of "hit
+testing" is to ask whether the attacker's animated box overlapped the victim's. That
+is wrong twice. Isometric sprites overlap constantly by construction (depth-sorting
+exists precisely because they do), so overlap carries no meaning; and collision
+against animated boxes is a function of frame timing, which is local, so two peers
+dropping different frames would compute different collisions and the log would
+diverge. Nothing is lost by refusing it: the resolver already knows who swung, who
+was hit, from which tile, and how hard. **Physical consequence is a consequence of
+the resolution, not of the animation.**
+
+**The two share one geometry and one keyframe family.** `away()` gives the unit step
+between two tiles, `compass()` names it, and the stylesheet generates eight
+directional pairs from the board's own projection so a shove travels exactly one
+tile. A stagger runs `0 -> out -> 0` (it ends where it began). A shove runs the other
+way: the board has *already* placed the token on its new tile, so the beat slides it
+in from where it used to be. Same keyframes, reversed, and the only difference that
+matters is that one of them changed the game.
 
 ## What this borrows instead of building
 
@@ -326,6 +366,32 @@ so the *next* strike is a genuine restyle and animates rather than standing stil
 The late-joiner replay is not yet exercised (`last_action` rides the snapshot, so a
 joiner receives the most recent exchange rather than the whole history).
 
+### A2c. Force: stagger and forced movement (LANDED 2026-07-14)
+
+Blows land physically, without letting representation touch truth. See the "Force"
+section above for the reasoning.
+
+- `TargetSpec.stagger_func` (Lua `f(c, t, damage) -> 1|0`) rocks a victim off its
+  feet. Cosmetic: `staggered-<dir>`, out and back, nothing moves.
+- `TargetSpec.push_func` (Lua `f(c, t, damage) -> tiles`) *actually* relocates it.
+  The rules say how far and which way; the **board** rules on where that lands, since
+  a wall, a map edge, or another body stops a shove short and the system does not
+  know the map (`isometry_core::push_path`).
+- 5e ships both: any blow of 5+ staggers, and a new `shove` action does no damage and
+  pushes one tile.
+
+**Done when:** a plain attack never changes a tile; a shove does, on every peer,
+landing on the identical square; a shove into a wall moves nobody; and the victim's
+new position changes what can reach it.
+
+**Verified 2026-07-14.** Unit: one resolution yields `staggered-e` with no `push`,
+while a shove yields `push = ((1,0), 1)` and `shoved-e` with zero damage;
+`push_path` refuses a wall, stops short on an obstacle, and walks two clear tiles.
+Replication: the shoved goblin lands on the same tile on host and client. In-app:
+the shove hits for 0, the goblin moves from (11,14) to (12,14), and **the knight's
+next attack is refused as "out of reach (2 tiles, reach 1)"** -- forced movement
+changed the game, which is exactly what a stagger may never do.
+
 ### A4. Emotes (LANDED 2026-07-14)
 
 The same primitive, no `ActionResolved` behind it.
@@ -343,7 +409,10 @@ generalized from "the last action" to a bare `last_beats` list, because an emote
 no resolution behind it and the board should not care which kind of event asked for a
 flourish. Unlike an attack, **a client's own emote is accepted**: there is no verdict
 to forge and no state to change, so the worst a liar can do is wave. Cheer, shrug, and
-taunt ship as the starter vocabulary. In-app: the winner cheers over the body.
+taunt ship as the starter vocabulary. **Ownership (added 2026-07-14):** a client may
+emote only tokens it owns. Waving is harmless; puppeteering another player's
+character or the DM's monsters is not, and the host now refuses it.
+In-app: the winner cheers over the body.
 
 ### A5. Choreography as pack data
 

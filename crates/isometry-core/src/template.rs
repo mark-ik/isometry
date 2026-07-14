@@ -11,6 +11,61 @@ use crate::map::MapDocument;
 
 /// Grid distance in tiles, Chebyshev (a diagonal step counts as one, the
 /// D&D-5e "every square is 5 ft" convention).
+/// The unit step away from `from` toward `to`: one of the eight compass
+/// directions, or `(0, 0)` when they share a tile.
+///
+/// This is what a shove needs and all it needs. The direction of force is a fact
+/// about where two tokens are standing, which every peer already agrees on, so it
+/// never has to be derived from an animation (which nobody agrees on).
+pub fn away(from: TileCoord, to: TileCoord) -> (i32, i32) {
+    ((to.0 - from.0).signum(), (to.1 - from.1).signum())
+}
+
+/// Compass name of a unit step, for the beat vocabulary (`staggered-ne`).
+/// `None` for no direction at all.
+pub fn compass(step: (i32, i32)) -> Option<&'static str> {
+    Some(match step {
+        (0, -1) => "n",
+        (1, -1) => "ne",
+        (1, 0) => "e",
+        (1, 1) => "se",
+        (0, 1) => "s",
+        (-1, 1) => "sw",
+        (-1, 0) => "w",
+        (-1, -1) => "nw",
+        _ => return None,
+    })
+}
+
+/// Walk `tiles` steps from `at` along `step`, stopping at the last tile
+/// `passable` accepts. `None` when the very first step is blocked.
+///
+/// Used for **actual** forced movement (a shove, a thunderwave), so it must obey
+/// the board: a token cannot be pushed through a wall, off the map, or into
+/// somebody. A purely cosmetic stagger does not come through here, because it
+/// does not move anyone.
+pub fn push_path(
+    at: TileCoord,
+    step: (i32, i32),
+    tiles: u32,
+    mut passable: impl FnMut(TileCoord) -> bool,
+) -> Option<TileCoord> {
+    if step == (0, 0) || tiles == 0 {
+        return None;
+    }
+    let mut landed = None;
+    let mut cur = at;
+    for _ in 0..tiles {
+        let next = (cur.0 + step.0, cur.1 + step.1);
+        if !passable(next) {
+            break;
+        }
+        cur = next;
+        landed = Some(cur);
+    }
+    landed
+}
+
 pub fn distance(a: TileCoord, b: TileCoord) -> u32 {
     (a.0 - b.0).abs().max((a.1 - b.1).abs()) as u32
 }

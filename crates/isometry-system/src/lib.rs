@@ -25,7 +25,9 @@ use isometry_campaign::{
     MapCellProposal, MapPatchProposal, MapPoint, MapTransition, NpcProposal, SpawnZone,
     StoryletProposal, WorldFact,
 };
-use isometry_core::{roll, Beat, FieldValue, Rng, RollRecord, SheetData, SheetDelta, TokenId};
+use isometry_core::{
+    roll, Beat, FieldValue, Rng, RollRecord, SheetData, SheetDelta, TileCoord, TokenId,
+};
 use piccolo::{Closure, Executor, Fuel, IntoValue, Lua, StashedExecutor, Table, Value};
 
 mod bestiary;
@@ -91,6 +93,31 @@ pub struct TargetSpec {
     pub miss_beat: String,
     /// Played by a victim this action puts out of play, instead of `hit_beat`.
     pub fall_beat: String,
+    /// Lua `f(c, t, damage) -> 1|0`: does a blow of that size rock the victim
+    /// off its feet? **Cosmetic.** The victim is knocked out of place and walks
+    /// back; its tile never changes.
+    ///
+    /// This is the line the whole design rests on. A stagger needs no
+    /// pathfinding, no ordering, and no agreement between peers, because it is a
+    /// beat: two machines may disagree about exactly where the sprite is
+    /// mid-flinch and still hold identical game state. What it may never do is
+    /// feed a rule.
+    pub stagger_func: Option<String>,
+    /// Beat a staggered victim plays. The resolver suffixes the direction, so
+    /// `staggered` becomes `staggered-ne`; a pack supplies one rule per compass
+    /// point.
+    pub stagger_beat: String,
+    /// Lua `f(c, t, damage) -> tiles`: how far this action **actually** moves the
+    /// victim. **Truth.** Thunderwave, a shove, a repelling blast: the token
+    /// relocates and stays there, so it is replicated, validated against the
+    /// board's geometry, and it changes reach and line of sight.
+    ///
+    /// Zero, and `None`, mean the usual answer: nobody moves.
+    pub push_func: Option<String>,
+    /// Beat the victim plays on arriving at its new tile. The board has already
+    /// placed it there, so this beat slides it *in from* where it used to be:
+    /// the same directional keyframes as a stagger, run the other way.
+    pub push_beat: String,
 }
 
 /// Why an intent was refused. Every one of these is checked before any die is
@@ -123,6 +150,13 @@ pub struct Resolution {
     /// Tokens this action put out of play. The system decides (its `defeat_func`
     /// reading the sheet *after* the deltas land); the substrate merely obeys.
     pub defeated: Vec<TokenId>,
+    /// Forced movement the rules demand of the victim: `(unit step, tiles)`.
+    ///
+    /// The rules say *how hard and which way*. They do not say where it lands,
+    /// because the system does not know the board: a wall, a map edge, or another
+    /// token can stop a shove short, and that is the substrate's ruling. The host
+    /// walks it with [`isometry_core::push_path`].
+    pub push: Option<((i32, i32), u32)>,
 }
 
 /// A loaded game system: schema + a live sandboxed Lua interpreter with
@@ -1331,16 +1365,22 @@ impl System {
     /// Determinism: every die comes from `rng`, so a fixed entropy tape yields a
     /// byte-identical `Resolution`. That is what lets one machine resolve and
     /// every other machine merely apply.
+    #[allow(clippy::too_many_arguments)]
     pub fn resolve_action(
         &mut self,
         action_key: &str,
         actor: TokenId,
         actor_sheet: &SheetData,
+        actor_at: TileCoord,
         target: TokenId,
         target_sheet: &SheetData,
-        distance: u32,
+        target_at: TileCoord,
         rng: &mut Rng,
     ) -> Result<Resolution, ActionError> {
+        // The rules see where the two of them are standing, not merely how far
+        // apart. Reach needs the distance; a shove needs the direction; flanking
+        // and backstabs would need both, and can now have them.
+        let distance = isometry_core::distance(actor_at, target_at);
         if actor == target {
             return Err(ActionError::SelfTarget);
         }
@@ -1373,6 +1413,10 @@ impl System {
             hit_beat: spec.hit_beat.clone(),
             miss_beat: spec.miss_beat.clone(),
             fall_beat: spec.fall_beat.clone(),
+            stagger_func: spec.stagger_func.clone(),
+            stagger_beat: spec.stagger_beat.clone(),
+            push_func: spec.push_func.clone(),
+            push_beat: spec.push_beat.clone(),
         };
         let by = actor_sheet.text("name").unwrap_or("?").to_owned();
 
@@ -1440,11 +1484,45 @@ impl System {
             }
         }
 
-        // 5. The representation. A token that goes down falls rather than
-        //    flinching: the beat follows the outcome, which is how a richer
-        //    vocabulary grows later without this code changing.
+        // 5. Force. Two different things share a direction and must not be
+        //    confused: how far the blow *actually* moves the victim (truth, and
+        //    so replicated and geometry-bound), and whether it merely rocks it
+        //    off its feet (representation, and so free).
+        let dealt = damage.as_ref().map_or(0, |d| d.total) as i64;
+        let step = isometry_core::away(actor_at, target_at);
+        let push_tiles = match (&spec.push_func, hit) {
+            (Some(func), true) => self
+                .call_int_ctx(func, actor_sheet, Some(target_sheet), Some(dealt))
+                .ok_or_else(|| ActionError::ScriptFailed(func.clone()))?
+                .max(0) as u32,
+            _ => 0,
+        };
+        let staggered = match (&spec.stagger_func, hit) {
+            (Some(func), true) => {
+                self.call_int_ctx(func, actor_sheet, Some(target_sheet), Some(dealt))
+                    .ok_or_else(|| ActionError::ScriptFailed(func.clone()))?
+                    != 0
+            }
+            _ => false,
+        };
+
+        // 6. The representation. The beat follows the outcome, which is how a
+        //    richer vocabulary grows later without this code changing at all.
+        let dir = isometry_core::compass(step);
+        let suffix = |base: &str| match dir {
+            Some(d) => format!("{base}-{d}"),
+            None => base.to_owned(),
+        };
         let victim_beat = if !defeated.is_empty() {
+            // Dropped where it stood. A corpse does not stagger.
             spec.fall_beat.clone()
+        } else if push_tiles > 0 {
+            // Actually moved: the board will place it on the new tile, so the
+            // beat slides it in from the old one.
+            suffix(&spec.push_beat)
+        } else if staggered {
+            // Rocked back and recovers. Nothing moved.
+            suffix(&spec.stagger_beat)
         } else if hit {
             spec.hit_beat.clone()
         } else {
@@ -1462,6 +1540,7 @@ impl System {
             deltas,
             beats,
             defeated,
+            push: (push_tiles > 0).then_some((step, push_tiles)),
         })
     }
 }
@@ -1577,6 +1656,36 @@ pub fn srd_5e() -> System {
                 hit_beat: "recoil".to_owned(),
                 miss_beat: "dodge".to_owned(),
                 fall_beat: "fall".to_owned(),
+                // A solid blow rocks you back. Purely a flourish: 5e melee does
+                // not move anybody, and nor does this.
+                stagger_func: Some("a_attack_stagger".to_owned()),
+                stagger_beat: "staggered".to_owned(),
+                push_func: None,
+                push_beat: "shoved".to_owned(),
+            }),
+        },
+        // The other half of the contrast, and the reason both exist: a shove
+        // *actually* moves you. No damage, no stagger, a real tile change that
+        // every peer applies and that changes what you can reach and see.
+        ActionDef {
+            key: "shove".to_owned(),
+            label: "Shove".to_owned(),
+            base: "1d20".to_owned(),
+            func: "a_attack".to_owned(),
+            target: Some(TargetSpec {
+                range: 1,
+                hit_func: "a_attack_hit".to_owned(),
+                damage: "0".to_owned(),
+                damage_func: "a_zero".to_owned(),
+                damage_field: "hp_current".to_owned(),
+                actor_beat: "strike".to_owned(),
+                hit_beat: "recoil".to_owned(),
+                miss_beat: "dodge".to_owned(),
+                fall_beat: "fall".to_owned(),
+                stagger_func: None,
+                stagger_beat: "staggered".to_owned(),
+                push_func: Some("a_shove_push".to_owned()),
+                push_beat: "shoved".to_owned(),
             }),
         },
         check("str"),
@@ -1613,6 +1722,21 @@ pub fn srd_5e() -> System {
             if roll >= t.ac then return 1 else return 0 end
         end
         function a_attack_dmg(c) return ab_mod(c.str) end
+
+        function a_zero(c) return 0 end
+
+        -- Force. Two different questions that happen to share a direction.
+        --
+        -- A stagger is a *flourish*: a solid blow rocks the victim off its feet
+        -- and it recovers. It moves nobody, so it is free to differ between one
+        -- table's screen and another's.
+        function a_attack_stagger(c, t, dmg)
+            if dmg >= 5 then return 1 else return 0 end
+        end
+        -- A shove is *truth*: the victim ends up on a different tile and stays
+        -- there. The board decides where that is (a wall can stop it); the rules
+        -- only say how far and which way.
+        function a_shove_push(c, t, dmg) return 1 end
 
         -- Out of play. In 5e a creature at 0 hit points drops; a PC would roll
         -- death saves, which is a rule this system can grow without the
@@ -1967,7 +2091,7 @@ end"#,
         let (mut sys, knight, goblin) = duel(1, 7);
         let mut rng = Rng::new(42);
         let r = sys
-            .resolve_action("attack", KNIGHT, &knight, GOBLIN, &goblin, 1, &mut rng)
+            .resolve_action("attack", KNIGHT, &knight, (0, 0), GOBLIN, &goblin, (1, 0), &mut rng)
             .expect("resolves");
 
         assert!(r.hit);
@@ -1979,10 +2103,13 @@ end"#,
         assert_eq!(r.deltas[0].token, GOBLIN);
         assert_eq!(r.deltas[0].key, "hp_current");
         assert_eq!(r.deltas[0].add, -(dmg.total as i64));
-        // And it represents itself.
+        // And it represents itself. A solid blow (5+) rocks the victim off its
+        // feet rather than merely flinching; either way nothing has moved.
         assert_eq!(r.beats.len(), 2);
         assert_eq!(r.beats[0], Beat::new(KNIGHT, "strike"));
-        assert_eq!(r.beats[1], Beat::new(GOBLIN, "recoil"));
+        let expected = if dmg.total >= 5 { "staggered-e" } else { "recoil" };
+        assert_eq!(r.beats[1], Beat::new(GOBLIN, expected));
+        assert!(r.push.is_none(), "a plain attack moves nobody");
     }
 
     #[test]
@@ -1991,7 +2118,7 @@ end"#,
         let (mut sys, knight, goblin) = duel(100, 7);
         let mut rng = Rng::new(42);
         let r = sys
-            .resolve_action("attack", KNIGHT, &knight, GOBLIN, &goblin, 1, &mut rng)
+            .resolve_action("attack", KNIGHT, &knight, (0, 0), GOBLIN, &goblin, (1, 0), &mut rng)
             .expect("resolves");
 
         assert!(!r.hit);
@@ -2007,10 +2134,10 @@ end"#,
         let (mut a, knight, goblin) = duel(12, 7);
         let (mut b, _, _) = duel(12, 7);
         let first = a
-            .resolve_action("attack", KNIGHT, &knight, GOBLIN, &goblin, 1, &mut Rng::new(7))
+            .resolve_action("attack", KNIGHT, &knight, (0, 0), GOBLIN, &goblin, (1, 0), &mut Rng::new(7))
             .expect("resolves");
         let second = b
-            .resolve_action("attack", KNIGHT, &knight, GOBLIN, &goblin, 1, &mut Rng::new(7))
+            .resolve_action("attack", KNIGHT, &knight, (0, 0), GOBLIN, &goblin, (1, 0), &mut Rng::new(7))
             .expect("resolves");
         assert_eq!(first, second);
     }
@@ -2022,7 +2149,7 @@ end"#,
 
         // Out of reach: melee has range 1.
         assert_eq!(
-            sys.resolve_action("attack", KNIGHT, &knight, GOBLIN, &goblin, 3, &mut rng),
+            sys.resolve_action("attack", KNIGHT, &knight, (0, 0), GOBLIN, &goblin, (3, 0), &mut rng),
             Err(ActionError::OutOfRange {
                 range: 1,
                 distance: 3
@@ -2030,12 +2157,12 @@ end"#,
         );
         // No hitting yourself.
         assert_eq!(
-            sys.resolve_action("attack", KNIGHT, &knight, KNIGHT, &knight, 0, &mut rng),
+            sys.resolve_action("attack", KNIGHT, &knight, (0, 0), KNIGHT, &knight, (0, 0), &mut rng),
             Err(ActionError::SelfTarget)
         );
         // An ability check names no victim, so it cannot be resolved at one.
         assert_eq!(
-            sys.resolve_action("str_check", KNIGHT, &knight, GOBLIN, &goblin, 1, &mut rng),
+            sys.resolve_action("str_check", KNIGHT, &knight, (0, 0), GOBLIN, &goblin, (1, 0), &mut rng),
             Err(ActionError::NotTargeted("str_check".to_owned()))
         );
         assert!(sys.is_targeted("attack"));
@@ -2044,10 +2171,10 @@ end"#,
         // The rng was never drawn from, so a refused intent is truly inert.
         let mut fresh = Rng::new(42);
         let a = sys
-            .resolve_action("attack", KNIGHT, &knight, GOBLIN, &goblin, 1, &mut rng)
+            .resolve_action("attack", KNIGHT, &knight, (0, 0), GOBLIN, &goblin, (1, 0), &mut rng)
             .expect("resolves");
         let b = sys
-            .resolve_action("attack", KNIGHT, &knight, GOBLIN, &goblin, 1, &mut fresh)
+            .resolve_action("attack", KNIGHT, &knight, (0, 0), GOBLIN, &goblin, (1, 0), &mut fresh)
             .expect("resolves");
         assert_eq!(a, b);
     }
@@ -2058,7 +2185,7 @@ end"#,
         let (mut sys, knight, goblin) = duel(1, 1);
         let mut rng = Rng::new(42);
         let r = sys
-            .resolve_action("attack", KNIGHT, &knight, GOBLIN, &goblin, 1, &mut rng)
+            .resolve_action("attack", KNIGHT, &knight, (0, 0), GOBLIN, &goblin, (1, 0), &mut rng)
             .expect("resolves");
 
         assert!(r.hit);
@@ -2072,11 +2199,13 @@ end"#,
         // 50 hit points: a longsword is not going to do it.
         let (mut sys, knight, goblin) = duel(1, 50);
         let r = sys
-            .resolve_action("attack", KNIGHT, &knight, GOBLIN, &goblin, 1, &mut Rng::new(42))
+            .resolve_action("attack", KNIGHT, &knight, (0, 0), GOBLIN, &goblin, (1, 0), &mut Rng::new(42))
             .expect("resolves");
         assert!(r.hit);
         assert!(r.defeated.is_empty());
-        assert_eq!(r.beats[1], Beat::new(GOBLIN, "recoil"));
+        let dmg = r.damage.as_ref().expect("a hit rolls damage").total;
+        let expected = if dmg >= 5 { "staggered-e" } else { "recoil" };
+        assert_eq!(r.beats[1], Beat::new(GOBLIN, expected), "still standing");
     }
 
     #[test]
@@ -2086,21 +2215,21 @@ end"#,
         assert!(sys.is_defeated(&goblin));
         let mut rng = Rng::new(42);
         assert_eq!(
-            sys.resolve_action("attack", KNIGHT, &knight, GOBLIN, &goblin, 1, &mut rng),
+            sys.resolve_action("attack", KNIGHT, &knight, (0, 0), GOBLIN, &goblin, (1, 0), &mut rng),
             Err(ActionError::AlreadyDefeated)
         );
         // Refused before any die is rolled, so the swing costs nothing.
         let a = sys
-            .resolve_action("attack", KNIGHT, &knight, GOBLIN, &sys_sheet_alive(), 1, &mut rng)
+            .resolve_action("attack", KNIGHT, &knight, (0, 0), GOBLIN, &sys_sheet_alive(), (1, 0), &mut rng)
             .expect("a living target still resolves");
         let b = sys
             .resolve_action(
                 "attack",
                 KNIGHT,
                 &knight,
-                GOBLIN,
+                (0, 0), GOBLIN,
                 &sys_sheet_alive(),
-                1,
+                (1, 0),
                 &mut Rng::new(42),
             )
             .expect("resolves");
@@ -2115,6 +2244,68 @@ end"#,
         s.set_int("hp_current", 50);
         s.set_int("hp_max", 50);
         s
+    }
+
+    /// The distinction the whole force design rests on. Both come out of one
+    /// resolution, and only one of them is allowed to touch the game.
+    #[test]
+    fn a_stagger_is_a_flourish_and_a_shove_is_the_truth() {
+        // A solid hit staggers: the victim is rocked off its feet, in the
+        // direction the blow came from, and *nothing moves*.
+        let (mut sys, knight, goblin) = duel(1, 50);
+        let hit = sys
+            .resolve_action(
+                "attack",
+                KNIGHT,
+                &knight,
+                (4, 4),
+                GOBLIN,
+                &goblin,
+                (5, 4), // due east of the knight
+                &mut Rng::new(3),
+            )
+            .expect("resolves");
+        assert!(hit.hit);
+        assert_eq!(hit.beats[1], Beat::new(GOBLIN, "staggered-e"), "shoved east");
+        assert!(
+            hit.push.is_none(),
+            "a stagger must not move anybody: it is representation, and state that \
+             came out of a flourish could not be agreed on"
+        );
+
+        // A shove is the other thing entirely: real forced movement, one tile,
+        // and the rules only say how far and which way.
+        let (mut sys, knight, goblin) = duel(1, 50);
+        let shove = sys
+            .resolve_action(
+                "shove",
+                KNIGHT,
+                &knight,
+                (4, 4),
+                GOBLIN,
+                &goblin,
+                (5, 4),
+                &mut Rng::new(3),
+            )
+            .expect("resolves");
+        assert!(shove.hit);
+        assert_eq!(shove.push, Some(((1, 0), 1)), "one tile, due east");
+        assert_eq!(shove.beats[1], Beat::new(GOBLIN, "shoved-e"));
+        // And it does no damage, so it changes position and nothing else.
+        assert!(shove.deltas.iter().all(|d| d.add == 0));
+    }
+
+    #[test]
+    fn the_board_rules_on_where_a_shove_lands() {
+        // The system says "one tile east". The substrate is what knows there is
+        // a wall there, so `push_path` is where the shove actually stops.
+        let blocked = isometry_core::push_path((5, 4), (1, 0), 1, |_| false);
+        assert_eq!(blocked, None, "shoved into a wall: nobody moves");
+        let clear = isometry_core::push_path((5, 4), (1, 0), 2, |_| true);
+        assert_eq!(clear, Some((7, 4)), "two clear tiles east");
+        // Stopped short by an obstacle on the second tile.
+        let short = isometry_core::push_path((5, 4), (1, 0), 2, |at| at == (6, 4));
+        assert_eq!(short, Some((6, 4)));
     }
 
     #[test]

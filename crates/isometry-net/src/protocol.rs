@@ -5,7 +5,8 @@ use isometry_campaign::{
     WorldEvent, WorldFact,
 };
 use isometry_core::{
-    Beat, MapDocument, RollRecord, SessionEvent, SheetData, SheetDelta, TokenId, TurnList,
+    Beat, MapDocument, RollRecord, SessionEvent, SheetData, SheetDelta, TileCoord, TokenId,
+    TurnList,
 };
 use serde::{Deserialize, Serialize};
 
@@ -104,6 +105,15 @@ pub struct ActionResolved {
     /// substrate then skips their turns and refuses them as targets.
     #[serde(default)]
     pub defeated: Vec<TokenId>,
+    /// Forced movement: tokens this action actually relocated, and to where.
+    ///
+    /// The counterpart to a stagger beat, and the reason the two are separate
+    /// fields. A stagger is a flourish that peers may render differently and even
+    /// skip; **this** is game truth, so the landing tile is decided once, by the
+    /// board, and every peer applies exactly it. Reach, line of sight, and the
+    /// next player's options all change because of it.
+    #[serde(default)]
+    pub displaced: Vec<(TokenId, TileCoord)>,
 }
 
 /// The replicated unit: a map mutation or a turn-order change. The host

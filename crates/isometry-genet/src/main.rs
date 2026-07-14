@@ -29,7 +29,7 @@ use isometry_campaign::{
     CampaignStore, EntropyTape, GenValue, GeneratorRequest, ItemId, ItemInstance, MapScale,
     WorldFact,
 };
-use isometry_core::{FieldValue, Rng, TokenId};
+use isometry_core::{FieldValue, Rng, TileCoord, TokenId};
 use isometry_net::{apply_game, ActionResolved, GameEvent, GameSnapshot, HostSession};
 use isometry_system::{
     monster_sheet, srd_5e, srd_bestiary, srd_items, srd_spells, ActionError, GeneratorCatalog,
@@ -880,10 +880,10 @@ impl App {
         // everything else. Only the resolved outcome is replicated, so peers
         // apply it without rerunning a line of Lua.
         if let Some((actor, target, key)) = intent {
-            let (actor_sheet, actor_inv, target_sheet, target_inv, reach, turn_ok) = {
+            let (actor_sheet, actor_inv, target_sheet, target_inv, tiles, turn_ok) = {
                 let s = runner.state();
-                let dist = match (s.map.token(actor), s.map.token(target)) {
-                    (Some(a), Some(t)) => Some(isometry_core::distance(a.at, t.at)),
+                let tiles = match (s.map.token(actor), s.map.token(target)) {
+                    (Some(a), Some(t)) => Some((a.at, t.at)),
                     _ => None,
                 };
                 // An empty turn order means free play (the editor, a hot-seat
@@ -895,13 +895,13 @@ impl App {
                     s.inventories.get(&actor).cloned(),
                     s.map.sheet(target).cloned(),
                     s.inventories.get(&target).cloned(),
-                    dist,
+                    tiles,
                     turn_ok,
                 )
             };
 
             let outcome: Result<_, String> = (|| {
-                let dist = reach.ok_or_else(|| "no such target".to_owned())?;
+                let (actor_at, target_at) = tiles.ok_or_else(|| "no such target".to_owned())?;
                 if !turn_ok {
                     return Err("not your turn".to_owned());
                 }
@@ -918,9 +918,10 @@ impl App {
                         &key,
                         actor,
                         &actor_eff,
+                        actor_at,
                         target,
                         &target_eff,
-                        dist,
+                        target_at,
                         &mut self.action_rng,
                     )
                     .map_err(|e| match e {
@@ -956,6 +957,30 @@ impl App {
                         return;
                     }
                 };
+
+                // Where does a shove actually land? The rules said how hard and
+                // which way; the *board* rules on the rest, because a wall, a map
+                // edge, or another body stops a push short and the system does
+                // not know the map. This is truth, so it is decided once and
+                // replicated, unlike the stagger beat riding alongside it.
+                let mut displaced = Vec::new();
+                if let Some((step, tiles)) = resolution.push {
+                    if let Some(from) = ui.map.token(target).map(|t| t.at) {
+                        let occupied: Vec<TileCoord> =
+                            ui.map.tokens.iter().map(|t| t.at).collect();
+                        let (w, h) = (ui.map.ground.width(), ui.map.ground.height());
+                        let landing = isometry_core::push_path(from, step, tiles, |at| {
+                            at.0 >= 0
+                                && at.1 >= 0
+                                && (at.0 as u32) < w
+                                && (at.1 as u32) < h
+                                && !occupied.contains(&at)
+                        });
+                        if let Some(to) = landing {
+                            displaced.push((target, to));
+                        }
+                    }
+                }
                 let victim = ui
                     .map
                     .token(target)
@@ -988,6 +1013,7 @@ impl App {
                     deltas: resolution.deltas,
                     beats: resolution.beats,
                     defeated: resolution.defeated,
+                    displaced,
                 });
                 if ui.net_mode == NetMode::Remote {
                     // In session the authority applies it and mirrors the
@@ -998,6 +1024,11 @@ impl App {
                     // Solo: no authority to route through, so apply it here.
                     for delta in &res.deltas {
                         ui.map.apply_delta(delta);
+                    }
+                    for (token, to) in &res.displaced {
+                        if let Some(t) = ui.map.tokens.iter_mut().find(|t| t.id == *token) {
+                            t.at = *to;
+                        }
                     }
                     for token in &res.defeated {
                         ui.map.set_defeated(*token, true);
@@ -1361,6 +1392,7 @@ impl App {
             return;
         }
         self.combat_swings -= 1;
+        let swings_left = self.combat_swings;
 
         let Some(system) = self.system.as_mut() else {
             return;
@@ -1399,15 +1431,20 @@ impl App {
                     ui.map.sheet(TokenId(2)).and_then(|s| s.int("ac")),
                 );
             }
-            // The intent, exactly as a target-pick click would produce it.
-            ui.action_intent = Some((TokenId(1), TokenId(2), "attack".to_owned()));
+            // Shove first, then attack, so the run contrasts the two kinds of
+            // force. A shove *displaces* (truth: the goblin's tile really
+            // changes, and the knight can no longer reach it) while an attack at
+            // most *staggers* (a flourish that moves nobody).
+            let action = if swings_left >= 2 { "shove" } else { "attack" };
+            ui.action_intent = Some((TokenId(1), TokenId(2), action.to_owned()));
         });
         self.pump_sheets();
         if let Some(runner) = self.runner.as_ref() {
             let ui = runner.state();
             eprintln!(
-                "[isometry] combat selftest: {} | goblin hp = {:?} | beats = {:?}",
+                "[isometry] combat selftest: {} | goblin @{:?} hp {:?} | beats = {:?}",
                 ui.status,
+                ui.map.token(TokenId(2)).map(|t| t.at),
                 ui.map.sheet(TokenId(2)).and_then(|s| s.int("hp_current")),
                 ui.beats,
             );
