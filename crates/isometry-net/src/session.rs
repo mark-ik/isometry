@@ -40,6 +40,13 @@ pub enum GameError {
 
 const MAX_GENERATION_VALUE_DEPTH: usize = 16;
 
+/// Hand a fresh set of beats to every peer's board. Bumping the sequence is what
+/// makes two identical consecutive strikes play twice rather than once.
+fn play_beats(state: &mut GameSnapshot, beats: Vec<isometry_core::Beat>) {
+    state.last_beats = beats;
+    state.beat_seq = state.beat_seq.wrapping_add(1);
+}
+
 /// Append a roll to the shared log, dropping the oldest past the cap.
 fn push_roll(state: &mut GameSnapshot, record: &isometry_core::RollRecord) {
     state.roll_log.push(record.clone());
@@ -69,7 +76,11 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
             Ok(())
         }
         GameEvent::TurnAdvance => {
-            state.turns.advance();
+            // The fallen do not get a turn. Deterministic and replicated: the
+            // skip is computed from state every peer already has, so nobody has
+            // to be told about it separately.
+            let map = &state.map;
+            state.turns.advance_skipping(|id| map.is_defeated(id));
             Ok(())
         }
         GameEvent::TurnSetOrder(order) => {
@@ -97,13 +108,20 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
             for delta in &res.deltas {
                 state.map.apply_delta(delta);
             }
+            for token in &res.defeated {
+                state.map.set_defeated(*token, true);
+            }
             push_roll(state, &res.attack);
             if let Some(damage) = &res.damage {
                 push_roll(state, damage);
             }
-            state.last_action = Some(res.clone());
-            state.action_seq = state.action_seq.wrapping_add(1);
+            play_beats(state, res.beats.clone());
             sync_active_map(state);
+            Ok(())
+        }
+        GameEvent::Emoted { token, beat } => {
+            require_token(state, *token)?;
+            play_beats(state, vec![isometry_core::Beat::new(*token, beat.clone())]);
             Ok(())
         }
         GameEvent::SheetSet { token, sheet } => {

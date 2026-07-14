@@ -71,6 +71,25 @@ impl TurnList {
             self.active = (self.active + 1) % self.entries.len();
         }
     }
+
+    /// Advance to the next turn that `skip` does not reject: the corpse on the
+    /// floor does not get to take its turn.
+    ///
+    /// The substrate does not know *why* a token is skipped; a system plugin
+    /// decides that (hit points at zero, stunned, fled) and the caller passes the
+    /// verdict in. If every remaining token is skippable the cursor still moves
+    /// exactly one step, so a wiped-out order cannot spin forever.
+    pub fn advance_skipping(&mut self, skip: impl Fn(TokenId) -> bool) {
+        if self.entries.is_empty() {
+            return;
+        }
+        for _ in 0..self.entries.len() {
+            self.advance();
+            if !self.active().is_some_and(&skip) {
+                return;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -119,6 +138,33 @@ mod tests {
         t.set_order(vec![TokenId(9), TokenId(8), TokenId(7)]);
         assert_eq!(t.entries(), &[TokenId(9), TokenId(8), TokenId(7)]);
         assert_eq!(t.active(), Some(TokenId(9)));
+    }
+
+    #[test]
+    fn advance_skips_the_fallen() {
+        let mut t = TurnList::new();
+        for i in 1..=4 {
+            t.add(TokenId(i));
+        }
+        // 2 and 3 are down; the turn passes from 1 straight to 4.
+        let down = |id: TokenId| id == TokenId(2) || id == TokenId(3);
+        assert_eq!(t.active(), Some(TokenId(1)));
+        t.advance_skipping(down);
+        assert_eq!(t.active(), Some(TokenId(4)));
+        // And wraps back past them.
+        t.advance_skipping(down);
+        assert_eq!(t.active(), Some(TokenId(1)));
+    }
+
+    #[test]
+    fn a_wiped_out_order_still_advances_exactly_once() {
+        let mut t = TurnList::new();
+        for i in 1..=3 {
+            t.add(TokenId(i));
+        }
+        // Everyone is down: the cursor must move rather than spin forever.
+        t.advance_skipping(|_| true);
+        assert_eq!(t.active(), Some(TokenId(1)), "one full lap, back to the top");
     }
 
     #[test]

@@ -52,18 +52,21 @@ pub struct GameSnapshot {
     /// Public world state. Secret fact bodies stay in `CampaignStore`.
     #[serde(default)]
     pub world: CampaignWorld,
-    /// The most recently applied action, kept so that *every* peer can play its
-    /// beats, not just the one that resolved it. A client renders from the
-    /// snapshot, so without this the defender's recoil would only ever be seen
-    /// on the host.
+    /// The beats of the most recently applied event, kept so that *every* peer
+    /// can play them and not only the peer that produced them. A client renders
+    /// from the snapshot, so without this the defender's recoil would be seen on
+    /// the host alone.
     ///
-    /// This is representation, not truth: `action_seq` exists so a view can tell
-    /// "a new action landed" from "the same action re-delivered", and identical
-    /// consecutive attacks still each play. Neither field feeds a rule.
+    /// Deliberately a bare beat list rather than "the last action": an emote has
+    /// no resolution behind it, and the board should not have to care which kind
+    /// of event asked for a flourish. This is representation, not truth.
+    /// `beat_seq` exists so a view can tell a new flourish from the same snapshot
+    /// arriving twice, and so two identical consecutive strikes each play.
+    /// Neither field feeds a rule.
     #[serde(default)]
-    pub last_action: Option<ActionResolved>,
+    pub last_beats: Vec<Beat>,
     #[serde(default)]
-    pub action_seq: u64,
+    pub beat_seq: u64,
 }
 
 /// Rolls kept in the shared log; older ones drop off.
@@ -96,6 +99,11 @@ pub struct ActionResolved {
     /// How to show it. Purely representational; a peer that ignores every beat
     /// still converges on the same state and the same hash.
     pub beats: Vec<Beat>,
+    /// Tokens this action put out of play, as judged by the rules system. Unlike
+    /// the beats, this *is* state: applying it marks them defeated, and the
+    /// substrate then skips their turns and refuses them as targets.
+    #[serde(default)]
+    pub defeated: Vec<TokenId>,
 }
 
 /// The replicated unit: a map mutation or a turn-order change. The host
@@ -158,6 +166,14 @@ pub enum GameEvent {
     /// silently re-tag every later variant and misread existing saved
     /// checkpoints.
     ActionResolved(ActionResolved),
+    /// A token plays a beat for its own sake: a cheer, a shrug, a taunt.
+    ///
+    /// The same primitive as a combat beat, with no resolution behind it and no
+    /// state to change. That is the whole of the emote system: it needs no
+    /// rules, no dice, and no new rendering, because a beat already exists.
+    /// Unlike an action, a player may throw this for themselves, since the worst
+    /// a liar can do is wave.
+    Emoted { token: TokenId, beat: String },
 }
 
 /// One message on the wire. The host is the authority: clients send

@@ -243,9 +243,50 @@ pub fn board_css() -> String {
     35%  { transform: translate(-3px, 3px); }
     100% { transform: translate(0px, 0px); }
 }
+/* Going down. The sprite drops and stays down: `forwards` holds the final
+   frame, so the corpse does not spring back up when the animation ends. */
+@keyframes iso-fall {
+    0%   { transform: translate(0px, 0px); opacity: 1; }
+    30%  { transform: translate(3px, -3px); opacity: 1; }
+    100% { transform: translate(6px, 10px); opacity: 0.55; }
+}
+/* Emotes. Exactly the same primitive as a combat beat, which is the point: the
+   emote system is a vocabulary, not a subsystem. */
+@keyframes iso-cheer {
+    0%   { transform: translate(0px, 0px); }
+    25%  { transform: translate(0px, -7px); }
+    50%  { transform: translate(0px, 0px); }
+    75%  { transform: translate(0px, -4px); }
+    100% { transform: translate(0px, 0px); }
+}
+@keyframes iso-shrug {
+    0%   { transform: translate(0px, 0px); }
+    30%  { transform: translate(-3px, -2px); }
+    70%  { transform: translate(3px, -2px); }
+    100% { transform: translate(0px, 0px); }
+}
+@keyframes iso-taunt {
+    0%   { transform: translate(0px, 0px); }
+    20%  { transform: translate(4px, 0px); }
+    40%  { transform: translate(-2px, 0px); }
+    60%  { transform: translate(4px, 0px); }
+    80%  { transform: translate(-2px, 0px); }
+    100% { transform: translate(0px, 0px); }
+}
 .beat-strike { animation: iso-strike 420ms ease-out; }
 .beat-recoil { animation: iso-recoil 380ms ease-out; }
 .beat-dodge  { animation: iso-dodge 320ms ease-in-out; }
+.beat-fall   { animation: iso-fall 520ms ease-in forwards; }
+.beat-cheer  { animation: iso-cheer 620ms ease-in-out; }
+.beat-shrug  { animation: iso-shrug 500ms ease-in-out; }
+.beat-taunt  { animation: iso-taunt 560ms ease-in-out; }
+
+/* Out of play: dimmed and slumped, held after the fall beat is cleared. A
+   corpse is not clickable as a target (the view withholds `.beat-targetable`). */
+.beat-down {
+    transform: translate(6px, 10px);
+    opacity: 0.55;
+}
 
 /* Target-pick mode: everything clickable reads as a victim. */
 .beat-targetable { cursor: crosshair; }

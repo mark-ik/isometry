@@ -132,9 +132,11 @@ struct App {
     net_selftest: bool,
     /// `ISOMETRY_COMBAT_SELFTEST`: drive a short adjudicated exchange on boot.
     combat_selftest: bool,
-    /// Swings left to throw, and when the last one landed.
+    /// Swings left to throw, when the last one landed, and whether the winner
+    /// has taken its bow.
     combat_swings: u8,
     last_swing: Option<Instant>,
+    combat_emoted: bool,
     /// Session start instant, for the self-test delay.
     started: Option<Instant>,
     selftest_fired: bool,
@@ -436,8 +438,8 @@ impl App {
                                     maps: ui.campaign_maps.clone(),
                                     active_map: ui.active_map.clone(),
                                     world: ui.world.clone(),
-                                    last_action: None,
-                                    action_seq: 0,
+                                    last_beats: Vec::new(),
+                                    beat_seq: 0,
                                 },
                             ));
                         }
@@ -926,7 +928,13 @@ impl App {
                             format!("out of reach ({distance} tiles, reach {range})")
                         }
                         ActionError::SelfTarget => "cannot target yourself".to_owned(),
-                        other => format!("action failed: {other:?}"),
+                        ActionError::AlreadyDefeated => "that one is already down".to_owned(),
+                        ActionError::NotTargeted(key) => format!("{key} needs no target"),
+                        ActionError::UnknownAction(key) => format!("no such action: {key}"),
+                        // A script or dice-expression fault is the system's bug,
+                        // not the player's; name it rather than hiding it.
+                        ActionError::ScriptFailed(f) => format!("system script failed: {f}"),
+                        ActionError::BadDice(expr) => format!("system rolled bad dice: {expr}"),
                     })
             })();
 
@@ -954,10 +962,12 @@ impl App {
                     .and_then(|_| ui.map.sheet(target))
                     .and_then(|s| s.text("name").map(str::to_owned))
                     .unwrap_or_else(|| "target".to_owned());
+                let down = !resolution.defeated.is_empty();
                 ui.status = if resolution.hit {
                     let dmg = resolution.damage.as_ref().map_or(0, |d| d.total);
+                    let felled = if down { " and drops it" } else { "" };
                     format!(
-                        "{} hits {victim} ({}) for {dmg}",
+                        "{} hits {victim} ({}) for {dmg}{felled}",
                         resolution.attack.by, resolution.attack.total
                     )
                 } else {
@@ -977,6 +987,7 @@ impl App {
                     damage: resolution.damage,
                     deltas: resolution.deltas,
                     beats: resolution.beats,
+                    defeated: resolution.defeated,
                 });
                 if ui.net_mode == NetMode::Remote {
                     // In session the authority applies it and mirrors the
@@ -987,6 +998,9 @@ impl App {
                     // Solo: no authority to route through, so apply it here.
                     for delta in &res.deltas {
                         ui.map.apply_delta(delta);
+                    }
+                    for token in &res.defeated {
+                        ui.map.set_defeated(*token, true);
                     }
                     ui.push_roll(res.attack.clone());
                     if let Some(damage) = &res.damage {
@@ -1059,8 +1073,8 @@ impl App {
                         maps: ui.campaign_maps.clone(),
                         active_map: ui.active_map.clone(),
                         world: ui.world.clone(),
-                        last_action: None,
-                        action_seq: 0,
+                        last_beats: Vec::new(),
+                        beat_seq: 0,
                     });
                 }
             });
@@ -1312,7 +1326,7 @@ impl App {
     /// actually using and silently types into their editor. Same rationale as
     /// `ISOMETRY_NET_SELFTEST`.
     fn maybe_combat_selftest(&mut self) {
-        if !self.combat_selftest || self.combat_swings == 0 {
+        if !self.combat_selftest || (self.combat_swings == 0 && self.combat_emoted) {
             return;
         }
         // Wait 2s for the first swing, then one per second: long enough for a
@@ -1329,6 +1343,23 @@ impl App {
         }
         let first = self.last_swing.is_none();
         self.last_swing = Some(Instant::now());
+
+        // The swings are spent: the winner celebrates. An emote is the same beat
+        // primitive, with no resolution behind it and nothing to adjudicate.
+        if self.combat_swings == 0 {
+            self.combat_emoted = true;
+            if let Some(runner) = self.runner.as_mut() {
+                runner.update(|ui| ui.emote(TokenId(1), "cheer"));
+                eprintln!(
+                    "[isometry] combat selftest: emote | beats = {:?}",
+                    runner.state().beats
+                );
+            }
+            if let Some(window) = self.window.as_ref() {
+                window.request_redraw();
+            }
+            return;
+        }
         self.combat_swings -= 1;
 
         let Some(system) = self.system.as_mut() else {
@@ -1623,8 +1654,8 @@ impl ApplicationHandler for App {
                     maps: ui.campaign_maps.clone(),
                     active_map: ui.active_map.clone(),
                     world: ui.world.clone(),
-                    last_action: None,
-                    action_seq: 0,
+                    last_beats: Vec::new(),
+                    beat_seq: 0,
                 };
                 self.net = Some(NetBridge::spawn(Role::Host {
                     state: snapshot,
@@ -1681,7 +1712,7 @@ impl ApplicationHandler for App {
         self.maybe_combat_selftest();
         // A still board parks on `Wait`, which blocks until input arrives, so an
         // armed selftest would never reach its own deadline. Tick until it fires.
-        if self.combat_selftest && self.combat_swings > 0 {
+        if self.combat_selftest && !(self.combat_swings == 0 && self.combat_emoted) {
             event_loop.set_control_flow(ControlFlow::WaitUntil(
                 Instant::now() + Duration::from_millis(100),
             ));
@@ -2054,6 +2085,7 @@ fn main() {
         combat_selftest: std::env::var_os("ISOMETRY_COMBAT_SELFTEST").is_some(),
         combat_swings: 4,
         last_swing: None,
+        combat_emoted: false,
         started: None,
         selftest_fired: false,
         system: None,

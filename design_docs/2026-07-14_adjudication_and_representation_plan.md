@@ -1,12 +1,12 @@
 # Adjudication and representation
 
 **Date:** 2026-07-14
-**Status:** active plan (2026-07-14). **A0-A3 landed: Isometry adjudicates.** A
-knight now swings at a goblin, the app decides whether it lands, the goblin loses
-hit points, and the exchange plays out on the board. A4 (emotes) and A5 (pack
-choreography) are planned and cheap, because they reuse the same primitive.
-This is the game lane: it answers the fork the project has been walking around
-since 2026-07-07.
+**Status:** active plan (2026-07-14). **A0-A4 landed, plus defeat: a fight can now
+be won.** A knight swings at a goblin, the app decides whether it lands, the goblin
+loses hit points, drops at zero, stops taking turns, and stops being a legal target;
+the winner cheers. A5 (choreography as pack data) and client-initiated attacks
+remain. This is the game lane: it answers the fork the project had been walking
+around since 2026-07-07.
 
 **Related:**
 [next_horizons_landscape](2026-07-07_next_horizons_landscape.md) (this answers its
@@ -278,6 +278,32 @@ unsheeted token is refused whole rather than half-applied. In-app
 times, missing on 11 and 9 and hitting for 7 and 12, taking the goblin from 7 hit
 points to 0 and below. 134 workspace tests green.
 
+### A2b. Defeat (LANDED 2026-07-14)
+
+Closes open question 5. A fight that cannot be won is not a fight.
+
+- The **system** decides, in Lua: `s_defeated(c)` returns whether `hp_current <= 0`.
+  A `System` without the concept simply declares no `defeat_func`. Death saves, dying
+  conditions, and revival are that script growing, not the substrate learning.
+- The **substrate** obeys, generically. `MapDocument.defeated` is a set of tokens out
+  of play; core does not know why. What it does with it is mechanical, exactly as it
+  treats elevation: `TurnList::advance_skipping` passes the fallen by, the resolver
+  refuses them as targets, and the view slumps and dims them.
+- The resolver judges defeat against the sheet *after* the deltas land, and a
+  defeated victim plays `fall` instead of `recoil`. The fall holds its final frame
+  (`forwards`), and `.beat-down` keeps the pose once the beat class is cleared.
+
+**Done when:** a killing blow marks the target defeated on every peer; the fallen
+token is skipped by turn advance; swinging at a corpse is refused before any die is
+rolled; and a downed token reads as downed on the board.
+
+**Verified 2026-07-14.** Unit: a killing blow reports `defeated` and swaps the beat
+to `fall`; a survivable hit does neither; a corpse is refused with `AlreadyDefeated`
+and the rng is left undrawn. Replication: defeat reaches the client (or it would
+still offer a corpse as a target), and turn advance skips the fallen on every peer,
+computed from state each already holds rather than being told. In-app: the goblin
+takes 7, drops to 0, falls, and the next two swings are refused.
+
 ### A3. Beats on resolution (LANDED 2026-07-14)
 
 Wire A1 and A2 together: the resolved event drives the representation.
@@ -300,7 +326,7 @@ so the *next* strike is a genuine restyle and animates rather than standing stil
 The late-joiner replay is not yet exercised (`last_action` rides the snapshot, so a
 joiner receives the most recent exchange rather than the whole history).
 
-### A4. Emotes
+### A4. Emotes (LANDED 2026-07-14)
 
 The same primitive, no `ActionResolved` behind it.
 
@@ -310,6 +336,14 @@ The same primitive, no `ActionResolved` behind it.
 
 **Done when:** a player triggers an emote on their own token, every peer sees it, and
 it costs no new rendering or replication machinery.
+
+**Verified 2026-07-14.** `GameEvent::Emoted { token, beat }` reuses the beat wrapper,
+the beat playback, and the pack's keyframes verbatim; the snapshot's beat channel was
+generalized from "the last action" to a bare `last_beats` list, because an emote has
+no resolution behind it and the board should not care which kind of event asked for a
+flourish. Unlike an attack, **a client's own emote is accepted**: there is no verdict
+to forge and no state to change, so the worst a liar can do is wave. Cheer, shrug, and
+taunt ship as the starter vocabulary. In-app: the winner cheers over the body.
 
 ### A5. Choreography as pack data
 
@@ -333,13 +367,10 @@ it costs no new rendering or replication machinery.
    one. Default: beats never block input.
 4. **Do conditions become substrate-visible?** next-horizons B.5, still open, and A2
    does not force it. Deferred.
-5. **Nothing dies yet.** The core applies a delta without clamping, on the grounds
-   that whether a value may go negative is a rule. It is, but no rule currently reads
-   it: the selftest's goblin sits at -12 hit points and can still be attacked. Defeat
-   was always a named follow-on, and this is the shape it should take: a system-owned
-   condition (`hp_current <= 0` implies `defeated`) that the substrate can see well
-   enough to skip a turn and grey a token, which is next-horizons B.5 arriving from
-   the other direction.
+5. ~~**Nothing dies yet.**~~ **Answered 2026-07-14 (A2b).** Defeat is system-judged
+   and substrate-obeyed, exactly as sketched: it is next-horizons B.5 arriving from
+   the practical direction, and it suggests the same shape will work for the rest of
+   the condition list (stunned, prone, blinded) when movement and senses need it.
 6. **A client cannot yet attack.** The host adjudicates, and a client that proposes a
    resolution is rejected (as it must be, or a player picks their own damage). What is
    missing is the *ask*: a `NetMessage::ActionIntent` the host app can drain and

@@ -219,7 +219,12 @@ fn token_el(ui: &UiState, token: &Token) -> UiChild {
         wrapper.push_str(" beat-");
         wrapper.push_str(beat);
     }
-    if ui.picking_target() {
+    let down = ui.map.is_defeated(id);
+    if down {
+        wrapper.push_str(" beat-down");
+    }
+    // A corpse is not a target, so it does not offer itself as one.
+    if ui.picking_target() && !down {
         wrapper.push_str(" beat-targetable");
     }
     let sprite: Vec<UiChild> = vec![Box::new(el("div", ()).attr("class", class))];
@@ -284,6 +289,26 @@ fn marker_el(ui: &UiState, token_id: isometry_core::TokenId, class: &str) -> Opt
     ))
 }
 
+/// The emote vocabulary offered in the token menu.
+///
+/// A starter list, and pack data once A5 lands: the app should not be the thing
+/// that decides a table may cheer but not spit.
+const EMOTES: [(&str, &str); 3] = [("cheer", "Cheer"), ("shrug", "Shrug"), ("taunt", "Taunt")];
+
+/// One menu row per emote.
+fn emote_items(id: isometry_core::TokenId) -> Vec<UiChild> {
+    EMOTES
+        .iter()
+        .map(|(beat, label)| {
+            let beat = *beat;
+            Box::new(clickable(
+                el("div", text(*label)).attr("class", "menu-item menu-emote"),
+                move |ui: &mut UiState, _| ui.emote(id, beat),
+            )) as UiChild
+        })
+        .collect()
+}
+
 /// The right-click context menu, or `None` when closed. An absolutely-
 /// positioned card at the click position (pane-local px) with token actions.
 fn context_menu_overlay(ui: &UiState) -> Option<UiChild> {
@@ -309,6 +334,9 @@ fn context_menu_overlay(ui: &UiState) -> Option<UiChild> {
                         ui.close_context_menu();
                     },
                 ),
+                // Emotes: the same beat primitive combat uses, with no
+                // resolution behind it. A player may throw one for themselves.
+                emote_items(id),
                 clickable(
                     el("div", text("Remove")).attr("class", "menu-item"),
                     move |ui: &mut UiState, _| ui.remove_token(id),

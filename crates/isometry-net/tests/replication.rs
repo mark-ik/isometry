@@ -52,8 +52,8 @@ fn snapshot() -> GameSnapshot {
         maps: Default::default(),
         active_map: None,
         world: Default::default(),
-        last_action: None,
-        action_seq: 0,
+        last_beats: Vec::new(),
+        beat_seq: 0,
     }
 }
 
@@ -98,6 +98,7 @@ fn attack_hit(damage: i64) -> GameEvent {
             Beat::new(TokenId(1), "strike"),
             Beat::new(TokenId(2), "recoil"),
         ],
+        defeated: Vec::new(),
     })
 }
 
@@ -257,14 +258,87 @@ fn a_resolved_attack_replicates_and_lands_on_every_peer() {
     // Both rolls reached the shared log, and the beats reached the client so it
     // can play the exchange rather than merely read about it.
     assert_eq!(sim.host.state().roll_log.len(), 2);
-    let last = sim.clients[&PeerId(10)]
-        .state()
-        .unwrap()
-        .last_action
-        .as_ref()
-        .expect("the client sees the action it must represent");
-    assert_eq!(last.beats.len(), 2);
-    assert!(last.hit);
+    let beats = &sim.clients[&PeerId(10)].state().unwrap().last_beats;
+    assert_eq!(beats.len(), 2, "the client must see the exchange to play it");
+    assert_eq!(beats[1], Beat::new(TokenId(2), "recoil"));
+    assert_converged(&sim);
+}
+
+#[test]
+fn a_killing_blow_replicates_and_the_fallen_lose_their_turn() {
+    let mut sim = Sim::new(HostSession::new(snapshot()));
+    sim.connect(PeerId(10));
+    sim.host_event(GameEvent::SheetSet {
+        token: TokenId(1),
+        sheet: sheet("Knight", 12, 16),
+    });
+    sim.host_event(GameEvent::SheetSet {
+        token: TokenId(2),
+        sheet: sheet("Goblin", 7, 15),
+    });
+    sim.host_event(GameEvent::TurnAdd(TokenId(1)));
+    sim.host_event(GameEvent::TurnAdd(TokenId(2)));
+
+    // A blow that drops the goblin. The system judged it; the substrate obeys.
+    let mut lethal = attack_hit(7);
+    if let GameEvent::ActionResolved(res) = &mut lethal {
+        res.defeated = vec![TokenId(2)];
+        res.beats[1] = Beat::new(TokenId(2), "fall");
+    }
+    sim.host_event(lethal);
+
+    let down = |s: &GameSnapshot| s.map.is_defeated(TokenId(2));
+    assert!(down(sim.host.state()));
+    assert!(
+        down(sim.clients[&PeerId(10)].state().unwrap()),
+        "the client must know it fell, or it will still let you swing at it"
+    );
+
+    // The turn passes from the knight straight back to the knight: the corpse
+    // does not get a turn, and every peer computes that skip from state it
+    // already has rather than being told about it.
+    assert_eq!(sim.host.state().turns.active(), Some(TokenId(1)));
+    sim.host_event(GameEvent::TurnAdvance);
+    assert_eq!(sim.host.state().turns.active(), Some(TokenId(1)));
+    assert_converged(&sim);
+}
+
+#[test]
+fn a_player_may_emote_for_itself_without_the_host_adjudicating() {
+    let mut sim = Sim::new(HostSession::new(snapshot()));
+    sim.connect(PeerId(10));
+
+    // Unlike an attack, a client's own emote is accepted: there is no verdict to
+    // forge and no state to change, so the worst a liar can do is wave.
+    sim.client_intent(
+        PeerId(10),
+        GameEvent::Emoted {
+            token: TokenId(2),
+            beat: "cheer".to_owned(),
+        },
+    );
+
+    let beats = &sim.host.state().last_beats;
+    assert_eq!(beats, &[Beat::new(TokenId(2), "cheer")]);
+    assert_eq!(
+        &sim.clients[&PeerId(10)].state().unwrap().last_beats,
+        beats,
+        "everyone at the table sees the cheer"
+    );
+    // It is a flourish, not a fact: no roll, no delta, nothing to undo.
+    assert!(sim.host.state().roll_log.is_empty());
+    assert_converged(&sim);
+
+    // An emote for a token that does not exist is still refused.
+    let seq = sim.host.seq();
+    sim.client_intent(
+        PeerId(10),
+        GameEvent::Emoted {
+            token: TokenId(99),
+            beat: "cheer".to_owned(),
+        },
+    );
+    assert_eq!(sim.host.seq(), seq);
     assert_converged(&sim);
 }
 

@@ -89,6 +89,8 @@ pub struct TargetSpec {
     pub actor_beat: String,
     pub hit_beat: String,
     pub miss_beat: String,
+    /// Played by a victim this action puts out of play, instead of `hit_beat`.
+    pub fall_beat: String,
 }
 
 /// Why an intent was refused. Every one of these is checked before any die is
@@ -99,6 +101,8 @@ pub enum ActionError {
     NotTargeted(String),
     SelfTarget,
     OutOfRange { range: u32, distance: u32 },
+    /// The victim is already out of play. Hitting a corpse is not a move.
+    AlreadyDefeated,
     ScriptFailed(String),
     BadDice(String),
 }
@@ -116,6 +120,9 @@ pub struct Resolution {
     pub damage: Option<RollRecord>,
     pub deltas: Vec<SheetDelta>,
     pub beats: Vec<Beat>,
+    /// Tokens this action put out of play. The system decides (its `defeat_func`
+    /// reading the sheet *after* the deltas land); the substrate merely obeys.
+    pub defeated: Vec<TokenId>,
 }
 
 /// A loaded game system: schema + a live sandboxed Lua interpreter with
@@ -126,6 +133,10 @@ pub struct System {
     pub fields: Vec<FieldDef>,
     pub derived: Vec<DerivedDef>,
     pub actions: Vec<ActionDef>,
+    /// Lua `f(c) -> 1|0`: is this character out of play? `None` for a system
+    /// with no such concept (a pure worldbuilding pack). The substrate never
+    /// asks *why*; it only acts on the answer.
+    pub defeat_func: Option<String>,
     lua: Lua,
 }
 
@@ -1141,8 +1152,25 @@ impl System {
             fields,
             derived,
             actions,
+            defeat_func: None,
             lua,
         })
+    }
+
+    /// Declare the system's out-of-play rule: a Lua `f(c) -> 1|0`. Systems
+    /// without a notion of defeat simply never call this.
+    pub fn with_defeat(mut self, func: impl Into<String>) -> Self {
+        self.defeat_func = Some(func.into());
+        self
+    }
+
+    /// Ask the system whether `sheet` is out of play. False when the system
+    /// declares no such rule.
+    pub fn is_defeated(&mut self, sheet: &SheetData) -> bool {
+        let Some(func) = self.defeat_func.clone() else {
+            return false;
+        };
+        self.call_int(&func, sheet).is_some_and(|v| v != 0)
     }
 
     /// A fresh sheet with the schema's default field values.
@@ -1316,6 +1344,11 @@ impl System {
         if actor == target {
             return Err(ActionError::SelfTarget);
         }
+        // Checked before anything is rolled: a corpse is not a target, so a swing
+        // at one costs nothing and changes nothing.
+        if self.is_defeated(target_sheet) {
+            return Err(ActionError::AlreadyDefeated);
+        }
         let Some(def) = self.actions.iter().find(|a| a.key == action_key) else {
             return Err(ActionError::UnknownAction(action_key.to_owned()));
         };
@@ -1339,6 +1372,7 @@ impl System {
             actor_beat: spec.actor_beat.clone(),
             hit_beat: spec.hit_beat.clone(),
             miss_beat: spec.miss_beat.clone(),
+            fall_beat: spec.fall_beat.clone(),
         };
         let by = actor_sheet.text("name").unwrap_or("?").to_owned();
 
@@ -1392,17 +1426,33 @@ impl System {
             });
         }
 
-        // 4. The representation.
+        // 4. Did that put anyone down? Ask the system, against the sheet as it
+        //    will be *after* the deltas land rather than as it is now. The
+        //    substrate is never consulted and never has to understand the answer.
+        let mut defeated = Vec::new();
+        if hit {
+            let mut after = target_sheet.clone();
+            for delta in deltas.iter().filter(|d| d.token == target) {
+                after.add_int(&delta.key, delta.add);
+            }
+            if self.is_defeated(&after) {
+                defeated.push(target);
+            }
+        }
+
+        // 5. The representation. A token that goes down falls rather than
+        //    flinching: the beat follows the outcome, which is how a richer
+        //    vocabulary grows later without this code changing.
+        let victim_beat = if !defeated.is_empty() {
+            spec.fall_beat.clone()
+        } else if hit {
+            spec.hit_beat.clone()
+        } else {
+            spec.miss_beat.clone()
+        };
         let beats = vec![
             Beat::new(actor, spec.actor_beat.clone()),
-            Beat::new(
-                target,
-                if hit {
-                    spec.hit_beat.clone()
-                } else {
-                    spec.miss_beat.clone()
-                },
-            ),
+            Beat::new(target, victim_beat),
         ];
 
         Ok(Resolution {
@@ -1411,6 +1461,7 @@ impl System {
             damage,
             deltas,
             beats,
+            defeated,
         })
     }
 }
@@ -1525,6 +1576,7 @@ pub fn srd_5e() -> System {
                 actor_beat: "strike".to_owned(),
                 hit_beat: "recoil".to_owned(),
                 miss_beat: "dodge".to_owned(),
+                fall_beat: "fall".to_owned(),
             }),
         },
         check("str"),
@@ -1561,9 +1613,17 @@ pub fn srd_5e() -> System {
             if roll >= t.ac then return 1 else return 0 end
         end
         function a_attack_dmg(c) return ab_mod(c.str) end
+
+        -- Out of play. In 5e a creature at 0 hit points drops; a PC would roll
+        -- death saves, which is a rule this system can grow without the
+        -- substrate learning anything new (it only ever sees the verdict).
+        function s_defeated(c)
+            if c.hp_current <= 0 then return 1 else return 0 end
+        end
     "#;
     System::load("5e-srd", "5e SRD", fields, derived, actions, script)
         .expect("builtin 5e system loads")
+        .with_defeat("s_defeated")
 }
 
 #[cfg(test)]
@@ -1886,7 +1946,7 @@ end"#,
 
     /// A knight who reliably hits, and a victim whose AC is the only variable.
     fn duel(target_ac: i64, target_hp: i64) -> (System, SheetData, SheetData) {
-        let mut sys = srd_5e();
+        let sys = srd_5e();
         let mut knight = sys.default_sheet();
         knight.set_text("name", "Knight");
         knight.set_int("str", 16); // +3, plus prof 2 => 1d20+5
@@ -1990,6 +2050,71 @@ end"#,
             .resolve_action("attack", KNIGHT, &knight, GOBLIN, &goblin, 1, &mut fresh)
             .expect("resolves");
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn a_killing_blow_puts_the_target_out_of_play_and_it_falls() {
+        // AC 1 so it always lands; 1 hit point so any damage is lethal.
+        let (mut sys, knight, goblin) = duel(1, 1);
+        let mut rng = Rng::new(42);
+        let r = sys
+            .resolve_action("attack", KNIGHT, &knight, GOBLIN, &goblin, 1, &mut rng)
+            .expect("resolves");
+
+        assert!(r.hit);
+        assert_eq!(r.defeated, vec![GOBLIN]);
+        // It falls rather than flinching: the beat follows the outcome.
+        assert_eq!(r.beats[1], Beat::new(GOBLIN, "fall"));
+    }
+
+    #[test]
+    fn a_survivable_hit_does_not_defeat() {
+        // 50 hit points: a longsword is not going to do it.
+        let (mut sys, knight, goblin) = duel(1, 50);
+        let r = sys
+            .resolve_action("attack", KNIGHT, &knight, GOBLIN, &goblin, 1, &mut Rng::new(42))
+            .expect("resolves");
+        assert!(r.hit);
+        assert!(r.defeated.is_empty());
+        assert_eq!(r.beats[1], Beat::new(GOBLIN, "recoil"));
+    }
+
+    #[test]
+    fn a_corpse_is_not_a_target() {
+        // Already at zero: the system says it is out of play.
+        let (mut sys, knight, goblin) = duel(15, 0);
+        assert!(sys.is_defeated(&goblin));
+        let mut rng = Rng::new(42);
+        assert_eq!(
+            sys.resolve_action("attack", KNIGHT, &knight, GOBLIN, &goblin, 1, &mut rng),
+            Err(ActionError::AlreadyDefeated)
+        );
+        // Refused before any die is rolled, so the swing costs nothing.
+        let a = sys
+            .resolve_action("attack", KNIGHT, &knight, GOBLIN, &sys_sheet_alive(), 1, &mut rng)
+            .expect("a living target still resolves");
+        let b = sys
+            .resolve_action(
+                "attack",
+                KNIGHT,
+                &knight,
+                GOBLIN,
+                &sys_sheet_alive(),
+                1,
+                &mut Rng::new(42),
+            )
+            .expect("resolves");
+        assert_eq!(a, b, "the refused swing must not have drawn from the rng");
+    }
+
+    /// A living stand-in victim (AC 1, plenty of hit points).
+    fn sys_sheet_alive() -> SheetData {
+        let mut s = srd_5e().default_sheet();
+        s.set_text("name", "Goblin");
+        s.set_int("ac", 1);
+        s.set_int("hp_current", 50);
+        s.set_int("hp_max", 50);
+        s
     }
 
     #[test]

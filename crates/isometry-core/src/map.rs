@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -67,6 +67,13 @@ pub struct MapDocument {
     /// plugin interprets them). `serde(default)` so older saves load.
     #[serde(default)]
     pub sheets: BTreeMap<TokenId, SheetData>,
+    /// Tokens that are out of play. The substrate does not know *why* (hit
+    /// points at zero, fled, banished): a system plugin decides that and says
+    /// so. What the substrate does with it is generic and mechanical, the same
+    /// way it treats elevation: skip the token's turn, refuse it as a target,
+    /// and let the view show it as fallen. `serde(default)` so older saves load.
+    #[serde(default)]
+    pub defeated: BTreeSet<TokenId>,
 }
 
 impl MapDocument {
@@ -80,6 +87,22 @@ impl MapDocument {
             elevation: TileGrid::new(width, height, 0),
             tokens: Vec::new(),
             sheets: BTreeMap::new(),
+            defeated: BTreeSet::new(),
+        }
+    }
+
+    /// Whether `id` is out of play.
+    pub fn is_defeated(&self, id: TokenId) -> bool {
+        self.defeated.contains(&id)
+    }
+
+    /// Mark `id` in or out of play. Reversible, because a healed or revived
+    /// token stands back up and the system is what says so.
+    pub fn set_defeated(&mut self, id: TokenId, down: bool) {
+        if down {
+            self.defeated.insert(id);
+        } else {
+            self.defeated.remove(&id);
         }
     }
 

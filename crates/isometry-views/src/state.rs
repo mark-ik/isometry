@@ -381,7 +381,7 @@ pub struct UiState {
     /// the view sets a class, the engine's animation clock runs it, and it is
     /// cleared when the clock says nothing is animating.
     pub beats: BTreeMap<TokenId, String>,
-    /// The `action_seq` whose beats have already been staged, so a replicated
+    /// The `beat_seq` whose beats have already been staged, so a replicated
     /// action plays once rather than on every snapshot mirror.
     pub beat_seq: u64,
     /// A monster spawn awaiting its stat block: `(token, monster key)`. The host
@@ -913,7 +913,32 @@ impl UiState {
             self.status = "cannot target yourself".to_owned();
             return;
         }
+        if self.map.is_defeated(target) {
+            self.status = "that one is already down".to_owned();
+            return;
+        }
         self.action_intent = Some((actor, target, key));
+    }
+
+    /// Play a beat on a token for its own sake: a cheer, a shrug, a taunt.
+    ///
+    /// The emote system in one method. It reuses the beat the combat lane
+    /// already defined, so it costs no new replication, no new rendering, and no
+    /// rules at all. Unlike an action it needs no adjudication, which is why a
+    /// player may throw one on their own token without asking the host.
+    pub fn emote(&mut self, token: TokenId, beat: &str) {
+        if self.map.token(token).is_none() || self.map.is_defeated(token) {
+            return;
+        }
+        self.close_context_menu();
+        if self.net_emit(GameEvent::Emoted {
+            token,
+            beat: beat.to_owned(),
+        }) {
+            return;
+        }
+        let seq = self.beat_seq.wrapping_add(1);
+        self.stage_beats(seq, &[isometry_core::Beat::new(token, beat)]);
     }
 
     /// Stage the beats of a freshly applied action, so the board plays the
@@ -1257,10 +1282,10 @@ impl UiState {
     /// are local and survive.
     pub fn apply_snapshot(&mut self, snap: GameSnapshot) {
         // Beats first: a client renders from the snapshot, so this is the only
-        // place it learns that an exchange happened and can play it. Keyed on
-        // `action_seq`, so mirroring the same snapshot twice does not re-strike.
-        if let Some(action) = &snap.last_action {
-            self.stage_beats(snap.action_seq, &action.beats);
+        // place it learns a flourish happened and can play it. Keyed on
+        // `beat_seq`, so mirroring the same snapshot twice does not re-strike.
+        if !snap.last_beats.is_empty() {
+            self.stage_beats(snap.beat_seq, &snap.last_beats);
         }
         self.map = snap.map;
         self.turns = snap.turns;
@@ -1511,7 +1536,8 @@ impl UiState {
         if self.net_emit(GameEvent::TurnAdvance) {
             return;
         }
-        self.turns.advance();
+        let map = &self.map;
+        self.turns.advance_skipping(|id| map.is_defeated(id));
         if let Some(active) = self.turns.active() {
             self.select_token(active);
             if let Some(t) = self.map.token(active) {
@@ -1849,8 +1875,8 @@ mod tests {
             maps: Default::default(),
             active_map: None,
             world: Default::default(),
-            last_action: None,
-            action_seq: 0,
+            last_beats: Vec::new(),
+            beat_seq: 0,
         };
         ui.apply_snapshot(snap);
         assert_eq!(ui.map.token(TokenId(1)).unwrap().at, (before.0 + 1, before.1));
