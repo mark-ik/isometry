@@ -82,6 +82,9 @@ struct App {
     /// and incremental-apply subject.
     layout: Option<IncrementalLayout<NodeId>>,
     layout_size: (f32, f32),
+    /// Origin of the CSS animation clock. `tick_animations` takes seconds
+    /// since an arbitrary but monotonic zero; the process start is that zero.
+    clock: Instant,
     sheet: String,
     cursor: (f32, f32),
     modifiers: ModifiersState,
@@ -215,6 +218,15 @@ impl App {
                     self.layout = Some(layout);
                     self.layout_size = (lw, lh);
                 }
+            }
+            // Advance the CSS animation clock. A transition or @keyframes run
+            // *starts* on the restyle that sets its class (the `apply` above);
+            // this re-interpolates it at the current time. On a still board the
+            // animation set is empty and this returns `Applied::Unchanged`, so
+            // an idle surface pays nothing for the clock existing.
+            if let Some(layout) = self.layout.as_mut() {
+                let now_s = self.clock.elapsed().as_secs_f64();
+                let _ = layout.tick_animations(&*dom_ref, now_s);
             }
             let layout = self.layout.as_ref().expect("layout just ensured");
             let list = layout.emit_paint_list(
@@ -1402,6 +1414,22 @@ impl ApplicationHandler for App {
                 Instant::now() + Duration::from_millis(100),
             ));
         }
+        // While a beat is playing, drive frames. `has_active_animations` is
+        // clock-based and settles on its own, so the loop drops back to `Wait`
+        // the moment the last animation ends: the board is idle-cheap again
+        // without app state tracking "am I animating".
+        if self
+            .layout
+            .as_ref()
+            .is_some_and(IncrementalLayout::has_active_animations)
+        {
+            if let Some(window) = self.window.as_ref() {
+                window.request_redraw();
+            }
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                Instant::now() + Duration::from_millis(16),
+            ));
+        }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -1707,6 +1735,7 @@ fn main() {
         history: Codicil::new(),
         layout: None,
         layout_size: (0.0, 0.0),
+        clock: Instant::now(),
         sheet: board_css(),
         cursor: (0.0, 0.0),
         modifiers: ModifiersState::empty(),

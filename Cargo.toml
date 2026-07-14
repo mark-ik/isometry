@@ -69,11 +69,17 @@ winit = "0.30"
 # graph needs; patches are per-workspace-root and do NOT inherit through
 # a git dep. Copied from the woodshed root (the maintained model).
 [patch.crates-io]
-# stylo is the mark-ik fork (servo-media-features branch). genet-layout
-# pulls it via git dep, so stylo_taffy's crates.io `stylo` must patch to the
-# same source or the two copies collide on the `servo_style_crate` native
-# link. Track the branch, not a rev, so it follows the fork.
-stylo = { git = "https://github.com/mark-ik/stylo", branch = "mark-ik/servo-media-features" }
-stylo_atoms = { git = "https://github.com/mark-ik/stylo", branch = "mark-ik/servo-media-features" }
+# Only one package in the graph may declare `links = "servo_style_crate"`, so
+# stylo_taffy's Stylo and genet-layout's Stylo must be the same package.
+#
+# This used to be done by patching crates.io `stylo` at the mark-ik fork. That
+# stopped working when genet renamed the fork to `genet-stylo` on 2026-07-12
+# (genet's T3): `[patch]` cannot rename its target, because the patch source's
+# package name must match the registry name it replaces. Genet's answer, which
+# this mirrors, is to redirect `stylo_taffy` itself at genet's vendored fork,
+# whose own manifest git-deps `genet-stylo` directly. genet-layout resolves the
+# same git source, so exactly one Stylo lands. Patching `stylo`/`stylo_atoms`
+# here is what *creates* the second copy; do not reintroduce it.
+stylo_taffy = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 taffy = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 ipc-channel = { git = "https://github.com/mark-ik/genet.git", branch = "main" }

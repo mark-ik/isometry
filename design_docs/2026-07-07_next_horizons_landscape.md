@@ -378,9 +378,15 @@ Ordered by dependency. "Now" = app-side, no engine or external gate.
 "Spike-gated" = needs a proof first. "Fork-gated" = waits on a decision in
 section B.
 
-1. **Viewport windowing** (now). The highest-leverage fix. Iterate only the
-   visible tile range in `ground_tiles`/`prop_tiles`. Blocks region-scale
-   maps and browser maps. Build before any board larger than ~40x40.
+1. **Viewport windowing** (**LANDED**; status corrected 2026-07-14). The
+   highest-leverage fix. Iterate only the visible tile range in
+   `ground_tiles`/`prop_tiles`. Blocks region-scale maps and browser maps.
+   Build before any board larger than ~40x40. Shipped in
+   `crates/isometry-views/src/board.rs:43-97` ("outside the pane: windowing
+   skips the emit"); a 30x30 stress board now emits ~1,892 elements rather
+   than the ~2,700 the pre-windowing receipts predicted. The "honest tile/token
+   ceiling" section above still describes the pre-windowing state and should be
+   re-measured before it is cited.
 2. **Cheap GUI bundle** (now). Wheel to `scroll_at` (1 line), `on_pointer`
    drag (token move + drag-reorder turns), tooltips + radial/context menus,
    layered HUD. Retires two standing workarounds. Parallel-safe with 1.
@@ -426,6 +432,9 @@ probes.
 4. **Target-aware resolution.** Does the app adjudicate hit/miss/save
    (compare roll vs AC/DC and report the outcome) or stay a "roll and let
    the table decide" tool? Directly shapes the widened Lua ABI.
+   **ANSWERED 2026-07-14: the app adjudicates.** That releases lane 4 (the
+   fork-gated schema/ABI widening) and with it lanes 5 and 7. See
+   [adjudication_and_representation_plan](2026-07-14_adjudication_and_representation_plan.md).
 5. **Conditions vs geometry.** Should conditions that change movement or
    senses (speed, blinded, immobilized) be substrate-visible so movement and
    fog honor them, or stay pure plugin data? Decides whether

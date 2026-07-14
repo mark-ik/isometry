@@ -331,32 +331,18 @@ ordering only where the domain requires it.
 
 ## Next Game Slice
 
-While the peer-runtime rebase is underway, the next useful Isometry work is a
-complete targeted-action loop in the existing tactical sequencer. Today the
-system can derive an action's dice expression and the UI can append its roll to
-the shared log, but no action names a target or changes game state.
+**Moved 2026-07-14 to
+[adjudication_and_representation_plan](2026-07-14_adjudication_and_representation_plan.md)
+(phase A2).** It was a game lane living in a governance doc, and framing it as
+filler work for while the peer-runtime rebase proceeds had it backwards: the
+targeted-action loop is the main thread, and this tier work is what waits on
+demand.
 
-The slice is deliberately narrow:
-
-1. A player submits an `ActionIntent { actor, target, action_key }`; the host
-   checks turn ownership, target existence, range, and any system-defined
-   prerequisites.
-2. The injected rules system resolves that intent using host entropy into one
-   `ActionResolved` event containing the public roll, hit/miss result, and typed
-   sheet deltas. Peers apply the event, never rerun Lua or roll dice.
-3. The first SRD action is adjacent melee attack against AC, changing separate
-   `hp_current` and `hp_max` fields. Defeat and conditions can remain follow-ons;
-   an HP change and explicit miss already make positioning, turns, equipment,
-   sheets, and rolls one playable loop.
-4. The sheet action enters target-pick mode; clicking a token submits the intent;
-   the board and roll log show the resolved result. Local and remote hosts use
-   the same resolver path.
-
-**Done when:** two peers and solo play produce the same resolved action event
-for a fixed host entropy tape; an out-of-range, wrong-turn, or missing-target
-intent changes nothing; a successful attack changes only the target's current
-HP; and the UI can select and resolve an attack without a GM editing sheet
-fields by hand.
+That plan also answers the fork the slice implicitly depended on
+(next-horizons B.4: the app adjudicates), and adds the representation half
+(beats) the slice never named. The governance tiers above are unchanged; tier 2
+should simply note that its rotating turn-leader is the thing that resolves an
+`ActionIntent` once the sequencer stops being a person (open question 2 there).
 
 ## Open questions
 
