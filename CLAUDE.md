@@ -20,7 +20,7 @@ The substrate knows tiles, tokens, turns, facing, elevation, and area
 templates. Game rules live in system plugins (schema plus scripts). The
 substrate never knows what a hit point is.
 
-Isometry is a standalone consumer of the Merely stack (xilem_serval,
+Isometry is a standalone consumer of the Merely stack (Cambium,
 genet-layout, netrender), the woodshed pattern: git deps on the mark-ik
 remotes, patch mirror at the workspace root, machine-local path overrides
 via a gitignored `.cargo/config.toml`.
@@ -73,7 +73,7 @@ crates/
   isometry-core/    Pure-Rust substrate model: grids, iso math, map
                     documents, session events. No I/O, no UI, no net,
                     no genet deps.
-  isometry-views/   xilem_serval view fns + CSS sheets (tilesets are
+  isometry-views/   Cambium view fns + CSS sheets (tilesets are
                     stylesheets). Host-agnostic.
   isometry-genet/  Native winit host: window, input, netrender present.
                     ISOMETRY_PROFILE=1 prints frame timers.
