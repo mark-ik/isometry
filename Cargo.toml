@@ -40,7 +40,10 @@ armillary = { git = "https://github.com/mark-ik/armillary.git", branch = "main" 
 personae = { git = "https://github.com/mark-ik/personae.git", branch = "master" }
 mooting = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 gemot = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
-transport = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+# mere renamed the package to `mere-transport` (the lib is still `transport`),
+# and `[patch]` keys match the *package* name, so both this dep and the local
+# override in .cargo/config.toml must say so.
+transport = { package = "mere-transport", git = "https://github.com/mark-ik/mere.git", branch = "main" }
 murm = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 p2panda-core = "0.6.1"
 p2panda-net = "0.6.1"
@@ -52,7 +55,7 @@ thiserror = "1"
 # owned repos so any machine resolves; local checkouts override via the
 # gitignored .cargo/config.toml source-specific [patch] entries. Cambium
 # supplies the view toolkit while Genet supplies the engine and host crates.
-cambium = { git = "https://github.com/mark-ik/cambium.git", branch = "main" }
+cambium = "0.2.0"
 layout-dom-api = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 genet-scripted-dom = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 genet-layout = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
@@ -69,6 +72,8 @@ winit = "0.30"
 # graph needs; patches are per-workspace-root and do NOT inherit through
 # a git dep. Copied from the woodshed root (the maintained model).
 [patch.crates-io]
+layout-dom-api = { git = "https://github.com/mark-ik/genet.git", branch = "main", version = "=0.1.0" }
+genet-scripted-dom = { git = "https://github.com/mark-ik/genet.git", branch = "main", version = "=0.1.0" }
 # Only one package in the graph may declare `links = "servo_style_crate"`, so
 # stylo_taffy's Stylo and genet-layout's Stylo must be the same package.
 #

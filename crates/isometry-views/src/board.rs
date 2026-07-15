@@ -289,21 +289,19 @@ fn marker_el(ui: &UiState, token_id: isometry_core::TokenId, class: &str) -> Opt
     ))
 }
 
-/// The emote vocabulary offered in the token menu.
+/// One menu row per emote the *packs* offer.
 ///
-/// A starter list, and pack data once A5 lands: the app should not be the thing
-/// that decides a table may cheer but not spit.
-const EMOTES: [(&str, &str); 3] = [("cheer", "Cheer"), ("shrug", "Shrug"), ("taunt", "Taunt")];
-
-/// One menu row per emote.
-fn emote_items(id: isometry_core::TokenId) -> Vec<UiChild> {
-    EMOTES
+/// The app no longer owns this vocabulary. A pack declares which beats are
+/// emotable (a `name` plus an `emote` label in its manifest) and draws them, so
+/// a campaign can add a rude gesture or remove one without the app knowing.
+fn emote_items(ui: &UiState, id: isometry_core::TokenId) -> Vec<UiChild> {
+    ui.emotes
         .iter()
         .map(|(beat, label)| {
-            let beat = *beat;
+            let beat = beat.clone();
             Box::new(clickable(
-                el("div", text(*label)).attr("class", "menu-item menu-emote"),
-                move |ui: &mut UiState, _| ui.emote(id, beat),
+                el("div", text(label.clone())).attr("class", "menu-item menu-emote"),
+                move |ui: &mut UiState, _| ui.emote(id, &beat),
             )) as UiChild
         })
         .collect()
@@ -336,7 +334,7 @@ fn context_menu_overlay(ui: &UiState) -> Option<UiChild> {
                 ),
                 // Emotes: the same beat primitive combat uses, with no
                 // resolution behind it. A player may throw one for themselves.
-                emote_items(id),
+                emote_items(ui, id),
                 clickable(
                     el("div", text("Remove")).attr("class", "menu-item"),
                     move |ui: &mut UiState, _| ui.remove_token(id),

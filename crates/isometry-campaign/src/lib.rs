@@ -33,8 +33,8 @@ pub use map::{
     MapScale, MapTransition, SpawnZone, MAX_GENERATED_MAP_EDGE,
 };
 pub use pack::{
-    ContentPackError, ContentPackManifest, GeneratorChoice, GeneratorEntry, GeneratorLockPreset,
-    CONTENT_PACK_FORMAT,
+    BeatEntry, ContentPackError, ContentPackManifest, GeneratorChoice, GeneratorEntry,
+    GeneratorLockPreset, CONTENT_PACK_FORMAT,
 };
 pub use store::CampaignStore;
 pub use world::{

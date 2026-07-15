@@ -1,0 +1,9 @@
+/* Out of play. `forwards` holds the final frame so the body does not spring
+   back up when the animation ends; `.beat-down` then holds the same pose once
+   the beat class is cleared. */
+@keyframes iso-fall {
+    0%   { transform: translate(0px, 0px); opacity: 1; }
+    30%  { transform: translate(3px, -3px); opacity: 1; }
+    100% { transform: translate(6px, 10px); opacity: 0.55; }
+}
+.beat-fall { animation: iso-fall 520ms ease-in forwards; }

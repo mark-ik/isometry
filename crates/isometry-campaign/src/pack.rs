@@ -25,6 +25,32 @@ pub struct ContentPackManifest {
     pub version: String,
     #[serde(default)]
     pub generators: Vec<GeneratorEntry>,
+    /// The pack's **choreography**: what a beat looks like, and which beats a
+    /// player may throw for themselves.
+    ///
+    /// This is why it belongs to the pack rather than the app. A beat name like
+    /// `strike` or `cheer` is vocabulary the rules and the players speak; what it
+    /// *looks* like is art direction, and what a table is allowed to express is a
+    /// table's business. The app should not be the thing that decides you may
+    /// cheer but not spit.
+    #[serde(default)]
+    pub choreography: Vec<BeatEntry>,
+}
+
+/// One named beat: its stylesheet, and whether it can be thrown as an emote.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BeatEntry {
+    /// Beat name in the vocabulary (`strike`, `recoil`, `cheer`). The resolver
+    /// names beats by this; the view lowers it to the CSS class `beat-<name>`.
+    pub name: String,
+    /// Menu label. Present makes the beat **emotable**: a player may throw it on
+    /// their own token. Absent means it is a beat the *rules* produce (a strike,
+    /// a fall), which no one gets to perform on demand.
+    #[serde(default)]
+    pub emote: Option<String>,
+    /// Stylesheet fragment, relative to the pack root: the `@keyframes` and the
+    /// `.beat-<name>` rule that plays them. Folders and stylesheets, as promised.
+    pub style: String,
 }
 
 /// One Lua generator and its checked fixtures, relative to the pack root.
@@ -70,6 +96,10 @@ pub enum ContentPackError {
     DuplicateGenerator(String),
     InvalidLockPreset(String),
     UnsafePath(String),
+    /// A beat with no name, or a name that would not survive being lowered to a
+    /// CSS class (the view builds `beat-<name>` from it).
+    InvalidBeatName(String),
+    DuplicateBeat(String),
 }
 
 impl ContentPackManifest {
@@ -114,6 +144,25 @@ impl ContentPackManifest {
                         generator.id, preset.key
                     )));
                 }
+            }
+        }
+        let mut beats = BTreeSet::new();
+        for beat in &self.choreography {
+            // The name becomes a CSS class (`beat-<name>`), so it must be safe to
+            // paste into a stylesheet. A pack cannot smuggle a selector through it.
+            if beat.name.trim().is_empty()
+                || !beat
+                    .name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            {
+                return Err(ContentPackError::InvalidBeatName(beat.name.clone()));
+            }
+            if !beats.insert(&beat.name) {
+                return Err(ContentPackError::DuplicateBeat(beat.name.clone()));
+            }
+            if !is_pack_path(&beat.style) {
+                return Err(ContentPackError::UnsafePath(beat.style.clone()));
             }
         }
         Ok(())
@@ -170,6 +219,13 @@ impl std::fmt::Display for ContentPackError {
             Self::InvalidLockPreset(id) => {
                 write!(f, "invalid or duplicate generator lock preset: {id}")
             }
+            Self::InvalidBeatName(name) => write!(
+                f,
+                "beat name must be alphanumeric, '-' or '_' (it becomes a CSS class): {name:?}"
+            ),
+            Self::DuplicateBeat(name) => {
+                write!(f, "duplicate beat within one content pack: {name}")
+            }
             Self::UnsafePath(path) => write!(
                 f,
                 "content-pack asset path must stay below the pack root: {path}"
@@ -195,12 +251,49 @@ fn is_pack_path(path: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn beat(name: &str, style: &str) -> BeatEntry {
+        BeatEntry {
+            name: name.to_owned(),
+            emote: None,
+            style: style.to_owned(),
+        }
+    }
+
+    #[test]
+    fn a_beat_name_cannot_smuggle_a_selector() {
+        // The name is pasted into a stylesheet as `.beat-<name>`, so a pack that
+        // could put punctuation in it could escape its own rule and restyle the
+        // whole app. Names are alphanumerics, '-' and '_', and nothing else.
+        let mut m = manifest();
+        m.choreography = vec![beat("cheer } .app { display: none; ", "beats/x.css")];
+        assert!(matches!(
+            m.validate(),
+            Err(ContentPackError::InvalidBeatName(_))
+        ));
+
+        // And a stylesheet cannot reach outside the pack.
+        m.choreography = vec![beat("cheer", "../../../etc/passwd")];
+        assert!(matches!(m.validate(), Err(ContentPackError::UnsafePath(_))));
+
+        // A plain one is fine.
+        m.choreography = vec![beat("cheer", "beats/cheer.css"), beat("fall", "beats/f.css")];
+        assert!(m.validate().is_ok());
+
+        // Declared twice in one pack is an authoring mistake, not an override.
+        m.choreography = vec![beat("cheer", "beats/a.css"), beat("cheer", "beats/b.css")];
+        assert!(matches!(
+            m.validate(),
+            Err(ContentPackError::DuplicateBeat(_))
+        ));
+    }
+
     fn manifest() -> ContentPackManifest {
         ContentPackManifest {
             format: CONTENT_PACK_FORMAT,
             id: "demo".to_owned(),
             name: "Demo Pack".to_owned(),
             version: "0.1.0".to_owned(),
+            choreography: Vec::new(),
             generators: vec![GeneratorEntry {
                 id: "forge_item".to_owned(),
                 name: "Forge item".to_owned(),

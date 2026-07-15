@@ -136,6 +136,9 @@ struct App {
     /// round-trip is verifiable without OS input automation (Windows
     /// foreground-lock makes driving one of two windows unreliable).
     net_selftest: bool,
+    /// Emotes the loaded packs offer, handed to the view at boot. The app owns
+    /// no beat vocabulary of its own.
+    pack_emotes: Vec<(String, String)>,
     /// `ISOMETRY_COMBAT_SELFTEST`: drive a short adjudicated exchange on boot.
     combat_selftest: bool,
     /// Swings left to throw, when the last one landed, and whether the winner
@@ -185,8 +188,15 @@ fn campaign_path(name: &str) -> std::path::PathBuf {
 /// Search the bundled example, a project-local pack root, and user-selected
 /// roots. Entries may be pack directories or directories containing packs.
 fn generator_pack_roots() -> Vec<std::path::PathBuf> {
-    let mut roots = vec![std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../isometry-system/examples/packs/demo")];
+    // The `core` pack ships the default beat vocabulary (strike, recoil, fall,
+    // cheer...). It is a pack like any other, so a campaign overrides a beat
+    // simply by declaring the same name: the app owns no choreography.
+    let mut roots = vec![
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../isometry-system/examples/packs/core"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../isometry-system/examples/packs/demo"),
+    ];
     let local = std::path::PathBuf::from("packs");
     if local.is_dir() {
         roots.push(local);
@@ -1800,6 +1810,7 @@ impl ApplicationHandler for App {
         let system = srd_5e();
         ui.sheet_schema = schema_of(&system);
         ui.bestiary = bestiary_of();
+        ui.emotes = self.pack_emotes.clone();
         ui.spells = spells_of();
         ui.items = items_of();
         self.system = Some(system);
@@ -2155,6 +2166,24 @@ fn main() {
     let event_loop = EventLoop::new().expect("event loop");
     event_loop.set_control_flow(ControlFlow::Wait);
     let generator_catalog = GeneratorCatalog::discover(generator_pack_roots());
+    // Choreography is pack data: the stylesheet the packs supply is appended to
+    // the app's, and the emote menu is built from whichever beats they marked
+    // emotable. A table with no packs still plays a correct game; it just plays
+    // it without flourishes, which is safe precisely because no rule may read a
+    // beat.
+    let (pack_beats, beat_diagnostics) = generator_catalog.choreography();
+    for diagnostic in &beat_diagnostics {
+        eprintln!("[isometry] choreography: {diagnostic}");
+    }
+    let mut sheet = board_css();
+    for beat in &pack_beats {
+        sheet.push('\n');
+        sheet.push_str(&beat.css);
+    }
+    let pack_emotes: Vec<(String, String)> = pack_beats
+        .iter()
+        .filter_map(|b| b.emote.clone().map(|label| (b.name.clone(), label)))
+        .collect();
     let mut app = App {
         window: None,
         host: None,
@@ -2169,7 +2198,7 @@ fn main() {
         // verification deterministic. A real table seeds this per session.
         action_rng: Rng::new(0x15D_0BE),
         beats_playing: false,
-        sheet: board_css(),
+        sheet,
         cursor: (0.0, 0.0),
         modifiers: ModifiersState::empty(),
         lmb_down: false,
@@ -2202,6 +2231,7 @@ fn main() {
         ),
         generation_ordinal: 0,
         generator_catalog,
+        pack_emotes,
     };
     event_loop.run_app(&mut app).expect("run app");
 }

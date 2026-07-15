@@ -1,0 +1,10 @@
+/* An emote: the same primitive as a combat beat, with no resolution behind it.
+   The `emote` label in the manifest is what makes it throwable. */
+@keyframes iso-cheer {
+    0%   { transform: translate(0px, 0px); }
+    25%  { transform: translate(0px, -7px); }
+    50%  { transform: translate(0px, 0px); }
+    75%  { transform: translate(0px, -4px); }
+    100% { transform: translate(0px, 0px); }
+}
+.beat-cheer { animation: iso-cheer 620ms ease-in-out; }

@@ -1,0 +1,13 @@
+/* The swing. A beat the *rules* produce: no `emote` in the manifest, so no one
+   gets to perform it on demand.
+
+   `translate` only, deliberately: it is the one transform independent of
+   `transform-origin`, which genet conjugates at the box origin rather than the
+   spec's 50% 50%. It also keeps the tick on a repaint with no relayout. */
+@keyframes iso-strike {
+    0%   { transform: translate(0px, 0px); }
+    30%  { transform: translate(7px, -5px); }
+    55%  { transform: translate(7px, -5px); }
+    100% { transform: translate(0px, 0px); }
+}
+.beat-strike { animation: iso-strike 420ms ease-out; }

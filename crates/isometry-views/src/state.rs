@@ -429,6 +429,10 @@ pub struct UiState {
     /// state: the open flag, the grid's scroll offset, and the sort
     /// (column index, descending).
     pub bestiary: Vec<MonsterRow>,
+    /// Emotes the loaded packs offer: `(beat name, menu label)`. Empty when no
+    /// pack declares any, in which case the menu simply has no emotes: the app
+    /// does not own this vocabulary.
+    pub emotes: Vec<(String, String)>,
     pub compendium_open: bool,
     pub compendium_scroll: f32,
     pub compendium_sort: (usize, bool),
@@ -512,6 +516,7 @@ impl UiState {
             governance_selected: 0,
             governance_resolution_request: None,
             bestiary: Vec::new(),
+            emotes: Vec::new(),
             compendium_open: false,
             compendium_scroll: 0.0,
             compendium_sort: (0, false),

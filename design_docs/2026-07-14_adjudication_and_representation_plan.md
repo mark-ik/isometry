@@ -5,7 +5,9 @@
 can be won, and blows land physically.** A knight swings at a goblin, the app decides whether it lands, the goblin
 loses hit points, drops at zero, stops taking turns, and stops being a legal target;
 the winner cheers, and **a joined player can swing for themselves** while still being
-unable to pronounce their own verdict. A5 (choreography as pack data) remains. This is the game lane: it answers the fork the project had been walking
+unable to pronounce their own verdict. **The beat vocabulary now lives in the
+campaign pack, not the app**: a table draws its own swing and chooses its own
+emotes. The plan is complete. This is the game lane: it answers the fork the project had been walking
 around since 2026-07-07.
 
 **Related:**
@@ -445,6 +447,38 @@ In-app: the winner cheers over the body.
 - The resolver names beats by key; the pack decides what a key looks like.
 
 **Done when:** a second pack changes the look of an attack without touching app code.
+
+### A5. Choreography as pack data (LANDED 2026-07-14)
+
+The last piece, and the one pillar 3 demanded: the beat vocabulary belonged in the
+pack, not the app. Until now `strike`/`recoil`/`fall`/`cheer` were hardcoded
+`@keyframes` in `theme.rs` and the emote list was a `const` in `board.rs`. The app
+was the thing deciding a table may cheer but not spit.
+
+- The pack manifest gains `choreography: Vec<BeatEntry>`, each a beat `name`, an
+  optional `emote` label, and a `style` stylesheet path. An `emote` label is what
+  makes a beat throwable: its presence is the whole permission model.
+- A new **`core` pack** ships the defaults as `beats/*.css`. It is a pack like any
+  other, discovered from the same roots, so a campaign overrides the swing simply by
+  declaring its own `strike` (last pack to name a beat wins).
+- The catalog loads each beat's stylesheet, the app appends them to its own sheet,
+  and the emote menu is built from whichever beats were marked emotable. What stays
+  in `theme.rs` is only *structural*: the beat wrapper box, the fallen-token pose,
+  and the geometry-derived force beats (a shove must travel exactly one board tile,
+  so those are generated, not authored).
+- A beat name is validated to alphanumerics/`-`/`_`, because it is pasted into a
+  stylesheet as `.beat-<name>`; a pack cannot smuggle a selector through it. A pack
+  whose stylesheet will not open is skipped with a diagnostic, not fatal: a missing
+  beat costs an animation, and since no rule may read a beat, the game stays correct.
+
+**Done when:** the app declares no beat `@keyframes` of its own, combat and emotes
+still animate, and a second pack can restyle a beat by name.
+
+**Verified 2026-07-14.** `theme.rs` declares no beat keyframes (only the structural
+`.beat`, `.beat-down`, and the generated force beats). The catalog loads the `core`
+pack's seven beats, marks exactly cheer/shrug/taunt emotable, and rejects a beat name
+carrying a `}` or a `../` path. In-app: with all beat CSS coming from the pack on
+disk, the knight still strikes, the goblin still falls, and the winner still cheers.
 
 ## Open questions
 

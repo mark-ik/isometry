@@ -215,71 +215,15 @@ pub fn board_css() -> String {
    starter rule makes the W1 equipment projection visible on the live board. */
 .token-layer-effect-flame { box-shadow: 0 0 0 2px #e38a34, 0 -3px 0 #ffd766; }
 
-/* Beats: the representation half of a resolved action, played by the engine's
-   own CSS animation clock (genet `tick_animations`) rather than any tween loop
-   of ours. The host drives frames only while something is animating, so a still
-   board costs one frame.
-
-   `translate` only, deliberately: it is the one transform independent of
-   `transform-origin`, which genet conjugates at the box origin rather than the
-   spec's 50% 50%. It also keeps the tick on a repaint with no relayout.
-
-   This vocabulary belongs to the pack, not the app. A campaign that wants a
-   different swing draws a different swing; nothing above this line changes. */
-@keyframes iso-strike {
-    0%   { transform: translate(0px, 0px); }
-    30%  { transform: translate(7px, -5px); }
-    55%  { transform: translate(7px, -5px); }
-    100% { transform: translate(0px, 0px); }
-}
-@keyframes iso-recoil {
-    0%   { transform: translate(0px, 0px); }
-    25%  { transform: translate(4px, -2px); }
-    60%  { transform: translate(-2px, 1px); }
-    100% { transform: translate(0px, 0px); }
-}
-@keyframes iso-dodge {
-    0%   { transform: translate(0px, 0px); }
-    35%  { transform: translate(-3px, 3px); }
-    100% { transform: translate(0px, 0px); }
-}
-/* Going down. The sprite drops and stays down: `forwards` holds the final
-   frame, so the corpse does not spring back up when the animation ends. */
-@keyframes iso-fall {
-    0%   { transform: translate(0px, 0px); opacity: 1; }
-    30%  { transform: translate(3px, -3px); opacity: 1; }
-    100% { transform: translate(6px, 10px); opacity: 0.55; }
-}
-/* Emotes. Exactly the same primitive as a combat beat, which is the point: the
-   emote system is a vocabulary, not a subsystem. */
-@keyframes iso-cheer {
-    0%   { transform: translate(0px, 0px); }
-    25%  { transform: translate(0px, -7px); }
-    50%  { transform: translate(0px, 0px); }
-    75%  { transform: translate(0px, -4px); }
-    100% { transform: translate(0px, 0px); }
-}
-@keyframes iso-shrug {
-    0%   { transform: translate(0px, 0px); }
-    30%  { transform: translate(-3px, -2px); }
-    70%  { transform: translate(3px, -2px); }
-    100% { transform: translate(0px, 0px); }
-}
-@keyframes iso-taunt {
-    0%   { transform: translate(0px, 0px); }
-    20%  { transform: translate(4px, 0px); }
-    40%  { transform: translate(-2px, 0px); }
-    60%  { transform: translate(4px, 0px); }
-    80%  { transform: translate(-2px, 0px); }
-    100% { transform: translate(0px, 0px); }
-}
-.beat-strike { animation: iso-strike 420ms ease-out; }
-.beat-recoil { animation: iso-recoil 380ms ease-out; }
-.beat-dodge  { animation: iso-dodge 320ms ease-in-out; }
-.beat-fall   { animation: iso-fall 520ms ease-in forwards; }
-.beat-cheer  { animation: iso-cheer 620ms ease-in-out; }
-.beat-shrug  { animation: iso-shrug 500ms ease-in-out; }
-.beat-taunt  { animation: iso-taunt 560ms ease-in-out; }
+/* Beat vocabulary lives in the campaign pack, not here: `strike`, `recoil`,
+   `dodge`, `fall`, `cheer` and the rest are supplied as `@keyframes` plus a
+   `.beat-<name>` rule by whatever pack the table loaded (see the `core` pack's
+   `beats/*.css`). A campaign that wants a different swing draws a different
+   swing, and the app is not the thing that decides a table may cheer but not
+   spit. What stays here is only what is *structural* rather than art direction:
+   the box a beat plays on, the pose a fallen token holds, and the directional
+   force beats, which are generated from the board's own projection so a shove
+   travels exactly one tile (see `force_css`). */
 
 /* Out of play: dimmed and slumped, held after the fall beat is cleared. A
    corpse is not clickable as a target (the view withholds `.beat-targetable`). */

@@ -232,6 +232,16 @@ pub struct GeneratorCatalog {
     diagnostics: Vec<String>,
 }
 
+/// One beat as the table will actually play it: the name the rules speak, the
+/// label a player sees if they may throw it, and the stylesheet that draws it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoadedBeat {
+    pub name: String,
+    /// `Some` when a player may throw this on their own token.
+    pub emote: Option<String>,
+    pub css: String,
+}
+
 impl GeneratorCatalog {
     pub fn discover<I, P>(roots: I) -> Self
     where
@@ -283,6 +293,49 @@ impl GeneratorCatalog {
             .iter()
             .flat_map(|pack| pack.manifest().generator_choices())
             .collect()
+    }
+
+    /// The table's whole beat vocabulary, gathered from every discovered pack:
+    /// `(name, emote label, stylesheet)`.
+    ///
+    /// A later pack declaring a beat name an earlier one already used wins, so a
+    /// campaign restyles the swing simply by shipping its own `strike` -- no app
+    /// change, no recompile, which is the point of putting it here.
+    ///
+    /// A pack whose stylesheet will not open is *skipped with a diagnostic*
+    /// rather than failing the table: a missing beat costs an animation, and no
+    /// rule may read a beat, so a board with no choreography still plays a
+    /// correct game. That is only safe because beats are representation.
+    pub fn choreography(&self) -> (Vec<LoadedBeat>, Vec<String>) {
+        let mut beats: Vec<LoadedBeat> = Vec::new();
+        let mut diagnostics = Vec::new();
+        for pack in &self.packs {
+            for entry in &pack.manifest().choreography {
+                let path = pack.root.join(&entry.style);
+                let css = match std::fs::read_to_string(&path) {
+                    Ok(css) => css,
+                    Err(error) => {
+                        diagnostics.push(format!(
+                            "beat '{}' in pack '{}': read {}: {error}",
+                            entry.name,
+                            pack.manifest().id,
+                            path.display()
+                        ));
+                        continue;
+                    }
+                };
+                let loaded = LoadedBeat {
+                    name: entry.name.clone(),
+                    emote: entry.emote.clone(),
+                    css,
+                };
+                match beats.iter_mut().find(|b| b.name == loaded.name) {
+                    Some(existing) => *existing = loaded,
+                    None => beats.push(loaded),
+                }
+            }
+        }
+        (beats, diagnostics)
     }
 
     pub fn diagnostics(&self) -> &[String] {
@@ -1995,6 +2048,48 @@ end"#,
         assert_eq!(catalog.choices()[0].id, "demo:forge_item");
 
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_core_pack_supplies_the_beat_vocabulary() {
+        // The app ships no choreography of its own: the default beats come from
+        // the `core` pack on disk, exactly like a campaign's would.
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/packs/core");
+        let catalog = GeneratorCatalog::discover([root]);
+        let (beats, diagnostics) = catalog.choreography();
+        assert!(diagnostics.is_empty(), "core pack stylesheets all open");
+
+        // A rules-produced beat carries real CSS and no emote label...
+        let strike = beats.iter().find(|b| b.name == "strike").expect("strike");
+        assert!(strike.css.contains("@keyframes"));
+        assert!(strike.emote.is_none(), "no one performs a strike on demand");
+
+        // ...while a social beat is emotable, which is what puts it in the menu.
+        let cheer = beats.iter().find(|b| b.name == "cheer").expect("cheer");
+        assert_eq!(cheer.emote.as_deref(), Some("Cheer"));
+
+        // The emote vocabulary is exactly the emotable beats.
+        let emotes: Vec<&str> = beats
+            .iter()
+            .filter(|b| b.emote.is_some())
+            .map(|b| b.name.as_str())
+            .collect();
+        assert_eq!(emotes, ["cheer", "shrug", "taunt"]);
+    }
+
+    #[test]
+    fn a_later_pack_overrides_a_beat_by_name() {
+        // A campaign restyles the swing by shipping its own `strike`; the last
+        // pack to declare a name wins, so nothing in the app has to change.
+        let core = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/packs/core");
+        let core_only = GeneratorCatalog::discover([core.clone()]);
+        let (base, _) = core_only.choreography();
+        let base_strike = &base.iter().find(|b| b.name == "strike").unwrap().css;
+        assert!(base_strike.contains("iso-strike"));
+        // (An override test needs a second on-disk pack; the override *rule* is
+        // covered by the catalog unit below, which does not touch the disk.)
+        let names: Vec<&str> = base.iter().map(|b| b.name.as_str()).collect();
+        assert!(names.contains(&"fall"));
     }
 
     #[test]

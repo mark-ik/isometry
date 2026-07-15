@@ -1,0 +1,40 @@
+{
+  "format": 1,
+  "id": "core",
+  "name": "Core Choreography",
+  "version": "0.1.0",
+  "generators": [],
+  "choreography": [
+    {
+      "name": "strike",
+      "style": "beats/strike.css"
+    },
+    {
+      "name": "recoil",
+      "style": "beats/recoil.css"
+    },
+    {
+      "name": "dodge",
+      "style": "beats/dodge.css"
+    },
+    {
+      "name": "fall",
+      "style": "beats/fall.css"
+    },
+    {
+      "name": "cheer",
+      "emote": "Cheer",
+      "style": "beats/cheer.css"
+    },
+    {
+      "name": "shrug",
+      "emote": "Shrug",
+      "style": "beats/shrug.css"
+    },
+    {
+      "name": "taunt",
+      "emote": "Taunt",
+      "style": "beats/taunt.css"
+    }
+  ]
+}
