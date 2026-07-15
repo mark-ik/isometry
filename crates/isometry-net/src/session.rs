@@ -11,7 +11,7 @@ use isometry_campaign::{
     CampaignStore, GenerationRecord, GenerationRecordError, InventoryError, ItemId, ItemInstance,
     ItemModifierReveal, MapScale, StoryletEffect, WorldError, WorldEvent, WorldFact,
 };
-use isometry_core::{apply, EventError, TokenId};
+use isometry_core::{apply, EventError, TileCoord, TokenId};
 
 use crate::protocol::{
     fold_event, ActionIntent, GameEvent, GameSnapshot, NetMessage, Outbound, PeerId, Recipient,
@@ -32,6 +32,8 @@ pub enum GameError {
     /// A resolution addressed a token with no sheet, so it could not be applied
     /// whole. Rejected rather than half-applied.
     UnsheetedTarget(TokenId),
+    /// A travel event for a token not standing on a transition point.
+    NotOnTransition(TokenId),
     ConflictingGeneration(String),
     InvalidGeneration(GenerationRecordError),
     UnknownMap(String),
@@ -233,7 +235,142 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
             Ok(())
         }
         GameEvent::World(event) => state.world.apply(event).map_err(GameError::World),
+        GameEvent::Traveled { token } => travel(state, *token),
     }
+}
+
+/// Walk one token through the transition point it stands on. Everything is
+/// derived from replicated state, so all peers land it identically.
+fn travel(state: &mut GameSnapshot, token: TokenId) -> Result<(), GameError> {
+    require_token(state, token)?;
+    let at = state.map.token(token).map(|t| t.at).unwrap_or_default();
+    let active_id = state
+        .active_map
+        .clone()
+        .ok_or_else(|| GameError::UnknownMap("<no active map>".to_owned()))?;
+    // The door is the tile the traveler stands on.
+    let transition = state
+        .maps
+        .get(&active_id)
+        .and_then(|m| {
+            m.transitions
+                .iter()
+                .find(|t| (t.at.col as i32, t.at.row as i32) == at)
+        })
+        .cloned()
+        .ok_or(GameError::NotOnTransition(token))?;
+    let target = state
+        .maps
+        .get(&transition.target_map)
+        .ok_or_else(|| GameError::UnknownMap(transition.target_map.clone()))?;
+
+    // Destination: the target's named entry door, else its first spawn zone,
+    // else the origin corner; then the first free tile scanning outward, the
+    // same deterministic walk spawning already uses.
+    let anchor: TileCoord = transition
+        .target_entry
+        .as_ref()
+        .and_then(|entry| target.transitions.iter().find(|t| &t.id == entry))
+        .map(|t| (t.at.col as i32, t.at.row as i32))
+        .or_else(|| {
+            target
+                .spawn_zones
+                .first()
+                .and_then(|z| z.cells.first())
+                .map(|c| (c.col as i32, c.row as i32))
+        })
+        .unwrap_or((1, 1));
+    let (w, h) = (target.document.ground.width(), target.document.ground.height());
+    let occupied: Vec<TileCoord> = target.document.tokens.iter().map(|t| t.at).collect();
+    let mut landing = anchor;
+    for d in 0..64 {
+        let cand = (anchor.0 + (d % 8), anchor.1 + (d / 8));
+        if cand.0 >= 0
+            && cand.1 >= 0
+            && (cand.0 as u32) < w
+            && (cand.1 as u32) < h
+            && !occupied.contains(&cand)
+        {
+            landing = cand;
+            break;
+        }
+    }
+
+    // Ids are per-map, so an arrival can collide with a resident. Mint the
+    // next id above every token on every map (inventories key on TokenId
+    // globally, so global uniqueness is what keeps them sound).
+    let collides = target.document.tokens.iter().any(|t| t.id == token);
+    let new_id = if collides {
+        let max = state
+            .maps
+            .values()
+            .flat_map(|m| m.document.tokens.iter())
+            .chain(state.map.tokens.iter())
+            .map(|t| t.id.0)
+            .chain(state.inventories.keys().map(|id| id.0))
+            .max()
+            .unwrap_or(0);
+        TokenId(max + 1)
+    } else {
+        token
+    };
+
+    // Depart: the traveler and everything it carries leaves the active map.
+    let Some(pos) = state.map.tokens.iter().position(|t| t.id == token) else {
+        return Err(GameError::Core(EventError::UnknownToken(token)));
+    };
+    let mut traveler = state.map.tokens.remove(pos);
+    let sheet = state.map.sheets.remove(&token);
+    let conditions = state.map.conditions.remove(&token);
+    let mobility = state.map.mobility.remove(&token);
+    let was_defeated = state.map.defeated.remove(&token);
+    state.turns.remove(token);
+    sync_active_map(state);
+
+    // Arrive.
+    traveler.id = new_id;
+    traveler.at = landing;
+    let target = state
+        .maps
+        .get_mut(&transition.target_map)
+        .expect("target existed above");
+    target.document.tokens.push(traveler);
+    if let Some(sheet) = sheet {
+        target.document.sheets.insert(new_id, sheet);
+    }
+    if let Some(conditions) = conditions {
+        target.document.conditions.insert(new_id, conditions);
+    }
+    if let Some(mobility) = mobility {
+        target.document.mobility.insert(new_id, mobility);
+    }
+    if was_defeated {
+        target.document.defeated.insert(new_id);
+    }
+    if new_id != token {
+        if let Some(inventory) = state.inventories.remove(&token) {
+            state.inventories.insert(new_id, inventory);
+        }
+    }
+
+    // The board follows the last player out: when no player-owned token
+    // remains on the active map, the target activates, exactly as a manual
+    // `MapActivated` would (fresh board, fresh turn order).
+    if !state.map.tokens.iter().any(|t| t.owner.is_some()) {
+        let doc = state
+            .maps
+            .get(&transition.target_map)
+            .expect("target existed above")
+            .document
+            .clone();
+        state.map = doc;
+        state.active_map = Some(transition.target_map.clone());
+        state.turns = isometry_core::TurnList::new();
+        for t in &state.map.tokens {
+            state.turns.add(t.id);
+        }
+    }
+    Ok(())
 }
 
 fn sync_active_map(state: &mut GameSnapshot) {
@@ -685,6 +822,17 @@ impl HostSession {
                 Recipient::One(from),
                 NetMessage::Rejected {
                     reason: "actions are adjudicated by the host".to_owned(),
+                },
+            )],
+            // Travel is ruled by the host's own sweep (it watches for tokens
+            // standing on doors after every applied move), so a client walks
+            // through a door by walking; it never asks in words.
+            NetMessage::Intent {
+                event: GameEvent::Traveled { .. },
+            } => vec![(
+                Recipient::One(from),
+                NetMessage::Rejected {
+                    reason: "travel is ruled by the host".to_owned(),
                 },
             )],
             // A condition is a rules ruling with numbers attached; a client

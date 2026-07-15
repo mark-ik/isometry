@@ -168,6 +168,9 @@ pub fn board_css() -> String {
 /* Area template preview (measure mode). */
 .tile-template { background-color: #d98a4a; }
 .tile-template.alt { background-color: #cf8040; }
+/* A transition point: the door to another map. Walk onto it to cross. */
+.tile-door { background-color: #9a7bd8; }
+.tile-door.alt { background-color: #8f70cc; }
 
 /* Fog of war: a dim shroud over explored-but-unseen tiles. Unexplored
    tiles are simply not drawn, so the dark pane behind the board shows. */

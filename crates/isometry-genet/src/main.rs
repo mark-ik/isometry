@@ -38,8 +38,9 @@ use isometry_system::{
     GeneratorCatalog, GeneratorLimits, System,
 };
 use isometry_views::{
-    board_css, board_root, demo_map, synth_map, ActionRow, GenerationRequest, InventoryRequest,
-    ItemRow, MonsterRow, NetMode, SheetSchema, SpellRow, UiChild, UiState, PANEL_W,
+    board_css, board_root, demo_map, synth_map, ActionRow, EditMode, GenerationRequest,
+    InventoryRequest, ItemRow, MonsterRow, NetMode, SheetSchema, SpellRow, UiChild, UiState,
+    PANEL_W,
 };
 
 mod campaign_store;
@@ -139,6 +140,13 @@ struct App {
     /// Emotes the loaded packs offer, handed to the view at boot. The app owns
     /// no beat vocabulary of its own.
     pack_emotes: Vec<(String, String)>,
+    /// Tokens whose standing-on-a-door state has already produced a travel
+    /// event, so the sweep emits once per crossing rather than once per poll.
+    travel_emitted: Vec<TokenId>,
+    /// `ISOMETRY_TRAVEL_SELFTEST`: register two campaign maps joined by a door
+    /// and walk the knight through it. Focus-free, like the others.
+    travel_selftest: bool,
+    travel_fired: bool,
     /// `ISOMETRY_COMBAT_SELFTEST`: drive a short adjudicated exchange on boot.
     combat_selftest: bool,
     /// Swings left to throw, when the last one landed, and whether the winner
@@ -651,6 +659,30 @@ impl App {
                     self.history = history;
                 }
                 runner.update(|ui| ui.apply_snapshot(snap));
+                // The host's door sweep: any token now standing on a transition
+                // point of the active map walks through it. Clients never ask in
+                // words; they walk, the move replicates, and this notices. The
+                // emitted list keeps one crossing from being ruled twice while
+                // its echo is still in flight.
+                if self.net_is_host {
+                    let on_doors: Vec<TokenId> = {
+                        let ui = runner.state();
+                        ui.map
+                            .tokens
+                            .iter()
+                            .filter(|t| ui.transition_at(t.at))
+                            .map(|t| t.id)
+                            .collect()
+                    };
+                    for token in &on_doors {
+                        if !self.travel_emitted.contains(token) {
+                            runner.update(|ui| {
+                                ui.net_outbox.push(GameEvent::Traveled { token: *token })
+                            });
+                        }
+                    }
+                    self.travel_emitted = on_doors;
+                }
                 if let Some(window) = self.window.as_ref() {
                     window.request_redraw();
                 }
@@ -1501,6 +1533,100 @@ impl App {
     /// because SendKeys loses the foreground race on a machine someone is
     /// actually using and silently types into their editor. Same rationale as
     /// `ISOMETRY_NET_SELFTEST`.
+    /// `ISOMETRY_TRAVEL_SELFTEST=1`: prove C2 end to end in the app. The demo
+    /// board becomes the stored map `field` with a door; a `hut` map waits on
+    /// the other side; the knight (the whole party: everyone else is demoted to
+    /// DM furniture) walks onto the door through the normal Play-mode click
+    /// path, and the board follows it through.
+    fn maybe_travel_selftest(&mut self) {
+        if !self.travel_selftest || self.travel_fired {
+            return;
+        }
+        let ready = self
+            .started
+            .is_some_and(|t| t.elapsed() > Duration::from_secs(2));
+        if !ready {
+            return;
+        }
+        self.travel_fired = true;
+        let Some(runner) = self.runner.as_mut() else {
+            return;
+        };
+        runner.update(|ui| {
+            // The party is the knight alone; the rest is the DM's furniture.
+            for t in ui.map.tokens.iter_mut() {
+                if t.id != TokenId(1) {
+                    t.owner = None;
+                }
+            }
+            // The field: the live board, stored, with a door beside the knight.
+            let field = isometry_campaign::CampaignMap {
+                id: "field".to_owned(),
+                scale: isometry_campaign::MapScale::Local,
+                document: ui.map.clone(),
+                spawn_zones: Vec::new(),
+                transitions: vec![isometry_campaign::MapTransition {
+                    id: "field-gate".to_owned(),
+                    at: isometry_campaign::MapPoint { col: 12, row: 14 },
+                    target_map: "hut".to_owned(),
+                    target_entry: Some("hut-door".to_owned()),
+                }],
+                encounter_anchors: Vec::new(),
+            };
+            // The hut: a small stone room with one resident.
+            let mut hut_doc = isometry_core::MapDocument::new("hut", 10, 10);
+            let floor = hut_doc.intern_tile_kind("stone");
+            for r in 0..10 {
+                for c in 0..10 {
+                    hut_doc.ground.set(c, r, floor);
+                }
+            }
+            hut_doc.tokens.push(isometry_core::Token {
+                id: TokenId(7),
+                at: (6, 6),
+                facing: isometry_core::Facing::South,
+                sprite: "goblin".to_owned(),
+                owner: None,
+            });
+            let hut = isometry_campaign::CampaignMap {
+                id: "hut".to_owned(),
+                scale: isometry_campaign::MapScale::Local,
+                document: hut_doc,
+                spawn_zones: Vec::new(),
+                transitions: vec![isometry_campaign::MapTransition {
+                    id: "hut-door".to_owned(),
+                    at: isometry_campaign::MapPoint { col: 2, row: 2 },
+                    target_map: "field".to_owned(),
+                    target_entry: Some("field-gate".to_owned()),
+                }],
+                encounter_anchors: Vec::new(),
+            };
+            ui.campaign_maps.insert("field".to_owned(), field);
+            ui.campaign_maps.insert("hut".to_owned(), hut);
+            ui.active_map = Some("field".to_owned());
+            eprintln!(
+                "[isometry] travel selftest: on {:?}, knight@{:?}, door at (12, 14)",
+                ui.active_map,
+                ui.map.token(TokenId(1)).map(|t| t.at),
+            );
+            // Walk through the door via the normal Play-mode click path.
+            ui.mode = EditMode::Play;
+            ui.select_token(TokenId(1));
+            ui.click_tile((12, 14));
+            eprintln!(
+                "[isometry] travel selftest: {} | active {:?} board '{}' | knight here: {:?} | field still holds knight: {:?}",
+                ui.status,
+                ui.active_map,
+                ui.map.name,
+                ui.map.tokens.iter().find(|t| t.sprite == "knight").map(|t| t.at),
+                ui.campaign_maps["field"].document.token(TokenId(1)).is_some(),
+            );
+        });
+        if let Some(window) = self.window.as_ref() {
+            window.request_redraw();
+        }
+    }
+
     fn maybe_combat_selftest(&mut self) {
         if !self.combat_selftest || (self.combat_swings == 0 && self.combat_emoted) {
             return;
@@ -1896,6 +2022,12 @@ impl ApplicationHandler for App {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.maybe_combat_selftest();
+        self.maybe_travel_selftest();
+        if self.travel_selftest && !self.travel_fired {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                Instant::now() + Duration::from_millis(100),
+            ));
+        }
         // A still board parks on `Wait`, which blocks until input arrives, so an
         // armed selftest would never reach its own deadline. Tick until it fires.
         if self.combat_selftest && !(self.combat_swings == 0 && self.combat_emoted) {
@@ -2287,10 +2419,13 @@ fn main() {
         net: None,
         last_net_version: 0,
         net_selftest: std::env::var_os("ISOMETRY_NET_SELFTEST").is_some(),
+        travel_selftest: std::env::var_os("ISOMETRY_TRAVEL_SELFTEST").is_some(),
+        travel_fired: false,
         combat_selftest: std::env::var_os("ISOMETRY_COMBAT_SELFTEST").is_some(),
         combat_swings: 4,
         last_swing: None,
         combat_emoted: false,
+        travel_emitted: Vec::new(),
         started: None,
         selftest_fired: false,
         system: None,

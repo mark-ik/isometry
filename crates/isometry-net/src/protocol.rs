@@ -204,6 +204,21 @@ pub enum GameEvent {
         on: bool,
         mobility: Option<(u32, u32)>,
     },
+    /// One token walks through a transition point: it leaves the active map and
+    /// arrives on the target map, carrying its sheet, conditions, and inventory.
+    ///
+    /// Everything else is resolved *deterministically from replicated state*
+    /// when the event applies: which door (the tile the token stands on), the
+    /// destination (the target's named entry, else its first spawn zone), a
+    /// free landing tile, and a fresh id on collision. So the event names only
+    /// the traveler, and every peer computes the identical outcome. When the
+    /// last player-owned token leaves the active map, the board follows it
+    /// through the door (the target map activates), which is how a party
+    /// crossing reads at the table.
+    ///
+    /// Host-committed: the host sweeps for tokens standing on doors after each
+    /// applied move, so a client walks through a door by simply walking.
+    Traveled { token: TokenId },
 }
 
 /// One message on the wire. The host is the authority: clients send

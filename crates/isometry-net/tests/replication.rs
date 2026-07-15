@@ -6,12 +6,12 @@
 use std::collections::BTreeMap;
 
 use isometry_campaign::{
-    CampaignDraft, CampaignWorld, DraftMap, EncounterAnchor, EntropyTape, EquipmentSlot, GenValue,
-    GenerationRecord, GeneratorRequest, HiddenItemModifier, HistoryEvent, Inventory, ItemId,
-    ItemInstance, ItemModifier, ItemModifierKind, ItemProposal, LocalMapProposal, MapCellProposal,
-    MapPoint, MapScale, RevealCondition, RoleSlot, SecretFact, SpawnZone, StoryletEffect,
-    StoryletProposal, StoryletRequirements, WorldCharacter, WorldEvent, WorldFact, WorldFaction,
-    WorldLaw,
+    CampaignDraft, CampaignMap, CampaignWorld, DraftMap, EncounterAnchor, EntropyTape,
+    EquipmentSlot, GenValue, GenerationRecord, GeneratorRequest, HiddenItemModifier, HistoryEvent,
+    Inventory, ItemId, ItemInstance, ItemModifier, ItemModifierKind, ItemProposal,
+    LocalMapProposal, MapCellProposal, MapPoint, MapScale, MapTransition, RevealCondition,
+    RoleSlot, SecretFact, SpawnZone, StoryletEffect, StoryletProposal, StoryletRequirements,
+    WorldCharacter, WorldEvent, WorldFact, WorldFaction, WorldLaw,
 };
 use isometry_core::{
     Beat, Facing, MapDocument, RollRecord, SessionEvent, SheetData, SheetDelta, Token, TokenId,
@@ -390,6 +390,161 @@ fn forced_movement_is_truth_and_lands_on_the_same_tile_everywhere() {
         (7, 6),
         "forced movement is game truth, so it cannot be left to each peer"
     );
+    assert_converged(&sim);
+}
+
+/// Two prepared maps joined by a door: `field` (the snapshot's demo board,
+/// promoted to a stored map) and `hut`, whose entry door faces back.
+fn two_map_snapshot() -> GameSnapshot {
+    let mut snap = snapshot();
+    let field = CampaignMap {
+        id: "field".to_owned(),
+        scale: MapScale::Local,
+        document: snap.map.clone(),
+        spawn_zones: Vec::new(),
+        transitions: vec![MapTransition {
+            id: "field-gate".to_owned(),
+            at: MapPoint { col: 3, row: 3 },
+            target_map: "hut".to_owned(),
+            target_entry: Some("hut-door".to_owned()),
+        }],
+        encounter_anchors: Vec::new(),
+    };
+    let mut hut_doc = MapDocument::new("hut", 6, 6);
+    let floor = hut_doc.intern_tile_kind("stone");
+    for r in 0..6 {
+        for c in 0..6 {
+            hut_doc.ground.set(c, r, floor);
+        }
+    }
+    let hut = CampaignMap {
+        id: "hut".to_owned(),
+        scale: MapScale::Local,
+        document: hut_doc,
+        spawn_zones: Vec::new(),
+        transitions: vec![MapTransition {
+            id: "hut-door".to_owned(),
+            at: MapPoint { col: 1, row: 1 },
+            target_map: "field".to_owned(),
+            target_entry: Some("field-gate".to_owned()),
+        }],
+        encounter_anchors: Vec::new(),
+    };
+    snap.maps.insert("field".to_owned(), field);
+    snap.maps.insert("hut".to_owned(), hut);
+    snap.active_map = Some("field".to_owned());
+    snap
+}
+
+#[test]
+fn walking_through_a_door_crosses_maps_and_the_board_follows_the_party() {
+    // The goblin is DM furniture (owner: None), so the knight is the last
+    // player out and the board follows it through the door.
+    let mut base = two_map_snapshot();
+    base.map.tokens[1].owner = None; // goblin: DM furniture
+    if let Some(field) = base.maps.get_mut("field") {
+        field.document = base.map.clone();
+    }
+    let mut sim = Sim::new(HostSession::new(base));
+    sim.connect(PeerId(10));
+    sim.host_event(GameEvent::SheetSet {
+        token: TokenId(1),
+        sheet: sheet("Knight", 12, 16),
+    });
+    sim.host_event(GameEvent::ConditionSet {
+        token: TokenId(1),
+        condition: "prone".to_owned(),
+        on: true,
+        mobility: Some((2, 6)),
+    });
+
+    // Walk onto the gate, then through it.
+    sim.host_event(GameEvent::Map(SessionEvent::TokenMoved {
+        id: TokenId(1),
+        to: (3, 3),
+    }));
+    sim.host_event(GameEvent::Traveled { token: TokenId(1) });
+
+    let host = sim.host.state();
+    // The board followed the last player out.
+    assert_eq!(host.active_map.as_deref(), Some("hut"));
+    // The knight arrived at the hut's entry door, carrying everything it is:
+    // sheet, condition, and the condition's numbers.
+    let knight = host.map.token(TokenId(1)).expect("knight in the hut");
+    assert_eq!(knight.at, (1, 1), "landed at the named entry");
+    assert_eq!(host.map.sheet(TokenId(1)).and_then(|s| s.int("hp_current")), Some(12));
+    assert!(host.map.has_condition(TokenId(1), "prone"), "still prone: travel is not a cure");
+    assert_eq!(host.map.effective_mobility(TokenId(1), (5, 6)), (2, 6));
+    // And left the field entirely (the stored copy, since field is no longer
+    // the active board).
+    let field = &host.maps["field"].document;
+    assert!(field.token(TokenId(1)).is_none());
+    assert!(field.sheets.get(&TokenId(1)).is_none());
+    // The goblin furniture stayed home.
+    assert!(field.token(TokenId(2)).is_some());
+    assert_converged(&sim);
+}
+
+#[test]
+fn arriving_where_your_id_is_taken_mints_a_new_one_and_carries_the_inventory() {
+    let mut base = two_map_snapshot();
+    base.map.tokens[1].owner = None;
+    // The hut already has a resident with the knight's id.
+    if let Some(hut) = base.maps.get_mut("hut") {
+        hut.document.tokens.push(Token {
+            id: TokenId(1),
+            at: (4, 4),
+            facing: Facing::South,
+            sprite: "goblin".to_owned(),
+            owner: None,
+        });
+    }
+    if let Some(field) = base.maps.get_mut("field") {
+        field.document = base.map.clone();
+    }
+    let mut sim = Sim::new(HostSession::new(base));
+    sim.connect(PeerId(10));
+    sim.host_event(GameEvent::InventorySet {
+        token: TokenId(1),
+        inventory: sword_inventory(),
+    });
+    sim.host_event(GameEvent::Map(SessionEvent::TokenMoved {
+        id: TokenId(1),
+        to: (3, 3),
+    }));
+    sim.host_event(GameEvent::Traveled { token: TokenId(1) });
+
+    let host = sim.host.state();
+    assert_eq!(host.active_map.as_deref(), Some("hut"));
+    // The resident kept its id; the traveler was minted a fresh one, and the
+    // inventory followed the new id (they key globally).
+    let arrivals: Vec<_> = host
+        .map
+        .tokens
+        .iter()
+        .filter(|t| t.sprite == "knight")
+        .collect();
+    assert_eq!(arrivals.len(), 1);
+    let new_id = arrivals[0].id;
+    assert_ne!(new_id, TokenId(1));
+    assert!(host.inventories.contains_key(&new_id), "the sword crossed too");
+    assert!(!host.inventories.contains_key(&TokenId(1)));
+    assert_converged(&sim);
+}
+
+#[test]
+fn travel_off_a_door_is_refused_and_clients_cannot_rule_it() {
+    let mut sim = Sim::new(HostSession::new(two_map_snapshot()));
+    sim.connect(PeerId(10));
+    let seq = sim.host.seq();
+
+    // Not standing on a transition point: nothing happens.
+    sim.host_event(GameEvent::Traveled { token: TokenId(1) });
+    assert_eq!(sim.host.seq(), seq, "an off-door travel entered the log");
+
+    // And travel is the host's ruling: a client walks, it does not ask in words.
+    sim.client_intent(PeerId(10), GameEvent::Traveled { token: TokenId(1) });
+    assert_eq!(sim.host.seq(), seq);
     assert_converged(&sim);
 }
 

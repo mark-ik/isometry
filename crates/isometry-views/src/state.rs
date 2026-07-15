@@ -9,7 +9,7 @@ use isometry_core::{
     MapDocument, MoveRules, Rng, RollRecord, SessionEvent, SightRules, TemplateKind, TileCoord,
     TileKindId, Token, TokenId, TurnList,
 };
-use isometry_net::{GameEvent, GameSnapshot, ROLL_LOG_CAP};
+use isometry_net::{apply_game, GameEvent, GameSnapshot, ROLL_LOG_CAP};
 
 /// Fixed side-panel width in logical px (CSS `.side` width plus its
 /// padding); the host uses it to keep drag painting off the panel.
@@ -933,6 +933,92 @@ impl UiState {
         self.action_intent = Some((actor, target, key));
     }
 
+    /// The transition point on the active map at `at`, if any: the door the
+    /// board renders and a token walks through.
+    pub fn transition_at(&self, at: TileCoord) -> bool {
+        let Some(active) = &self.active_map else {
+            return false;
+        };
+        self.campaign_maps
+            .get(active)
+            .map(|m| {
+                m.transitions
+                    .iter()
+                    .any(|t| (t.at.col as i32, t.at.row as i32) == at)
+            })
+            .unwrap_or(false)
+    }
+
+    /// Every door tile on the active map, for the board to render.
+    pub fn door_tiles(&self) -> HashSet<TileCoord> {
+        let Some(active) = &self.active_map else {
+            return HashSet::new();
+        };
+        self.campaign_maps
+            .get(active)
+            .map(|m| {
+                m.transitions
+                    .iter()
+                    .map(|t| (t.at.col as i32, t.at.row as i32))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Walk `token` through the door it stands on (solo / hot-seat path).
+    ///
+    /// Deliberately *not* a reimplementation: it builds a scratch snapshot and
+    /// runs the same `apply_game` travel logic every networked peer runs, then
+    /// copies the outcome back. One crossing, one set of rules, whoever hosts.
+    pub fn travel(&mut self, token: TokenId) {
+        // The stored copy of the active map must be current before the
+        // crossing, or the departure would be computed against a stale board.
+        if let Some(id) = &self.active_map {
+            if let Some(m) = self.campaign_maps.get_mut(id) {
+                m.document = self.map.clone();
+            }
+        }
+        let mut snap = GameSnapshot {
+            map: self.map.clone(),
+            turns: self.turns.clone(),
+            roll_log: Vec::new(),
+            journal: Vec::new(),
+            inventories: self.inventories.clone(),
+            generations: Vec::new(),
+            maps: self.campaign_maps.clone(),
+            active_map: self.active_map.clone(),
+            world: Default::default(),
+            last_beats: Vec::new(),
+            beat_seq: 0,
+        };
+        match apply_game(&mut snap, &GameEvent::Traveled { token }) {
+            Ok(()) => {
+                let switched = snap.active_map != self.active_map;
+                self.map = snap.map;
+                self.turns = snap.turns;
+                self.inventories = snap.inventories;
+                self.campaign_maps = snap.maps;
+                self.active_map = snap.active_map;
+                if switched {
+                    self.selected_token = None;
+                    self.selected = None;
+                    self.reach.clear();
+                    self.explored.clear();
+                    self.status = format!(
+                        "the party moves on: {}",
+                        self.active_map.as_deref().unwrap_or("?")
+                    );
+                } else {
+                    self.status = "through the door".to_owned();
+                }
+                self.recompute_fog();
+            }
+            Err(error) => {
+                self.status = format!("cannot travel: {error:?}");
+            }
+        }
+    }
+
     /// Play a beat on a token for its own sake: a cheer, a shrug, a taunt.
     ///
     /// The emote system in one method. It reuses the beat the combat lane
@@ -1668,6 +1754,12 @@ impl UiState {
                                 SessionEvent::TokenFaced { id, facing },
                             ]);
                             self.recompute_reach();
+                            // Landing on a door is walking through it. In a
+                            // session the host's sweep does this; solo does it
+                            // here, through the same shared logic.
+                            if self.transition_at(at) {
+                                self.travel(id);
+                            }
                         }
                     }
                 }

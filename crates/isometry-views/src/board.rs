@@ -87,6 +87,7 @@ fn ground_tiles(ui: &UiState) -> Vec<UiChild> {
         HashSet::new()
     };
     let template: HashSet<TileCoord> = ui.template_preview();
+    let doors = ui.door_tiles();
     let mut out: Vec<UiChild> = Vec::new();
     for (col, row, kind) in map.ground.iter() {
         if kind.0 == 0 {
@@ -120,6 +121,10 @@ fn ground_tiles(ui: &UiState) -> Vec<UiChild> {
         }
         if template.contains(&at) {
             class.push_str(" tile-template");
+        }
+        // A transition point: walk onto it and you are on the other map.
+        if doors.contains(&at) {
+            class.push_str(" tile-door");
         }
         out.push(tile_el(ui, at, elev, class));
         if fog == FogLevel::Dim {

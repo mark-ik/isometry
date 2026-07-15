@@ -1,7 +1,7 @@
 # Gameplay roadmap
 
 **Date:** 2026-07-14
-**Status:** active plan. Order set by Mark 2026-07-14; **C1 (conditions) landed 2026-07-15**; C2 (regions + transitions) is next.
+**Status:** active plan. Order set by Mark 2026-07-14; **C1 (conditions) and C2 (transition points) landed 2026-07-15**; C3 (split-party time) is next.
 **Related:** [adjudication_and_representation_plan](2026-07-14_adjudication_and_representation_plan.md)
 (complete; this continues its lane), [next_horizons_landscape](2026-07-07_next_horizons_landscape.md)
 (C1 answers its open question B.5; C2 takes its lane 2 recommendation),
@@ -16,11 +16,9 @@ split-party meaningful, and the resolver's consequence list (deltas, defeat,
 displacement, conditions, allegiance) grows one type at a time.
 
 1. **C1: Conditions** (next-horizons B.5) — **landed 2026-07-15**, below.
-2. **C2: Regional locations + transition points** — REGION as a coarser
-   `MapDocument` (inherits editor, fog, tokens, replication); a transition point
-   is a tile/prop carrying a target-map reference; the swap replicates as the
-   existing `MapActivated`. Done when a party walks a door from one prepared map
-   to another on every peer.
+2. **C2: Regional locations + transition points** — **landed 2026-07-15**,
+   below. (REGION-scale maps were already just `MapDocument`s; what was missing
+   was the door.)
 3. **C3: Split-party time** — a per-location tick ledger summed into the world
    clock; simultaneity is presentation (the Helldivers rule) unless a rule reads
    it, in which case initiative is over *locations*, one local round per world
@@ -88,6 +86,40 @@ trip hits for 0, the goblin's effective mobility drops from (6, 6) to (3, 6) (it
 30 ft base halved by the script), the prone pose renders, and the constants are
 demoted to sheetless-token defaults.
 
+## C2: Transition points (LANDED 2026-07-15)
+
+**Doors are walked, travel is ruled.** `MapTransition` already existed as pack
+and generator data (`at`, `target_map`, `target_entry`); nothing rendered or
+played it. Now:
+
+- The board renders every transition on the active map as a door tile
+  (`tile-door`), and a Play-mode move that lands on one walks through it.
+- `GameEvent::Traveled { token }` names only the traveler. Everything else is
+  resolved deterministically from replicated state when the event applies: which
+  door (the tile the token stands on), the destination (the target's named entry,
+  else its first spawn zone), a free landing tile (the same outward scan spawning
+  uses), and a fresh id on collision (minted above every token on every map, so
+  the globally-keyed inventories stay sound and are rekeyed with it).
+- The traveler carries everything it is: sheet, conditions, mobility numbers,
+  defeat flag, inventory. Travel is not a cure; prone crosses with you.
+- **The board follows the last player out.** When no player-owned token remains
+  on the active map, the target activates exactly as a manual `MapActivated`
+  (fresh board, fresh turn order). The DM's furniture stays home.
+- The host sweeps for tokens standing on doors after every applied move, so a
+  client walks through a door by walking; a client `Traveled` intent is refused.
+  Arriving on the far door does not bounce you back: the sweep fires on arrival
+  onto a door, so you must step off the doorway and back on to return. Solo play
+  routes through the *same* `apply_game` logic via a scratch snapshot, so there
+  is exactly one travel implementation.
+
+**Done when:** a party walks a door from one prepared map to another on every
+peer. **Verified 2026-07-15.** Replication: the knight crosses carrying sheet,
+prone, and its halved numbers; the field's stored copy no longer holds it; the
+goblin furniture stays; an id collision mints a fresh id and the sword follows
+it; off-door travel is refused; peers converge. In-app: the knight clicks onto
+the purple door tile, the status reads "the party moves on: hut", and the board
+is the hut with the knight standing at the named entry.
+
 ## Progress
 
 - 2026-07-14: Doc created with Mark's ordering. C1 design settled: the
@@ -95,3 +127,7 @@ demoted to sheetless-token defaults.
 - 2026-07-15: C1 landed and verified. The resolver's consequence list is now
   deltas, defeat, displacement, and conditions-with-numbers; movement and senses
   are system-driven end to end. 153 workspace tests green.
+- 2026-07-15: C2 landed and verified. Doors render, travel is ruled once and
+  applied identically everywhere, and the board follows the last player out.
+  156 workspace tests green. C3 (split-party time) is next and now has its
+  substrate: parties genuinely on different maps.
