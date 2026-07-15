@@ -22,8 +22,7 @@ displacement, conditions, allegiance) grows one type at a time.
 3. **C3: Split-party time** — **landed 2026-07-15**, below.
 4. **C4: Generators + command grammar** — **landed 2026-07-15**, below.
 5. **C5: Multi-character parties + recruitment** — **landed 2026-07-15**, below.
-6. **C6: Dialogue** — surface storylet choices in-app; the conversation-economy
-   lane stays post-keystone with the intelligence vision.
+6. **C6: Dialogue** — **landed 2026-07-15**, below.
 7. **C7: Factions as participants** — worldbuilding rung 7; a faction player is
    an owner name over a faction-turn channel. Waits on the moot/murm rebase.
 8. **C8: World map (pointcrawl)** — stays deferred per next-horizons' trigger;
@@ -68,7 +67,7 @@ both; and a corpse still cannot be tripped.
 **Verified 2026-07-15.** Unit: a trip applies `prone` and the projection travels
 with it (base speed 5 halves to 2, sight untouched); tripping the already-prone
 applies nothing; blinded is dark-not-slow and immobilized is slow-not-dark, both
-judged in Lua with no Rust branch; no conditions means no override at all. 
+judged in Lua with no Rust branch; no conditions means no override at all.
 Replication: the condition and its numbers land on the client (which computes fog
 and reach locally, so it must hold them), standing up restores base, and a client
 proposing a `ConditionSet` is refused (a condition is a rules ruling). In-app: the
@@ -242,6 +241,48 @@ ownership-gated on the host — a joined player could move any token, not only i
 own. Not required by the done-when (which is about controlling *your* tokens),
 but a real authority follow-up.
 
+## C6: Dialogue — the storylet surface (LANDED 2026-07-15)
+
+**A surface over an existing engine.** The W5 storylet machinery was complete —
+`CampaignWorld::resolve_storylet` matches requirements (faction tags, host-private
+secret facts, world laws) and casts roles, and `HostSession::commit_storylet`
+applies the effects (facts, history, items, maps) as replicated events — but
+nothing in the app *showed* or *played* one. C6 is that surface, and nothing more:
+the conversation-economy / DM-in-the-loop-inference lane stays post-keystone with
+the optional-intelligence vision.
+
+- **The overlay** (a DM-only menu, mirroring the generator overlay) lists each
+  storylet with its entry line, whether it is playable now, and — when locked —
+  *why* ("needs a faction tagged 'cult'", "no character fits the role 'envoy'").
+  Cycle, read the cast, Play the ready one.
+- **Host-computed rows.** Matching reads host-private secrets, so the host
+  resolves every storylet against the current world + `secret_ids()` and hands the
+  view `StoryletRow`s; a joined client never receives them. Recomputed while the
+  surface is open, so a storylet lights up the moment its requirements are met (a
+  convinced faction, a revealed secret) — the storylet graph paying itself off.
+- **Playing commits.** `play_storylet` arms a request the host drains through the
+  same solo/session split as a campaign commit: solo runs a temp `HostSession`
+  and mirrors the result back; a session routes `NetBridge::commit_storylet` so
+  the effects replicate. All DM-gated (`can_edit_inventory`).
+
+**Done when:** a storylet's choices are visible in-app and playing one commits its
+effects. **Verified 2026-07-15.** Unit: the surface refuses a client, refuses to
+play a locked storylet, and arms a request for a ready one. In-app
+(`ISOMETRY_STORYLET_SELFTEST`): a ready storylet and a locked one are surfaced with
+the right status ("needs a faction tagged 'cult'"), and playing the ready one
+commits its fact into the journal ("gate-met": true).
+
+An adversarial review caught three real issues, all fixed with regressions: in a
+session the DM's `self.campaign` was a stale boot-time copy, so storylet
+availability (which reads host-private secrets) resolved against out-of-date
+secrets — now synced from the authority in the same `pump_net` block that syncs
+journal/history; a played storylet re-lights (repeatable while its requirements
+hold), and its Item effect minted a fixed `storylet.{key}.{index}` id that
+collided and hard-failed the whole commit on a second play — the id is now
+disambiguated per grant, matching the replay-safe Fact/History effects; and a
+session storylet outcome reused the campaign-commit channel, mislabelling itself
+"committed campaign draft" — the shared outcome text is now neutral.
+
 ## Progress
 
 - 2026-07-14: Doc created with Mark's ordering. C1 design settled: the
@@ -265,3 +306,8 @@ but a real authority follow-up.
   side; the resolver reports the win, the host rules the owner change and the
   cap; allegiance replicates and refreshes fog. Adversarially reviewed. 170
   workspace tests green. C6 (dialogue) is next.
+- 2026-07-15: C6 landed and verified. The storylet surface shows narrative
+  opportunities with availability + why-locked and plays a ready one, committing
+  its effects; host-computed (reads secrets), DM-only. Adversarially reviewed.
+  173 workspace tests green. C7 (factions as participants) is next, and waits on
+  the moot/murm rebase.

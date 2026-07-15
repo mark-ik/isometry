@@ -15,6 +15,7 @@ mod governance;
 mod panel;
 mod sheet;
 mod state;
+mod storylet;
 mod theme;
 mod widgets;
 
@@ -23,6 +24,6 @@ pub use demo::{demo_map, synth_map};
 pub use state::{
     ActionRow, CompendiumTab, EditMode, FogLevel, GenerationRequest, GovernanceBindingRow,
     GovernanceConflict, GovernanceResolutionRequest, InitiativeMode, InventoryRequest, ItemRow,
-    MonsterRow, NetMode, SheetSchema, SpellRow, UiState, PANEL_W,
+    MonsterRow, NetMode, SheetSchema, SpellRow, StoryletRow, UiState, PANEL_W,
 };
 pub use theme::board_css;

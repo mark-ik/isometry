@@ -218,6 +218,17 @@ impl HostNet {
         Ok(())
     }
 
+    /// Play a storylet: resolve and commit its effects, broadcasting each.
+    pub async fn commit_storylet(
+        &self,
+        key: &str,
+        item_owner: Option<isometry_core::TokenId>,
+    ) -> Result<(), String> {
+        let out = self.session.lock().await.commit_storylet(key, item_owner)?;
+        dispatch(&self.peers, out).await;
+        Ok(())
+    }
+
     /// The DM whispers to a named player (directed, not broadcast).
     pub async fn whisper(&self, from: &str, to: &str, text: &str) {
         let out = self.session.lock().await.whisper(from, to, text);

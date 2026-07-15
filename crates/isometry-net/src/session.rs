@@ -677,9 +677,20 @@ impl HostSession {
                         .get(&owner)
                         .cloned()
                         .unwrap_or_default();
+                    // A storylet re-lights while its requirements hold, so it can
+                    // be played more than once. A fixed `storylet.{key}.{index}`
+                    // id would collide on the second grant and fail the whole
+                    // commit; disambiguate so each play yields a fresh instance,
+                    // the way the Fact/History effects already replay cleanly.
+                    let mut id = ItemId::new(format!("storylet.{key}.{index}"));
+                    let mut nonce = 1;
+                    while inventory.items.contains_key(&id) {
+                        id = ItemId::new(format!("storylet.{key}.{index}.{nonce}"));
+                        nonce += 1;
+                    }
                     inventory
                         .insert(ItemInstance {
-                            id: ItemId::new(format!("storylet.{key}.{index}")),
+                            id,
                             template: item.template,
                             name: item.name,
                             quantity: 1,

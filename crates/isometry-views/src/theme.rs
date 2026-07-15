@@ -353,6 +353,8 @@ const COMPENDIUM_CSS: &str = r#"
 .overlay-title { font-size: 16px; font-weight: bold; color: #e8ebf2; }
 .overlay-actions { display: flex; gap: 6px; }
 .entry-sub { font-size: 12px; color: #8a90a0; font-style: italic; margin-bottom: 10px; }
+/* A storylet's entry line: the scene's prose, set apart from the cast rows. */
+.storylet-entry { color: #e8ebf2; font-size: 14px; margin: 8px 0; line-height: 1.35; }
 .monster-stats { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-bottom: 12px; }
 .stat-row { font-size: 13px; }
 .stat-label { color: #8a90a0; margin-right: 5px; }

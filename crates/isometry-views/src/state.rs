@@ -262,6 +262,19 @@ pub enum GenerationRequest {
     Commit,
 }
 
+/// One narrative opportunity as the DM sees it. Host-projected: the app resolves
+/// the storylet's requirements (including host-private secret facts) and casting
+/// once, and hands the view only the result. `cast` is role -> character name;
+/// `status` explains a `!available` row (a missing faction, an uncast role).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoryletRow {
+    pub key: String,
+    pub entry: String,
+    pub available: bool,
+    pub status: String,
+    pub cast: Vec<(String, String)>,
+}
+
 /// One host-projected candidate in an unresolved campaign-governance
 /// conflict. Labels are presentation data; signed proposal ids remain the
 /// request identity.
@@ -425,6 +438,17 @@ pub struct UiState {
     pub generator_selected: usize,
     pub generator_locks: BTreeMap<String, GenValue>,
     pub generation_request: Option<GenerationRequest>,
+    /// The storylet surface (C6, "dialogue"): host-computed rows of the
+    /// campaign's narrative opportunities, whether each is currently playable
+    /// (its requirements met and roles cast), and the DM's request to play one.
+    /// Host-only: matching reads host-private secret facts, so a joined client
+    /// never receives this.
+    pub storylets: Vec<StoryletRow>,
+    pub storylet_open: bool,
+    pub storylet_selected: usize,
+    /// The key of the storylet the DM asked to play; the host drains it, commits
+    /// its effects, and they replicate.
+    pub storylet_request: Option<String>,
     /// Host-fed competing-binding projection and one-shot resolution request.
     /// The view never reads Moot stores or signs campaign operations.
     pub governance_conflict: Option<GovernanceConflict>,
@@ -531,6 +555,10 @@ impl UiState {
             party_cap: isometry_net::default_party_cap(),
             active_map: None,
             world: CampaignWorld::default(),
+            storylets: Vec::new(),
+            storylet_open: false,
+            storylet_selected: 0,
+            storylet_request: None,
             generator_open: false,
             generator_preview: None,
             generator_choices: Vec::new(),
@@ -627,6 +655,51 @@ impl UiState {
 
     /// Open the W2 host-only generator preview. The initial bundled pack has
     /// one item generator; later pack discovery will populate this selector.
+    /// Open the storylet surface (the DM's dialogue/scene menu). Host-only, like
+    /// generation: matching a storylet reads secret facts a client never holds.
+    pub fn open_storylets(&mut self) {
+        if !self.can_edit_inventory {
+            self.status = "storylets are the DM's".to_owned();
+        } else {
+            self.storylet_open = true;
+            self.storylet_selected = 0;
+        }
+    }
+
+    pub fn close_storylets(&mut self) {
+        self.storylet_open = false;
+    }
+
+    pub fn cycle_storylet(&mut self) {
+        if !self.storylets.is_empty() {
+            self.storylet_selected = (self.storylet_selected + 1) % self.storylets.len();
+        }
+    }
+
+    pub fn selected_storylet(&self) -> Option<&StoryletRow> {
+        self.storylets.get(self.storylet_selected)
+    }
+
+    /// Ask the host to play the selected storylet: commit its effects (facts,
+    /// history, items, maps), which replicate. Only a playable one can be run.
+    pub fn play_storylet(&mut self) {
+        if !self.can_edit_inventory {
+            self.status = "storylets are the DM's".to_owned();
+            return;
+        }
+        let picked = self
+            .selected_storylet()
+            .map(|row| (row.available, row.key.clone(), row.entry.clone(), row.status.clone()));
+        match picked {
+            Some((true, key, entry, _)) => {
+                self.storylet_request = Some(key);
+                self.status = format!("playing: {entry}");
+            }
+            Some((false, _, _, status)) => self.status = format!("not yet: {status}"),
+            None => self.status = "no storylet selected".to_owned(),
+        }
+    }
+
     pub fn open_generator(&mut self) {
         if !self.can_edit_inventory {
             self.status = "generation requires the host".to_owned();
@@ -2611,6 +2684,45 @@ mod tests {
         assert!(placed, "the spawn must replicate as an authoritative event");
         // And the stat-block bind is queued for the same id.
         assert!(ui.spawn_sheet_request.is_some());
+    }
+
+    #[test]
+    fn the_storylet_surface_is_dm_only_and_plays_only_the_ready() {
+        let mut ui = UiState::new(demo_map());
+        // A joined player cannot open or play storylets (matching reads secrets).
+        ui.can_edit_inventory = false;
+        ui.open_storylets();
+        assert!(!ui.storylet_open, "a client must not open the storylet surface");
+
+        // The DM can. A locked storylet cannot be played; a ready one arms a
+        // request the host will commit.
+        ui.can_edit_inventory = true;
+        ui.storylets = vec![
+            StoryletRow {
+                key: "locked".to_owned(),
+                entry: "The cult stirs.".to_owned(),
+                available: false,
+                status: "needs a faction tagged 'cult'".to_owned(),
+                cast: Vec::new(),
+            },
+            StoryletRow {
+                key: "ready".to_owned(),
+                entry: "A stranger greets you.".to_owned(),
+                available: true,
+                status: "ready".to_owned(),
+                cast: Vec::new(),
+            },
+        ];
+        ui.open_storylets();
+        assert!(ui.storylet_open);
+
+        ui.storylet_selected = 0; // the locked one
+        ui.play_storylet();
+        assert_eq!(ui.storylet_request, None, "a locked storylet cannot be played");
+
+        ui.storylet_selected = 1; // the ready one
+        ui.play_storylet();
+        assert_eq!(ui.storylet_request.as_deref(), Some("ready"));
     }
 
     #[test]

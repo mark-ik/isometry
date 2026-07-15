@@ -39,8 +39,8 @@ use isometry_system::{
 };
 use isometry_views::{
     board_css, board_root, demo_map, synth_map, ActionRow, EditMode, GenerationRequest,
-    InventoryRequest, ItemRow, MonsterRow, NetMode, SheetSchema, SpellRow, UiChild, UiState,
-    PANEL_W,
+    InventoryRequest, ItemRow, MonsterRow, NetMode, SheetSchema, SpellRow, StoryletRow, UiChild,
+    UiState, PANEL_W,
 };
 
 mod campaign_store;
@@ -155,6 +155,10 @@ struct App {
     /// party cap on the next one. Proves allegiance + the cap + fog.
     convince_selftest: bool,
     convince_fired: bool,
+    /// `ISOMETRY_STORYLET_SELFTEST`: seed two storylets (one ready, one locked),
+    /// open the surface, play the ready one, and confirm its fact commits.
+    storylet_selftest: bool,
+    storylet_fired: bool,
     /// `ISOMETRY_COMBAT_SELFTEST`: drive a short adjudicated exchange on boot.
     combat_selftest: bool,
     /// Swings left to throw, when the last one landed, and whether the winner
@@ -265,6 +269,17 @@ fn next_snapshot_id(snapshot: &GameSnapshot) -> TokenId {
         .max()
         .unwrap_or(0);
     TokenId(max + 1)
+}
+
+/// A DM-facing reason a storylet is not yet playable.
+fn describe_storylet_error(error: &isometry_campaign::StoryletError) -> String {
+    use isometry_campaign::StoryletError::*;
+    match error {
+        MissingFactionTag(tag) => format!("needs a faction tagged '{tag}'"),
+        MissingHiddenFact(id) => format!("needs the secret '{id}' to be true"),
+        MissingWorldLaw(id) => format!("needs the law '{id}'"),
+        UncastRole(role) => format!("no character fits the role '{role}'"),
+    }
 }
 
 fn generator_pack_roots() -> Vec<std::path::PathBuf> {
@@ -646,6 +661,7 @@ impl App {
         }
         self.pump_sheets();
         self.pump_generators();
+        self.pump_storylets();
         self.pump_net();
     }
 
@@ -702,14 +718,13 @@ impl App {
                     }
                     ui.connected_players = players;
                     if let Some(outcome) = campaign_outcomes.last() {
+                        // Campaign drafts and storylets share this one-shot
+                        // outcome channel, so the text stays neutral to fit both.
                         ui.status = match &outcome.value {
-                            Ok(()) => {
-                                format!("committed campaign draft (request {})", outcome.request)
+                            Ok(()) => format!("committed (request {})", outcome.request),
+                            Err(error) => {
+                                format!("commit failed (request {}): {error}", outcome.request)
                             }
-                            Err(error) => format!(
-                                "campaign commit failed (request {}): {error}",
-                                outcome.request
-                            ),
                         };
                     }
                     if let Some(error) = &failure {
@@ -732,6 +747,13 @@ impl App {
                 self.journal = snap.journal.clone();
                 if let Some(history) = self.net.as_ref().and_then(NetBridge::history) {
                     self.history = history;
+                }
+                // Pull the authoritative host-private campaign too, or storylet
+                // availability (which reads secret_ids) resolves against a stale
+                // copy: a mid-session reveal would leave a secret-gated storylet
+                // wrongly locked, or a removed secret wrongly playable.
+                if let Some(campaign) = self.net.as_ref().and_then(NetBridge::campaign) {
+                    self.campaign = campaign;
                 }
                 runner.update(|ui| ui.apply_snapshot(snap));
                 // The host's door sweep: any token now standing on a transition
@@ -1386,6 +1408,158 @@ impl App {
     /// Evaluate or commit a host-owned generator preview. The view asks for a
     /// one-shot action; this desktop layer loads the declared pack and owns the
     /// entropy tape, while `isometry-net` remains scripting-agnostic.
+    /// Build a replicated snapshot from the view's current state, for a host
+    /// operation that needs to prevalidate against a clone (storylet commit).
+    fn snapshot_of(&self, ui: &UiState) -> GameSnapshot {
+        GameSnapshot {
+            map: ui.map.clone(),
+            turns: ui.turns.clone(),
+            roll_log: ui.roll_log.clone(),
+            journal: self.journal.clone(),
+            inventories: ui.inventories.clone(),
+            generations: ui.generations.clone(),
+            maps: ui.campaign_maps.clone(),
+            active_map: ui.active_map.clone(),
+            world: ui.world.clone(),
+            clocks: ui.clocks.clone(),
+            party_cap: ui.party_cap,
+            last_beats: Vec::new(),
+            beat_seq: 0,
+        }
+    }
+
+    /// The storylet surface (C6). While the DM has it open, resolve each
+    /// campaign storylet against the current world and the host-private secrets
+    /// and hand the view rows; when the DM plays one, commit its effects.
+    ///
+    /// Host-only: matching reads secret facts, and committing is authoring. A
+    /// client's `open_storylets`/`play_storylet` are gated on `can_edit_inventory`
+    /// upstream, so this never runs for a joined player.
+    fn pump_storylets(&mut self) {
+        let (open, request, world, can_edit) = match self.runner.as_ref() {
+            Some(r) => {
+                let s = r.state();
+                (s.storylet_open, s.storylet_request.clone(), s.world.clone(), s.can_edit_inventory)
+            }
+            None => return,
+        };
+        if !can_edit || (!open && request.is_none()) {
+            return;
+        }
+
+        // Refresh the rows while the surface is open: which storylets are
+        // playable now (requirements met, roles cast) and which are still locked.
+        if open {
+            let secret_ids: Vec<String> = self.campaign.secret_ids().map(str::to_owned).collect();
+            let rows: Vec<StoryletRow> = world
+                .storylets
+                .iter()
+                .map(|(key, storylet)| {
+                    match world.resolve_storylet(storylet, secret_ids.iter().map(String::as_str)) {
+                        Ok(resolved) => StoryletRow {
+                            key: key.clone(),
+                            entry: storylet.entry.clone(),
+                            available: true,
+                            status: "ready".to_owned(),
+                            cast: resolved
+                                .cast
+                                .into_iter()
+                                .map(|(role, character_id)| {
+                                    let name = world
+                                        .characters
+                                        .get(&character_id)
+                                        .map(|c| c.name.clone())
+                                        .unwrap_or(character_id);
+                                    (role, name)
+                                })
+                                .collect(),
+                        },
+                        Err(error) => StoryletRow {
+                            key: key.clone(),
+                            entry: storylet.entry.clone(),
+                            available: false,
+                            status: describe_storylet_error(&error),
+                            cast: Vec::new(),
+                        },
+                    }
+                })
+                .collect();
+            if let Some(runner) = self.runner.as_mut() {
+                runner.update(|ui| {
+                    // Only replace on change, to keep the DM's selection stable.
+                    if ui.storylets != rows {
+                        ui.storylets = rows;
+                        if ui.storylet_selected >= ui.storylets.len() {
+                            ui.storylet_selected = 0;
+                        }
+                    }
+                });
+            }
+        }
+
+        // Play a storylet: commit its effects. A storylet Item effect wants a
+        // recipient, so pass the active token (else the first), like campaign.
+        let Some(key) = request else {
+            return;
+        };
+        let (item_owner, snapshot) = match self.runner.as_ref() {
+            Some(r) => {
+                let s = r.state();
+                let owner = s.turns.active().or_else(|| s.map.tokens.first().map(|t| t.id));
+                (owner, self.snapshot_of(s))
+            }
+            None => return,
+        };
+        if let Some(runner) = self.runner.as_mut() {
+            runner.update(|ui| ui.storylet_request = None);
+        }
+        if world.storylets.is_empty() {
+            return;
+        }
+        let remote = matches!(self.runner.as_ref().map(|r| r.state().net_mode), Some(NetMode::Remote));
+        if remote {
+            if let Some(net) = self.net.as_mut() {
+                let request = net.commit_storylet(key.clone(), item_owner);
+                if let Some(runner) = self.runner.as_mut() {
+                    runner.update(|ui| {
+                        ui.status = match request {
+                            Some(request) => format!("playing storylet (request {request})"),
+                            None => "storylet authority actor stopped".to_owned(),
+                        };
+                    });
+                }
+            }
+        } else {
+            let mut host = HostSession::with_history(
+                snapshot,
+                self.campaign.clone(),
+                self.history.clone(),
+            );
+            match host.commit_storylet(&key, item_owner) {
+                Ok(_) => {
+                    self.campaign = host.campaign().clone();
+                    self.history = host.history().clone();
+                    self.journal = host.state().journal.clone();
+                    let snapshot = host.state().clone();
+                    if let Some(runner) = self.runner.as_mut() {
+                        runner.update(|ui| {
+                            ui.apply_snapshot(snapshot);
+                            ui.status = format!("played storylet: {key}");
+                        });
+                    }
+                }
+                Err(error) => {
+                    if let Some(runner) = self.runner.as_mut() {
+                        runner.update(|ui| ui.status = format!("storylet failed: {error}"));
+                    }
+                }
+            }
+        }
+        if let Some(window) = self.window.as_ref() {
+            window.request_redraw();
+        }
+    }
+
     fn pump_generators(&mut self) {
         let mut action = None;
         let mut locks = Default::default();
@@ -1880,6 +2054,86 @@ impl App {
 
     /// `ISOMETRY_CONVINCE_SELFTEST=1`: a bard recruits a goblin, then meets the
     /// party cap on the next. Focus-free.
+    /// `ISOMETRY_STORYLET_SELFTEST=1`: seed a ready storylet and a locked one,
+    /// open the surface, play the ready one, and confirm its fact committed.
+    fn maybe_storylet_selftest(&mut self) {
+        if !self.storylet_selftest || self.storylet_fired {
+            return;
+        }
+        if !self.started.is_some_and(|t| t.elapsed() > Duration::from_secs(2)) {
+            return;
+        }
+        self.storylet_fired = true;
+
+        use isometry_campaign::{StoryletEffect, StoryletProposal, StoryletRequirements, WorldFact};
+        // A ready storylet (no requirements, no roles) and a locked one (needs a
+        // faction that does not exist).
+        let ready = StoryletProposal {
+            key: "gate-greeting".to_owned(),
+            entry: "A stranger greets you at the gate.".to_owned(),
+            tags: Vec::new(),
+            requirements: StoryletRequirements::default(),
+            roles: Vec::new(),
+            effects: vec![StoryletEffect::Fact {
+                fact: WorldFact {
+                    id: "gate-met".to_owned(),
+                    kind: "event".to_owned(),
+                    text: "The party met a stranger at the gate.".to_owned(),
+                    tags: Vec::new(),
+                },
+            }],
+        };
+        let locked = StoryletProposal {
+            key: "cult-rises".to_owned(),
+            entry: "The eel cult stirs in the deep.".to_owned(),
+            tags: Vec::new(),
+            requirements: StoryletRequirements {
+                faction_tags: vec!["cult".to_owned()],
+                ..Default::default()
+            },
+            roles: Vec::new(),
+            effects: Vec::new(),
+        };
+        if let Some(runner) = self.runner.as_mut() {
+            runner.update(|ui| {
+                ui.world.storylets.insert("gate-greeting".to_owned(), ready.clone());
+                ui.world.storylets.insert("cult-rises".to_owned(), locked.clone());
+                ui.open_storylets();
+            });
+        }
+        // Compute the rows.
+        self.pump_storylets();
+        if let Some(runner) = self.runner.as_ref() {
+            for row in &runner.state().storylets {
+                eprintln!(
+                    "[isometry] storylet selftest: {} available={} status={:?} entry={:?}",
+                    row.key, row.available, row.status, row.entry
+                );
+            }
+        }
+        // Select the ready one and play it.
+        if let Some(runner) = self.runner.as_mut() {
+            runner.update(|ui| {
+                let idx = ui.storylets.iter().position(|r| r.key == "gate-greeting").unwrap_or(0);
+                ui.storylet_selected = idx;
+                ui.play_storylet();
+            });
+        }
+        self.pump_storylets();
+        let committed = self.journal.iter().any(|f| f.id == "gate-met");
+        let status = self
+            .runner
+            .as_ref()
+            .map(|r| r.state().status.clone())
+            .unwrap_or_default();
+        eprintln!(
+            "[isometry] storylet selftest: played | journal has 'gate-met': {committed} | status: {status}"
+        );
+        if let Some(window) = self.window.as_ref() {
+            window.request_redraw();
+        }
+    }
+
     fn maybe_convince_selftest(&mut self) {
         if !self.convince_selftest || self.convince_fired {
             return;
@@ -2427,9 +2681,11 @@ impl ApplicationHandler for App {
         self.maybe_travel_selftest();
         self.maybe_cmd_selftest();
         self.maybe_convince_selftest();
+        self.maybe_storylet_selftest();
         if (self.travel_selftest && !self.travel_fired)
             || (self.cmd_selftest && !self.cmd_fired)
             || (self.convince_selftest && !self.convince_fired)
+            || (self.storylet_selftest && !self.storylet_fired)
         {
             event_loop.set_control_flow(ControlFlow::WaitUntil(
                 Instant::now() + Duration::from_millis(100),
@@ -2449,6 +2705,7 @@ impl ApplicationHandler for App {
             self.pump_net();
             self.pump_sheets();
             self.pump_generators();
+            self.pump_storylets();
             event_loop.set_control_flow(ControlFlow::WaitUntil(
                 Instant::now() + Duration::from_millis(100),
             ));
@@ -2832,6 +3089,8 @@ fn main() {
         cmd_fired: false,
         convince_selftest: std::env::var_os("ISOMETRY_CONVINCE_SELFTEST").is_some(),
         convince_fired: false,
+        storylet_selftest: std::env::var_os("ISOMETRY_STORYLET_SELFTEST").is_some(),
+        storylet_fired: false,
         combat_selftest: std::env::var_os("ISOMETRY_COMBAT_SELFTEST").is_some(),
         combat_swings: 4,
         last_swing: None,

@@ -1336,6 +1336,18 @@ fn storylet_matches_private_fact_casts_existing_role_and_commits_effects() {
         .journal
         .iter()
         .any(|fact| fact.id == "oath.public"));
+
+    // A storylet re-lights while its requirements hold, so it can be played
+    // again. The Item effect must not collide with its first grant: a second
+    // play yields a second blade rather than failing the whole commit.
+    host.commit_storylet("drowned-oath", Some(TokenId(1)))
+        .expect("a repeat play must not error on a duplicate item id");
+    let blades = host.state().inventories[&TokenId(1)]
+        .items
+        .values()
+        .filter(|item| item.name == "Oath Blade")
+        .count();
+    assert_eq!(blades, 2, "each play grants a fresh instance");
 }
 
 #[test]

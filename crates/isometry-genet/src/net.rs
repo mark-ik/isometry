@@ -35,6 +35,11 @@ enum BridgeCommand {
         record: GenerationRecord,
         item_owner: Option<TokenId>,
     },
+    Storylet {
+        request: RequestId,
+        key: String,
+        item_owner: Option<TokenId>,
+    },
     Whisper {
         to: String,
         text: String,
@@ -194,6 +199,18 @@ impl NetBridge {
             .then_some(request)
     }
 
+    /// Ask the host to play a storylet (session path). Its effects replicate.
+    pub fn commit_storylet(&mut self, key: String, item_owner: Option<TokenId>) -> Option<RequestId> {
+        let request = self.request_ids.issue();
+        self.actor
+            .command(BridgeCommand::Storylet {
+                request,
+                key,
+                item_owner,
+            })
+            .then_some(request)
+    }
+
     pub fn take_campaign_outcomes(&mut self) -> Vec<Correlated<Result<(), String>>> {
         std::mem::take(&mut self.campaign_outcomes)
     }
@@ -315,6 +332,18 @@ async fn run_host(
                         request, result,
                     )));
                 }
+                BridgeCommand::Storylet {
+                    request,
+                    key,
+                    item_owner,
+                } => {
+                    // Reuse the campaign-outcome channel: both are one-shot
+                    // "commit this, tell me if it took" results.
+                    let result = host.commit_storylet(&key, item_owner).await;
+                    out.emit(BridgeUpdate::CampaignFinished(Correlated::new(
+                        request, result,
+                    )));
+                }
                 BridgeCommand::Whisper { to, text } => host.whisper("dm", &to, &text).await,
             }
         }
@@ -374,6 +403,12 @@ async fn run_client(
                     out.emit(BridgeUpdate::CampaignFinished(Correlated::new(
                         request,
                         Err("campaign commits require the host".to_owned()),
+                    )));
+                }
+                BridgeCommand::Storylet { request, .. } => {
+                    out.emit(BridgeUpdate::CampaignFinished(Correlated::new(
+                        request,
+                        Err("storylets are played by the host".to_owned()),
                     )));
                 }
                 BridgeCommand::Whisper { .. } => {}

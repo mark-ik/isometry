@@ -370,6 +370,7 @@ pub fn side_panel(ui: &UiState) -> UiChild {
                     action_button("Sheet", true, |ui| ui.open_or_bind_sheet()),
                     action_button("Bestiary", true, |ui| ui.open_compendium()),
                     action_button("Generate", ui.can_edit_inventory, |ui| ui.open_generator()),
+                    action_button("Story", ui.can_edit_inventory, |ui| ui.open_storylets()),
                     action_button("Resolve", ui.governance_conflict.is_some(), |ui| {
                         ui.open_governance_conflict()
                     }),
