@@ -53,6 +53,14 @@ pub struct GameSnapshot {
     /// Public world state. Secret fact bodies stay in `CampaignStore`.
     #[serde(default)]
     pub world: CampaignWorld,
+    /// Each location's clock, keyed by stored-map id, in ticks (a tick is one
+    /// full round of that location's turn order, or whatever the DM declares
+    /// passed). Absolute, not elapsed: locations diverge while parties are
+    /// split, and travel reconciles by pulling the destination up to the
+    /// traveler's time, because nobody arrives before they left. The world
+    /// clock is simply the latest location. `serde(default)` so older saves load.
+    #[serde(default)]
+    pub clocks: BTreeMap<String, u64>,
     /// The beats of the most recently applied event, kept so that *every* peer
     /// can play them and not only the peer that produced them. A client renders
     /// from the snapshot, so without this the defender's recoil would be seen on
@@ -219,6 +227,10 @@ pub enum GameEvent {
     /// Host-committed: the host sweeps for tokens standing on doors after each
     /// applied move, so a client walks through a door by simply walking.
     Traveled { token: TokenId },
+    /// The DM declares time passing on the active location: "an hour passes."
+    /// Rounds tick the clock automatically; this is the downtime verb, for the
+    /// stretches no turn order measures. Host-committed: the DM keeps the clock.
+    TimeAdvanced { ticks: u64 },
 }
 
 /// One message on the wire. The host is the authority: clients send

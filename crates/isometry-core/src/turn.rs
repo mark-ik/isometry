@@ -11,6 +11,11 @@ use crate::map::TokenId;
 pub struct TurnList {
     entries: Vec<TokenId>,
     active: usize,
+    /// Completed rounds: how many times the cursor has wrapped past the top of
+    /// the order. The substrate's own definition of elapsed combat time; the
+    /// location clock ticks when this does. `serde(default)` so older saves load.
+    #[serde(default)]
+    round: u64,
 }
 
 impl TurnList {
@@ -42,11 +47,18 @@ impl TurnList {
         }
     }
 
+    /// Completed rounds since this order was set.
+    pub fn round(&self) -> u64 {
+        self.round
+    }
+
     /// Replace the whole order (e.g. after rolling initiative) and start
-    /// the round at the top.
+    /// the round at the top. A fresh order is a fresh encounter, so the
+    /// round count restarts with it.
     pub fn set_order(&mut self, entries: Vec<TokenId>) {
         self.entries = entries;
         self.active = 0;
+        self.round = 0;
     }
 
     /// Remove `id`, keeping the active cursor on the same token when
@@ -69,6 +81,9 @@ impl TurnList {
     pub fn advance(&mut self) {
         if !self.entries.is_empty() {
             self.active = (self.active + 1) % self.entries.len();
+            if self.active == 0 {
+                self.round += 1;
+            }
         }
     }
 
@@ -165,6 +180,31 @@ mod tests {
         // Everyone is down: the cursor must move rather than spin forever.
         t.advance_skipping(|_| true);
         assert_eq!(t.active(), Some(TokenId(1)), "one full lap, back to the top");
+    }
+
+    #[test]
+    fn rounds_count_wraps_and_reset_with_a_fresh_order() {
+        let mut t = TurnList::new();
+        for i in 1..=3 {
+            t.add(TokenId(i));
+        }
+        assert_eq!(t.round(), 0);
+        t.advance();
+        t.advance();
+        assert_eq!(t.round(), 0, "mid-round is not a round");
+        t.advance();
+        assert_eq!(t.round(), 1, "the wrap is the round");
+        // Skipping the fallen can carry the cursor past the top: the wrap is
+        // still counted. From token 1, with 2 and 3 down, the next turn is
+        // token 1 again, one full round later.
+        t.advance_skipping(|id| id == TokenId(2) || id == TokenId(3));
+        assert_eq!(t.active(), Some(TokenId(1)));
+        assert_eq!(t.round(), 2);
+        // A single combatant completes a round every turn.
+        t.set_order(vec![TokenId(9)]);
+        assert_eq!(t.round(), 0, "fresh order, fresh encounter");
+        t.advance();
+        assert_eq!(t.round(), 1);
     }
 
     #[test]

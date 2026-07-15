@@ -298,6 +298,25 @@ pub fn side_panel(ui: &UiState) -> UiChild {
             .attr("class", "swatch-row"),
         ),
         Box::new(el("div", text("Turns")).attr("class", "side-heading")),
+        // The location's time: round from the turn order, ticks from the clock.
+        // Only meaningful once a campaign map is active; a bare board keeps no
+        // clock, so this line stays quiet there.
+        Box::new(
+            el(
+                "div",
+                text(if ui.active_map.is_some() {
+                    format!(
+                        "round {} · time {} ({})",
+                        ui.turns.round() + 1,
+                        ui.clock_now(),
+                        ui.active_map.as_deref().unwrap_or("?"),
+                    )
+                } else {
+                    format!("round {}", ui.turns.round() + 1)
+                }),
+            )
+            .attr("class", "side-line"),
+        ),
         Box::new(
             el(
                 "div",
@@ -312,7 +331,14 @@ pub fn side_panel(ui: &UiState) -> UiChild {
         Box::new(
             el(
                 "div",
-                (action_button("End turn", true, |ui| ui.end_turn()),),
+                (
+                    action_button("End turn", true, |ui| ui.end_turn()),
+                    // The downtime verb: rounds tick the clock by themselves;
+                    // these are for the stretches no turn order measures. DM
+                    // controls, like the other authoring buttons.
+                    action_button("+1 time", ui.can_edit_inventory, |ui| ui.pass_time(1)),
+                    action_button("+10 time", ui.can_edit_inventory, |ui| ui.pass_time(10)),
+                ),
             )
             .attr("class", "btn-row"),
         ),

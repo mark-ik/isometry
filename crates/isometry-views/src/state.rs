@@ -402,6 +402,10 @@ pub struct UiState {
     /// preview table will project this ledger; content scripts never run here.
     pub generations: Vec<GenerationRecord>,
     pub campaign_maps: BTreeMap<String, CampaignMap>,
+    /// Each location's clock in ticks (see `GameSnapshot::clocks`): rounds tick
+    /// it automatically, the DM's pass-time verb adds the downtime, and travel
+    /// pulls the destination up to the traveler.
+    pub clocks: BTreeMap<String, u64>,
     pub active_map: Option<String>,
     pub world: CampaignWorld,
     /// Generator preview state is local to the host until `Commit`; players
@@ -511,6 +515,7 @@ impl UiState {
             can_edit_inventory: true,
             generations: Vec::new(),
             campaign_maps: BTreeMap::new(),
+            clocks: BTreeMap::new(),
             active_map: None,
             world: CampaignWorld::default(),
             generator_open: false,
@@ -933,6 +938,30 @@ impl UiState {
         self.action_intent = Some((actor, target, key));
     }
 
+    /// The DM declares time passing on the active location: the downtime verb
+    /// beside the automatic round tick. In a session it routes to the host;
+    /// solo it applies directly. No stored map means no clock to keep.
+    pub fn pass_time(&mut self, ticks: u64) {
+        let Some(active) = self.active_map.clone() else {
+            self.status = "no campaign clock without a stored map".to_owned();
+            return;
+        };
+        if self.net_emit(GameEvent::TimeAdvanced { ticks }) {
+            return;
+        }
+        *self.clocks.entry(active.clone()).or_insert(0) += ticks;
+        self.status = format!("time passes: {} on {active}", self.clock_now());
+    }
+
+    /// The active location's clock, in ticks.
+    pub fn clock_now(&self) -> u64 {
+        self.active_map
+            .as_ref()
+            .and_then(|id| self.clocks.get(id))
+            .copied()
+            .unwrap_or(0)
+    }
+
     /// The transition point on the active map at `at`, if any: the door the
     /// board renders and a token walks through.
     pub fn transition_at(&self, at: TileCoord) -> bool {
@@ -988,6 +1017,10 @@ impl UiState {
             maps: self.campaign_maps.clone(),
             active_map: self.active_map.clone(),
             world: Default::default(),
+            // The clocks must cross with everything else, or travel's
+            // reconciliation would run against empty time and wipe the ledger
+            // on copy-back.
+            clocks: self.clocks.clone(),
             last_beats: Vec::new(),
             beat_seq: 0,
         };
@@ -998,6 +1031,7 @@ impl UiState {
                 self.turns = snap.turns;
                 self.inventories = snap.inventories;
                 self.campaign_maps = snap.maps;
+        self.clocks = snap.clocks;
                 self.active_map = snap.active_map;
                 if switched {
                     self.selected_token = None;
@@ -1649,8 +1683,15 @@ impl UiState {
         if self.net_emit(GameEvent::TurnAdvance) {
             return;
         }
+        let before = self.turns.round();
         let map = &self.map;
         self.turns.advance_skipping(|id| map.is_defeated(id));
+        let elapsed = self.turns.round().saturating_sub(before);
+        if elapsed > 0 {
+            if let Some(active) = self.active_map.clone() {
+                *self.clocks.entry(active).or_insert(0) += elapsed;
+            }
+        }
         if let Some(active) = self.turns.active() {
             self.select_token(active);
             if let Some(t) = self.map.token(active) {
@@ -1994,6 +2035,7 @@ mod tests {
             maps: Default::default(),
             active_map: None,
             world: Default::default(),
+            clocks: Default::default(),
             last_beats: Vec::new(),
             beat_seq: 0,
         };

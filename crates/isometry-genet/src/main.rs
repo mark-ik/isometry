@@ -462,6 +462,7 @@ impl App {
                                     maps: ui.campaign_maps.clone(),
                                     active_map: ui.active_map.clone(),
                                     world: ui.world.clone(),
+                                    clocks: ui.clocks.clone(),
                                     last_beats: Vec::new(),
                                     beat_seq: 0,
                                 },
@@ -1281,6 +1282,7 @@ impl App {
                         maps: ui.campaign_maps.clone(),
                         active_map: ui.active_map.clone(),
                         world: ui.world.clone(),
+                        clocks: ui.clocks.clone(),
                         last_beats: Vec::new(),
                         beat_seq: 0,
                     });
@@ -1604,22 +1606,27 @@ impl App {
             ui.campaign_maps.insert("field".to_owned(), field);
             ui.campaign_maps.insert("hut".to_owned(), hut);
             ui.active_map = Some("field".to_owned());
+            // Time passes in the field before anyone crosses: the DM declares
+            // a rest, so the two locations' clocks drift apart.
+            ui.pass_time(4);
             eprintln!(
-                "[isometry] travel selftest: on {:?}, knight@{:?}, door at (12, 14)",
+                "[isometry] travel selftest: on {:?}, knight@{:?}, door at (12, 14) | clocks {:?}",
                 ui.active_map,
                 ui.map.token(TokenId(1)).map(|t| t.at),
+                ui.clocks,
             );
             // Walk through the door via the normal Play-mode click path.
             ui.mode = EditMode::Play;
             ui.select_token(TokenId(1));
             ui.click_tile((12, 14));
             eprintln!(
-                "[isometry] travel selftest: {} | active {:?} board '{}' | knight here: {:?} | field still holds knight: {:?}",
+                "[isometry] travel selftest: {} | active {:?} board '{}' | knight here: {:?} | field still holds knight: {:?} | clocks {:?}",
                 ui.status,
                 ui.active_map,
                 ui.map.name,
                 ui.map.tokens.iter().find(|t| t.sprite == "knight").map(|t| t.at),
                 ui.campaign_maps["field"].document.token(TokenId(1)).is_some(),
+                ui.clocks,
             );
         });
         if let Some(window) = self.window.as_ref() {
@@ -1965,6 +1972,7 @@ impl ApplicationHandler for App {
                     maps: ui.campaign_maps.clone(),
                     active_map: ui.active_map.clone(),
                     world: ui.world.clone(),
+                    clocks: ui.clocks.clone(),
                     last_beats: Vec::new(),
                     beat_seq: 0,
                 };

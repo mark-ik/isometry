@@ -52,6 +52,7 @@ fn snapshot() -> GameSnapshot {
         maps: Default::default(),
         active_map: None,
         world: Default::default(),
+        clocks: Default::default(),
         last_beats: Vec::new(),
         beat_seq: 0,
     }
@@ -529,6 +530,53 @@ fn arriving_where_your_id_is_taken_mints_a_new_one_and_carries_the_inventory() {
     assert_ne!(new_id, TokenId(1));
     assert!(host.inventories.contains_key(&new_id), "the sword crossed too");
     assert!(!host.inventories.contains_key(&TokenId(1)));
+    assert_converged(&sim);
+}
+
+#[test]
+fn split_party_time_drifts_freely_and_travel_reconciles_it() {
+    // The knight fights in the field while the hut sits quiet: the two
+    // locations' clocks drift apart, and nothing needs to agree until someone
+    // crosses. Simultaneity is presentation; the door is where timelines meet.
+    let mut base = two_map_snapshot();
+    base.map.tokens[1].owner = None;
+    if let Some(field) = base.maps.get_mut("field") {
+        field.document = base.map.clone();
+    }
+    let mut sim = Sim::new(HostSession::new(base));
+    sim.connect(PeerId(10));
+
+    // Three rounds of fighting in the field: knight and goblin trade turns.
+    sim.host_event(GameEvent::TurnAdd(TokenId(1)));
+    sim.host_event(GameEvent::TurnAdd(TokenId(2)));
+    for _ in 0..6 {
+        sim.host_event(GameEvent::TurnAdvance);
+    }
+    // And the DM declares a rest on top.
+    sim.host_event(GameEvent::TimeAdvanced { ticks: 4 });
+
+    let clock = |s: &GameSnapshot, id: &str| s.clocks.get(id).copied().unwrap_or(0);
+    assert_eq!(clock(sim.host.state(), "field"), 7, "3 rounds + 4 declared");
+    assert_eq!(clock(sim.host.state(), "hut"), 0, "nobody home: no time passes");
+
+    // The knight walks through the gate. Nobody arrives before they left: the
+    // hut's clock catches up to the traveler's, on every peer.
+    sim.host_event(GameEvent::Map(SessionEvent::TokenMoved {
+        id: TokenId(1),
+        to: (3, 3),
+    }));
+    sim.host_event(GameEvent::Traveled { token: TokenId(1) });
+    assert_eq!(clock(sim.host.state(), "hut"), 7);
+    assert_eq!(
+        clock(sim.clients[&PeerId(10)].state().unwrap(), "hut"),
+        7,
+        "the reconciled clock is truth, so the client holds it too"
+    );
+
+    // A player does not declare hours passing.
+    let seq = sim.host.seq();
+    sim.client_intent(PeerId(10), GameEvent::TimeAdvanced { ticks: 99 });
+    assert_eq!(sim.host.seq(), seq, "a client kept the clock");
     assert_converged(&sim);
 }
 

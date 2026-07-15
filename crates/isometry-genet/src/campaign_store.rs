@@ -172,6 +172,7 @@ mod tests {
                 maps: Default::default(),
                 active_map: None,
                 world: Default::default(),
+                clocks: Default::default(),
                 last_beats: Vec::new(),
                 beat_seq: 0,
             },

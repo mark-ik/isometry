@@ -82,8 +82,18 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
             // The fallen do not get a turn. Deterministic and replicated: the
             // skip is computed from state every peer already has, so nobody has
             // to be told about it separately.
+            let before = state.turns.round();
             let map = &state.map;
             state.turns.advance_skipping(|id| map.is_defeated(id));
+            // A completed round is elapsed time: tick the location's clock by
+            // however many rounds the wrap crossed. Time is a campaign feature,
+            // so a bare board with no stored map keeps no clock.
+            let elapsed = state.turns.round().saturating_sub(before);
+            if elapsed > 0 {
+                if let Some(active) = state.active_map.clone() {
+                    *state.clocks.entry(active).or_insert(0) += elapsed;
+                }
+            }
             Ok(())
         }
         GameEvent::TurnSetOrder(order) => {
@@ -236,6 +246,14 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
         }
         GameEvent::World(event) => state.world.apply(event).map_err(GameError::World),
         GameEvent::Traveled { token } => travel(state, *token),
+        GameEvent::TimeAdvanced { ticks } => {
+            let active = state
+                .active_map
+                .clone()
+                .ok_or_else(|| GameError::UnknownMap("<no active map>".to_owned()))?;
+            *state.clocks.entry(active).or_insert(0) += ticks;
+            Ok(())
+        }
     }
 }
 
@@ -352,6 +370,17 @@ fn travel(state: &mut GameSnapshot, token: TokenId) -> Result<(), GameError> {
             state.inventories.insert(new_id, inventory);
         }
     }
+
+    // Nobody arrives before they left: the destination's clock catches up to
+    // the traveler's. This is the whole of split-party reconciliation: while
+    // parties are apart their locations' clocks drift freely (simultaneity is
+    // presentation), and the moment anyone crosses, the two timelines agree.
+    let source_time = state.clocks.get(&active_id).copied().unwrap_or(0);
+    let dest = state
+        .clocks
+        .entry(transition.target_map.clone())
+        .or_insert(0);
+    *dest = (*dest).max(source_time);
 
     // The board follows the last player out: when no player-owned token
     // remains on the active map, the target activates, exactly as a manual
@@ -822,6 +851,15 @@ impl HostSession {
                 Recipient::One(from),
                 NetMessage::Rejected {
                     reason: "actions are adjudicated by the host".to_owned(),
+                },
+            )],
+            // The DM keeps the clock: a player does not declare hours passing.
+            NetMessage::Intent {
+                event: GameEvent::TimeAdvanced { .. },
+            } => vec![(
+                Recipient::One(from),
+                NetMessage::Rejected {
+                    reason: "the DM keeps the clock".to_owned(),
                 },
             )],
             // Travel is ruled by the host's own sweep (it watches for tokens

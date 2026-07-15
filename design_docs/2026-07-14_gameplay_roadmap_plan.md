@@ -1,7 +1,7 @@
 # Gameplay roadmap
 
 **Date:** 2026-07-14
-**Status:** active plan. Order set by Mark 2026-07-14; **C1 (conditions) and C2 (transition points) landed 2026-07-15**; C3 (split-party time) is next.
+**Status:** active plan. Order set by Mark 2026-07-14; **C1 (conditions), C2 (transition points), and C3 (split-party time) landed 2026-07-15**; C4 (generators + command grammar) is next.
 **Related:** [adjudication_and_representation_plan](2026-07-14_adjudication_and_representation_plan.md)
 (complete; this continues its lane), [next_horizons_landscape](2026-07-07_next_horizons_landscape.md)
 (C1 answers its open question B.5; C2 takes its lane 2 recommendation),
@@ -19,11 +19,7 @@ displacement, conditions, allegiance) grows one type at a time.
 2. **C2: Regional locations + transition points** — **landed 2026-07-15**,
    below. (REGION-scale maps were already just `MapDocument`s; what was missing
    was the door.)
-3. **C3: Split-party time** — a per-location tick ledger summed into the world
-   clock; simultaneity is presentation (the Helldivers rule) unless a rule reads
-   it, in which case initiative is over *locations*, one local round per world
-   tick. Done when two parties on two maps accumulate different local time and
-   the world clock reconciles when they rejoin.
+3. **C3: Split-party time** — **landed 2026-07-15**, below.
 4. **C4: Generators + command grammar** — `>gen`, `>spawn`, `>find` on the
    existing composer, over the landed W2 runtime. Done when `>gen npc` previews,
    rerolls, and commits a statted spawn.
@@ -120,6 +116,39 @@ it; off-door travel is refused; peers converge. In-app: the knight clicks onto
 the purple door tile, the status reads "the party moves on: hut", and the board
 is the hut with the knight standing at the named entry.
 
+## C3: Split-party time (LANDED 2026-07-15)
+
+**A full round is a tick; the DM declares the rest; the door reconciles.**
+
+- `TurnList` now counts **rounds**: the cursor wrapping past the top of the
+  order, including wraps that skip the fallen. A fresh order (new initiative) is
+  a fresh encounter, so the count restarts.
+- Each stored map keeps an absolute **clock** in ticks (`GameSnapshot::clocks`).
+  A completed round on the active map ticks its clock automatically; the DM's
+  pass-time verb (`GameEvent::TimeAdvanced`, host-committed, panel buttons "+1
+  time" / "+10 time") adds the downtime no turn order measures. A bare board
+  with no stored map keeps no clock: time is a campaign feature.
+- **Simultaneity is presentation** (the Helldivers rule again): while parties
+  are split, locations' clocks drift freely and nothing needs to agree. The
+  moment anyone crosses a door, **the destination's clock catches up to the
+  traveler's** (`max`), because nobody arrives before they left. That single
+  rule is the whole of reconciliation; the world clock is simply the latest
+  location.
+- The panel shows `round N · time T (map)`. Location-level initiative (one local
+  round per world tick, for the rare cross-location trigger) remains available
+  as a table discipline and needs no new machinery.
+
+**Done when:** two parties on two maps accumulate different local time and the
+clock reconciles when they rejoin. **Verified 2026-07-15.** Unit: rounds count
+wraps, count wraps-past-the-fallen, and reset with a fresh order. Replication:
+three fought rounds plus four declared ticks put the field at 7 while the quiet
+hut stays at 0; the knight crosses and the hut catches up to 7 on every peer; a
+client declaring time is refused. In-app: the DM passes 4 ticks in the field,
+the knight walks the door, and the clocks read field 4, hut 4. The in-app run
+also caught a real bug the sim could not: solo travel's scratch snapshot was
+built without the clocks, so reconciliation ran against empty time and wiped
+the ledger on copy-back.
+
 ## Progress
 
 - 2026-07-14: Doc created with Mark's ordering. C1 design settled: the
@@ -131,3 +160,6 @@ is the hut with the knight standing at the named entry.
   applied identically everywhere, and the board follows the last player out.
   156 workspace tests green. C3 (split-party time) is next and now has its
   substrate: parties genuinely on different maps.
+- 2026-07-15: C3 landed and verified. Rounds are substrate truth, clocks are
+  per-location, the DM declares downtime, and the door is where timelines
+  meet. 158 workspace tests green. C4 (generators + command grammar) is next.
