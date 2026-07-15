@@ -32,8 +32,8 @@ pub mod campaign_moot;
 pub mod campaign_secrets;
 
 pub use protocol::{
-    ActionIntent, ActionResolved, GameEvent, GameSnapshot, NetMessage, Outbound, PeerId, Recipient,
-    ROLL_LOG_CAP,
+    default_party_cap, ActionIntent, ActionResolved, GameEvent, GameSnapshot, NetMessage, Outbound,
+    PeerId, Recipient, ROLL_LOG_CAP,
 };
 pub use session::{apply_game, ClientSession, GameError, HostSession};
 

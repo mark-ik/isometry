@@ -53,6 +53,8 @@ fn snapshot() -> GameSnapshot {
         active_map: None,
         world: Default::default(),
         clocks: Default::default(),
+
+        party_cap: isometry_net::default_party_cap(),
         last_beats: Vec::new(),
         beat_seq: 0,
     }
@@ -103,6 +105,7 @@ fn attack_hit(damage: i64) -> GameEvent {
         displaced: Vec::new(),
         conditions: Vec::new(),
         mobility: Vec::new(),
+        owner_changes: Vec::new(),
     })
 }
 
@@ -593,6 +596,38 @@ fn travel_off_a_door_is_refused_and_clients_cannot_rule_it() {
     // And travel is the host's ruling: a client walks, it does not ask in words.
     sim.client_intent(PeerId(10), GameEvent::Traveled { token: TokenId(1) });
     assert_eq!(sim.host.seq(), seq);
+    assert_converged(&sim);
+}
+
+#[test]
+fn allegiance_replicates_and_a_convinced_creature_joins_your_side() {
+    let mut sim = Sim::new(HostSession::new(snapshot()));
+    sim.connect(PeerId(10));
+
+    // Token 2 (the goblin) belongs to player B. A convince, ruled by the host,
+    // hands it to player A. Owner changes are truth, so every peer applies it.
+    let mut won = attack_hit(0);
+    if let GameEvent::ActionResolved(res) = &mut won {
+        res.action_key = "convince".to_owned();
+        res.deltas.clear();
+        res.owner_changes = vec![(TokenId(2), Some("A".to_owned()))];
+        res.beats[1] = Beat::new(TokenId(2), "cheer");
+    }
+    sim.host_event(won);
+
+    let owner = |s: &GameSnapshot| s.map.token(TokenId(2)).unwrap().owner.clone();
+    assert_eq!(owner(sim.host.state()).as_deref(), Some("A"), "the goblin joined A");
+    assert_eq!(
+        owner(sim.clients[&PeerId(10)].state().unwrap()).as_deref(),
+        Some("A"),
+        "allegiance is game truth, so the client holds it too"
+    );
+    // It did no damage: convince changes sides, not hit points.
+    assert_eq!(
+        sim.host.state().map.sheet(TokenId(2)).and_then(|s| s.int("hp_current")),
+        None,
+        "no sheet was bound, and none was needed to change owner"
+    );
     assert_converged(&sim);
 }
 

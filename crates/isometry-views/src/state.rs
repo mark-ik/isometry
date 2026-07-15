@@ -412,6 +412,9 @@ pub struct UiState {
     /// it automatically, the DM's pass-time verb adds the downtime, and travel
     /// pulls the destination up to the traveler.
     pub clocks: BTreeMap<String, u64>,
+    /// Tokens per player (see `GameSnapshot::party_cap`), mirrored so the host
+    /// can gate a recruit against it.
+    pub party_cap: u32,
     pub active_map: Option<String>,
     pub world: CampaignWorld,
     /// Generator preview state is local to the host until `Commit`; players
@@ -525,6 +528,7 @@ impl UiState {
             generations: Vec::new(),
             campaign_maps: BTreeMap::new(),
             clocks: BTreeMap::new(),
+            party_cap: isometry_net::default_party_cap(),
             active_map: None,
             world: CampaignWorld::default(),
             generator_open: false,
@@ -1050,6 +1054,8 @@ impl UiState {
             // reconciliation would run against empty time and wipe the ledger
             // on copy-back.
             clocks: self.clocks.clone(),
+
+            party_cap: self.party_cap,
             last_beats: Vec::new(),
             beat_seq: 0,
         };
@@ -1061,6 +1067,7 @@ impl UiState {
                 self.inventories = snap.inventories;
                 self.campaign_maps = snap.maps;
         self.clocks = snap.clocks;
+        self.party_cap = snap.party_cap;
                 self.active_map = snap.active_map;
                 if switched {
                     self.selected_token = None;
@@ -1634,6 +1641,10 @@ impl UiState {
         self.campaign_maps = snap.maps;
         self.active_map = snap.active_map;
         self.world = snap.world;
+        // A joined client mirrors these too, or its panel shows the wrong split-
+        // party time (a C3 omission) and its cap disagrees with the host.
+        self.clocks = snap.clocks;
+        self.party_cap = snap.party_cap;
         self.sheet_effective = None;
         if let Some(id) = self.selected_token {
             if self.map.token(id).is_none() {
@@ -2245,6 +2256,8 @@ mod tests {
             active_map: None,
             world: Default::default(),
             clocks: Default::default(),
+
+            party_cap: isometry_net::default_party_cap(),
             last_beats: Vec::new(),
             beat_seq: 0,
         };
@@ -2598,6 +2611,34 @@ mod tests {
         assert!(placed, "the spawn must replicate as an authoritative event");
         // And the stat-block bind is queued for the same id.
         assert!(ui.spawn_sheet_request.is_some());
+    }
+
+    #[test]
+    fn apply_snapshot_mirrors_the_clock_and_the_cap() {
+        // A joined client mirrors the host snapshot into its UiState. Dropping
+        // clocks (a C3 omission the C5 review caught) shows the wrong split-party
+        // time on clients; dropping party_cap desyncs the limit.
+        let mut ui = UiState::new(demo_map());
+        assert_eq!(ui.party_cap, 4);
+        let mut snap = GameSnapshot {
+            map: demo_map(),
+            turns: TurnList::new(),
+            roll_log: Vec::new(),
+            journal: Vec::new(),
+            inventories: Default::default(),
+            generations: Vec::new(),
+            maps: Default::default(),
+            active_map: None,
+            world: Default::default(),
+            clocks: Default::default(),
+            party_cap: 2,
+            last_beats: Vec::new(),
+            beat_seq: 0,
+        };
+        snap.clocks.insert("field".to_owned(), 7);
+        ui.apply_snapshot(snap);
+        assert_eq!(ui.party_cap, 2, "the cap must mirror");
+        assert_eq!(ui.clocks.get("field"), Some(&7), "the clock must mirror");
     }
 
     #[test]

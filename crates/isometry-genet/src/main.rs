@@ -151,6 +151,10 @@ struct App {
     /// full `>gen npc` generate/commit into a statted NPC.
     cmd_selftest: bool,
     cmd_fired: bool,
+    /// `ISOMETRY_CONVINCE_SELFTEST`: a bard wins a goblin over, then hits the
+    /// party cap on the next one. Proves allegiance + the cap + fog.
+    convince_selftest: bool,
+    convince_fired: bool,
     /// `ISOMETRY_COMBAT_SELFTEST`: drive a short adjudicated exchange on boot.
     combat_selftest: bool,
     /// Swings left to throw, when the last one landed, and whether the winner
@@ -199,6 +203,26 @@ fn campaign_path(name: &str) -> std::path::PathBuf {
 
 /// Search the bundled example, a project-local pack root, and user-selected
 /// roots. Entries may be pack directories or directories containing packs.
+/// How many tokens a player owns across the *whole* campaign: the active board
+/// plus every stored map. The party cap is a limit on a person's followers, and
+/// a split party (C3) has them spread over several maps, so counting only the
+/// active board would let the cap be dodged by recruiting on each map in turn.
+fn owner_token_count(ui: &UiState, owner: &str) -> u32 {
+    let on = |m: &isometry_core::MapDocument| {
+        m.tokens.iter().filter(|t| t.owner.as_deref() == Some(owner)).count()
+    };
+    let active = on(&ui.map);
+    let stored: usize = ui
+        .campaign_maps
+        .iter()
+        // The active map is also mirrored into the stored registry, so skip it
+        // there to avoid double-counting its tokens.
+        .filter(|(id, _)| Some(id.as_str()) != ui.active_map.as_deref())
+        .map(|(_, m)| on(&m.document))
+        .sum();
+    (active + stored) as u32
+}
+
 /// A free tile to place a generated token on, scanning outward from (2, 2) past
 /// anything occupied. The host commit path holds only a snapshot, so this is the
 /// snapshot twin of the view's `free_spawn_tile`.
@@ -511,6 +535,8 @@ impl App {
                                     active_map: ui.active_map.clone(),
                                     world: ui.world.clone(),
                                     clocks: ui.clocks.clone(),
+
+                                    party_cap: ui.party_cap,
                                     last_beats: Vec::new(),
                                     beat_seq: 0,
                                 },
@@ -1213,6 +1239,35 @@ impl App {
                         }
                     }
                 }
+                // A landed recruit becomes an owner change, ruled here because
+                // owners and the party cap are the map's, not the rules'. The
+                // winner's side is the actor's owner; a player's party has a cap
+                // (the DM, owner None, is uncapped); a creature already on that
+                // side needs nothing.
+                let mut owner_changes = Vec::new();
+                let mut recruit_note = "";
+                if let Some(recruited) = resolution.recruited {
+                    let new_owner = ui.map.token(actor).and_then(|t| t.owner.clone());
+                    let current = ui.map.token(recruited).and_then(|t| t.owner.clone());
+                    if current == new_owner {
+                        recruit_note = " (already at your side)";
+                    } else if let Some(owner) = new_owner.clone() {
+                        // Count the owner's *whole* party, not just the active
+                        // map: a split party (C3) keeps tokens on stored maps,
+                        // and the cap is a limit on people, not on this board.
+                        let owned = owner_token_count(ui, &owner);
+                        if owned >= ui.party_cap {
+                            recruit_note = " but your party is full";
+                        } else {
+                            owner_changes.push((recruited, Some(owner)));
+                            recruit_note = " and it joins you";
+                        }
+                    } else {
+                        owner_changes.push((recruited, None));
+                        recruit_note = " and it joins you";
+                    }
+                }
+
                 let victim = ui
                     .map
                     .token(target)
@@ -1220,7 +1275,14 @@ impl App {
                     .and_then(|s| s.text("name").map(str::to_owned))
                     .unwrap_or_else(|| "target".to_owned());
                 let down = !resolution.defeated.is_empty();
-                ui.status = if resolution.hit {
+                ui.status = if resolution.recruited.is_some() {
+                    // A social action; "hits for 0 damage" would read wrong.
+                    let verb = if owner_changes.is_empty() { "sways" } else { "wins over" };
+                    format!(
+                        "{} {verb} {victim} ({}){recruit_note}",
+                        resolution.attack.by, resolution.attack.total
+                    )
+                } else if resolution.hit {
                     let dmg = resolution.damage.as_ref().map_or(0, |d| d.total);
                     let felled = if down { " and drops it" } else { "" };
                     format!(
@@ -1248,11 +1310,31 @@ impl App {
                     displaced,
                     conditions: resolution.conditions,
                     mobility: resolution.mobility,
+                    owner_changes,
                 });
                 if ui.net_mode == NetMode::Remote {
                     // In session the authority applies it and mirrors the
                     // snapshot back, which is where the beats get staged (so a
                     // joined player sees the exchange too, not just the DM).
+                    //
+                    // But fold this recruit's owner change into the local map
+                    // *now*, before the mirror returns: pump_sheets adjudicates a
+                    // whole batch of queued intents in one pass, and the cap
+                    // above counts `ui.map`. Without this, two same-owner
+                    // recruits in one batch would both see the pre-recruit count
+                    // and both pass, blowing past the cap. The authority applies
+                    // the identical change on mirror-back, so this is idempotent.
+                    if let GameEvent::ActionResolved(res) = &event {
+                        for (token, owner) in &res.owner_changes {
+                            if let Some(t) = ui.map.tokens.iter_mut().find(|t| t.id == *token) {
+                                t.owner = owner.clone();
+                            }
+                        }
+                        if !res.owner_changes.is_empty() {
+                            ui.recompute_fog();
+                            ui.recompute_reach();
+                        }
+                    }
                     ui.net_outbox.push(event);
                 } else if let GameEvent::ActionResolved(res) = &event {
                     // Solo: no authority to route through, so apply it here.
@@ -1273,10 +1355,18 @@ impl App {
                     for (token, mobility) in &res.mobility {
                         ui.map.set_mobility(*token, *mobility);
                     }
-                    if !res.conditions.is_empty() || !res.displaced.is_empty() {
-                        // A condition or a shove changes what can be seen and
-                        // reached; recompute so the board tells the truth now
-                        // rather than on the next unrelated click.
+                    for (token, owner) in &res.owner_changes {
+                        if let Some(t) = ui.map.tokens.iter_mut().find(|t| t.id == *token) {
+                            t.owner = owner.clone();
+                        }
+                    }
+                    if !res.conditions.is_empty()
+                        || !res.displaced.is_empty()
+                        || !res.owner_changes.is_empty()
+                    {
+                        // A condition, a shove, or a change of allegiance all
+                        // change what can be seen and reached; recompute so the
+                        // board tells the truth now, not on the next click.
                         ui.recompute_fog();
                         ui.recompute_reach();
                     }
@@ -1331,6 +1421,8 @@ impl App {
                         active_map: ui.active_map.clone(),
                         world: ui.world.clone(),
                         clocks: ui.clocks.clone(),
+
+                        party_cap: ui.party_cap,
                         last_beats: Vec::new(),
                         beat_seq: 0,
                     });
@@ -1786,6 +1878,118 @@ impl App {
         }
     }
 
+    /// `ISOMETRY_CONVINCE_SELFTEST=1`: a bard recruits a goblin, then meets the
+    /// party cap on the next. Focus-free.
+    fn maybe_convince_selftest(&mut self) {
+        if !self.convince_selftest || self.convince_fired {
+            return;
+        }
+        if !self.started.is_some_and(|t| t.elapsed() > Duration::from_secs(2)) {
+            return;
+        }
+        self.convince_fired = true;
+
+        let Some(system) = self.system.as_mut() else {
+            return;
+        };
+        // A silver-tongued bard: CHA 18 (+4) and proficiency, so the pitch is
+        // 1d20+6 against a goblin's low resolve.
+        let mut bard = system.default_sheet();
+        bard.set_text("name", "Bard");
+        bard.set_int("cha", 18);
+        bard.set_int("prof", 2);
+        let goblin = |will: i64| {
+            let mut s = srd_bestiary()
+                .iter()
+                .find(|m| m.key == "goblin")
+                .map(monster_sheet)
+                .unwrap_or_else(|| system.default_sheet());
+            s.set_int("will", will);
+            s
+        };
+        let (g1, g2) = (goblin(4), goblin(4));
+
+        if let Some(runner) = self.runner.as_mut() {
+            runner.update(|ui| {
+                // Knight 1 is player A's; make it the bard. Goblins 2 and 4 are
+                // the DM's furniture (owner None) standing in talking range.
+                ui.map.set_sheet(TokenId(1), bard.clone());
+                ui.map.set_sheet(TokenId(2), g1.clone());
+                ui.map.set_sheet(TokenId(4), g2.clone());
+                let anchor = ui.map.token(TokenId(1)).map(|t| t.at).unwrap_or((10, 14));
+                for (id, dx) in [(TokenId(2), 2), (TokenId(4), 3)] {
+                    if let Some(g) = ui.map.tokens.iter_mut().find(|t| t.id == id) {
+                        g.at = (anchor.0 + dx, anchor.1);
+                        g.owner = None; // DM furniture, up for grabs
+                    }
+                }
+                // A owns knight 1 and knight 3 on this board, plus one companion
+                // stashed on a *stored* map (a split party, C3). The cap counts
+                // the whole campaign, so that third token matters: with cap 4, A
+                // can take exactly one goblin before the party fills.
+                let mut away = isometry_core::MapDocument::new("waystation", 6, 6);
+                away.tokens.push(isometry_core::Token {
+                    id: TokenId(50),
+                    at: (2, 2),
+                    facing: isometry_core::Facing::South,
+                    sprite: "knight".to_owned(),
+                    owner: Some("A".to_owned()),
+                });
+                ui.campaign_maps.insert(
+                    "waystation".to_owned(),
+                    isometry_campaign::CampaignMap {
+                        id: "waystation".to_owned(),
+                        scale: isometry_campaign::MapScale::Local,
+                        document: away,
+                        spawn_zones: Vec::new(),
+                        transitions: Vec::new(),
+                        encounter_anchors: Vec::new(),
+                    },
+                );
+                ui.party_cap = 4;
+                ui.viewer = Some("A".to_owned());
+                ui.recompute_fog();
+                let a_active = ui.map.tokens.iter().filter(|t| t.owner.as_deref() == Some("A")).count();
+                eprintln!(
+                    "[isometry] convince selftest: A owns {a_active} here + 1 stored = 3 global, cap {}",
+                    ui.party_cap
+                );
+            });
+        }
+
+        // First pitch: goblin 2 joins A (A goes 2 -> 3 tokens, at the cap).
+        if let Some(runner) = self.runner.as_mut() {
+            runner.update(|ui| ui.action_intent = Some((TokenId(1), TokenId(2), "convince".to_owned())));
+        }
+        self.pump_sheets();
+        // Second pitch: goblin 4 would make 4 > cap 3, so it fails to hold.
+        if let Some(runner) = self.runner.as_mut() {
+            runner.update(|ui| ui.action_intent = Some((TokenId(1), TokenId(4), "convince".to_owned())));
+        }
+        self.pump_sheets();
+
+        if let Some(runner) = self.runner.as_ref() {
+            let ui = runner.state();
+            let owner = |id| ui.map.token(id).and_then(|t| t.owner.clone());
+            let a_here = ui.map.tokens.iter().filter(|t| t.owner.as_deref() == Some("A")).count();
+            let a_global = a_here
+                + ui.campaign_maps
+                    .values()
+                    .flat_map(|m| m.document.tokens.iter())
+                    .filter(|t| t.owner.as_deref() == Some("A"))
+                    .count();
+            eprintln!(
+                "[isometry] convince selftest: goblin2 owner {:?} | goblin4 owner {:?} | A owns {a_here} here, {a_global} global (cap 4) | status: {}",
+                owner(TokenId(2)),
+                owner(TokenId(4)),
+                ui.status,
+            );
+        }
+        if let Some(window) = self.window.as_ref() {
+            window.request_redraw();
+        }
+    }
+
     fn maybe_combat_selftest(&mut self) {
         if !self.combat_selftest || (self.combat_swings == 0 && self.combat_emoted) {
             return;
@@ -2161,6 +2365,8 @@ impl ApplicationHandler for App {
                     active_map: ui.active_map.clone(),
                     world: ui.world.clone(),
                     clocks: ui.clocks.clone(),
+
+                    party_cap: ui.party_cap,
                     last_beats: Vec::new(),
                     beat_seq: 0,
                 };
@@ -2220,7 +2426,11 @@ impl ApplicationHandler for App {
         self.maybe_combat_selftest();
         self.maybe_travel_selftest();
         self.maybe_cmd_selftest();
-        if (self.travel_selftest && !self.travel_fired) || (self.cmd_selftest && !self.cmd_fired) {
+        self.maybe_convince_selftest();
+        if (self.travel_selftest && !self.travel_fired)
+            || (self.cmd_selftest && !self.cmd_fired)
+            || (self.convince_selftest && !self.convince_fired)
+        {
             event_loop.set_control_flow(ControlFlow::WaitUntil(
                 Instant::now() + Duration::from_millis(100),
             ));
@@ -2620,6 +2830,8 @@ fn main() {
         travel_fired: false,
         cmd_selftest: std::env::var_os("ISOMETRY_CMD_SELFTEST").is_some(),
         cmd_fired: false,
+        convince_selftest: std::env::var_os("ISOMETRY_CONVINCE_SELFTEST").is_some(),
+        convince_fired: false,
         combat_selftest: std::env::var_os("ISOMETRY_COMBAT_SELFTEST").is_some(),
         combat_swings: 4,
         last_swing: None,

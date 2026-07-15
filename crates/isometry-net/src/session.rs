@@ -138,6 +138,15 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
             for (token, mobility) in &res.mobility {
                 state.map.set_mobility(*token, *mobility);
             }
+            // Allegiance: a convinced creature changes sides. The host already
+            // ruled the owner and the cap; every peer applies the same change,
+            // and each peer's fog recomputes from it (a new ally feeds your
+            // sight, an ex-ally stops feeding it).
+            for (token, owner) in &res.owner_changes {
+                if let Some(t) = state.map.tokens.iter_mut().find(|t| t.id == *token) {
+                    t.owner = owner.clone();
+                }
+            }
             push_roll(state, &res.attack);
             if let Some(damage) = &res.damage {
                 push_roll(state, damage);

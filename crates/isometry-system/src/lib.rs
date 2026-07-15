@@ -122,6 +122,12 @@ pub struct TargetSpec {
     /// is system vocabulary; the substrate stores it blind and the mechanical
     /// numbers travel alongside as recomputed mobility.
     pub condition_on_hit: Option<String>,
+    /// Whether a hit wins the target over to the actor's side (`convince`). Like
+    /// a push, the rules only say *that* it happened; the host rules the rest,
+    /// because allegiance lives on the token's owner (which the system never
+    /// sees) and the party cap is table policy. The resolver reports the win;
+    /// the host decides the new owner and whether the party has room.
+    pub recruit_on_hit: bool,
 }
 
 /// Why an intent was refused. Every one of these is checked before any die is
@@ -166,6 +172,10 @@ pub struct Resolution {
     /// The recomputed `(move budget, sight radius)` for each token whose
     /// conditions changed; `None` clears back to sheet base.
     pub mobility: Vec<(TokenId, Option<(u32, u32)>)>,
+    /// The target was won over: the host should hand it to the actor's side (if
+    /// the party has room). `None` for every action that is not a recruit, and
+    /// for a recruit that missed.
+    pub recruited: Option<TokenId>,
 }
 
 /// Copy `sheet` with each active condition added as a boolean field, so Lua
@@ -1533,6 +1543,7 @@ impl System {
             push_func: spec.push_func.clone(),
             push_beat: spec.push_beat.clone(),
             condition_on_hit: spec.condition_on_hit.clone(),
+            recruit_on_hit: spec.recruit_on_hit,
         };
         let by = actor_sheet.text("name").unwrap_or("?").to_owned();
 
@@ -1579,11 +1590,17 @@ impl System {
                 dice: dmg_dice,
                 total: dmg_total,
             });
-            deltas.push(SheetDelta {
-                token: target,
-                key: spec.damage_field.clone(),
-                add: -(dmg_total as i64),
-            });
+            // Only touch the target when there is damage to do. A zero (a shove,
+            // a convince, a trip) must not push a `field -= 0` delta: applying it
+            // to a sheet that lacks the field would *create* it at 0, and a
+            // hp_current invented at 0 then reads as defeated.
+            if dmg_total > 0 {
+                deltas.push(SheetDelta {
+                    token: target,
+                    key: spec.damage_field.clone(),
+                    add: -(dmg_total as i64),
+                });
+            }
         }
 
         // 4. Did that put anyone down? Ask the system, against the sheet as it
@@ -1672,6 +1689,16 @@ impl System {
             }
         }
 
+        // A hit that wins the target over. Not a corpse (you cannot recruit the
+        // dead) and not something you already command. The host takes it from
+        // here: allegiance is an owner change, and owners are the map's, not the
+        // rules'.
+        let recruited = if hit && defeated.is_empty() && spec.recruit_on_hit {
+            Some(target)
+        } else {
+            None
+        };
+
         Ok(Resolution {
             attack,
             hit,
@@ -1682,6 +1709,7 @@ impl System {
             push: (push_tiles > 0).then_some((step, push_tiles)),
             conditions,
             mobility,
+            recruited,
         })
     }
 }
@@ -1712,6 +1740,9 @@ pub fn monster_sheet(m: &Monster) -> SheetData {
     // 5 ft to a tile, floored: a 30 ft goblin walks 6 tiles.
     sheet.set_int("speed", (m.speed_ft / 5).max(1) as i64);
     sheet.set_int("sight", 6);
+    // Resolve DC to convince it: 8 + WIS mod, so a wise creature is harder to
+    // talk around. Wisdom is ability index 4.
+    sheet.set_int("will", 8 + (m.abilities[4] - 10).div_euclid(2) as i64);
     sheet
 }
 
@@ -1778,6 +1809,13 @@ pub fn srd_5e() -> System {
             label: "Sight".to_owned(),
             default: FieldValue::Int(6),
         },
+        // The DC to win this creature over (`convince`). A wary monster is
+        // higher; a wavering one lower. The DM sets it per creature.
+        FieldDef {
+            key: "will".to_owned(),
+            label: "Resolve".to_owned(),
+            default: FieldValue::Int(12),
+        },
     ];
     let m = |ab: &str| DerivedDef {
         key: format!("{ab}_mod"),
@@ -1819,6 +1857,7 @@ pub fn srd_5e() -> System {
                 push_func: None,
                 push_beat: "shoved".to_owned(),
                 condition_on_hit: None,
+                recruit_on_hit: false,
             }),
         },
         // The other half of the contrast, and the reason both exist: a shove
@@ -1844,6 +1883,7 @@ pub fn srd_5e() -> System {
                 push_func: Some("a_shove_push".to_owned()),
                 push_beat: "shoved".to_owned(),
                 condition_on_hit: None,
+                recruit_on_hit: false,
             }),
         },
         // Trip: the first condition-inflicting action. No damage, no shove: a
@@ -1869,6 +1909,36 @@ pub fn srd_5e() -> System {
                 push_func: None,
                 push_beat: "shoved".to_owned(),
                 condition_on_hit: Some("prone".to_owned()),
+                recruit_on_hit: false,
+            }),
+        },
+        // Convince: win a creature over to your side. A social action shaped
+        // exactly like an attack -- a roll against a resolve DC -- but its
+        // consequence is allegiance, not damage. The rules only say the pitch
+        // landed; the host changes the owner and enforces the party cap, because
+        // both are the map's business, not the sheet's. Ranged: you can talk
+        // from a few tiles away.
+        ActionDef {
+            key: "convince".to_owned(),
+            label: "Convince".to_owned(),
+            base: "1d20".to_owned(),
+            func: "a_convince".to_owned(),
+            target: Some(TargetSpec {
+                range: 4,
+                hit_func: "a_convince_hit".to_owned(),
+                damage: "0".to_owned(),
+                damage_func: "a_zero".to_owned(),
+                damage_field: "hp_current".to_owned(),
+                actor_beat: "cheer".to_owned(),
+                hit_beat: "cheer".to_owned(),
+                miss_beat: "shrug".to_owned(),
+                fall_beat: "fall".to_owned(),
+                stagger_func: None,
+                stagger_beat: "staggered".to_owned(),
+                push_func: None,
+                push_beat: "shoved".to_owned(),
+                condition_on_hit: None,
+                recruit_on_hit: true,
             }),
         },
         check("str"),
@@ -1902,9 +1972,19 @@ pub fn srd_5e() -> System {
         -- a_attack), `t` is the defender's sheet. Crits and fumbles need the
         -- raw die, which the ABI does not pass yet.
         function a_attack_hit(c, t, roll)
-            if roll >= t.ac then return 1 else return 0 end
+            if roll >= (t.ac or 12) then return 1 else return 0 end
         end
         function a_attack_dmg(c) return ab_mod(c.str) end
+
+        -- Convince: a Charisma pitch against the target's resolve DC. This is
+        -- the persuasion twin of a_attack/a_attack_hit -- same shape, social
+        -- stat, and no damage. Winning is the host's to apply (an owner change).
+        function a_convince(c) return ab_mod(c.cha) + c.prof end
+        function a_convince_hit(c, t, roll)
+            -- `or` the schema default, so a sheet saved before `will` existed
+            -- (a pre-C5 campaign) resolves against 12 rather than erroring on nil.
+            if roll >= (t.will or 12) then return 1 else return 0 end
+        end
 
         function a_zero(c) return 0 end
 
@@ -2639,6 +2719,73 @@ end"#,
         assert_eq!(gen(1), gen(1), "same seed, same NPC");
         let differs = (1..8).any(|s| gen(s) != npc);
         assert!(differs, "reroll should be able to produce a different NPC");
+    }
+
+    #[test]
+    fn convince_wins_a_creature_over_when_the_pitch_beats_its_resolve() {
+        // The recruit is the system's to *report*, not to apply: it names the
+        // target won over and leaves the owner change (and the cap) to the host.
+        let mut sys = srd_5e();
+        let mut bard = sys.default_sheet();
+        bard.set_text("name", "Bard");
+        bard.set_int("cha", 18); // +4, plus prof 2 => 1d20+6 to persuade
+        bard.set_int("prof", 2);
+        let mut goblin = sys.default_sheet();
+        goblin.set_text("name", "Goblin");
+        goblin.set_int("will", 1); // a pushover: the pitch cannot fail
+
+        let r = sys
+            .resolve_action("convince", KNIGHT, &bard, (4, 4), GOBLIN, &goblin, (6, 4), &mut Rng::new(9))
+            .expect("resolves");
+        assert!(r.hit);
+        assert_eq!(r.recruited, Some(GOBLIN), "won over");
+        // A social action does no harm.
+        assert!(r.deltas.iter().all(|d| d.add == 0));
+        assert!(r.defeated.is_empty());
+
+        // A resolute creature (will 99) cannot be talked around.
+        let mut wall = goblin.clone();
+        wall.set_int("will", 99);
+        let miss = sys
+            .resolve_action("convince", KNIGHT, &bard, (4, 4), GOBLIN, &wall, (6, 4), &mut Rng::new(9))
+            .expect("resolves");
+        assert!(!miss.hit);
+        assert!(miss.recruited.is_none(), "a failed pitch wins no one");
+    }
+
+    #[test]
+    fn convince_falls_back_to_the_default_resolve_when_the_sheet_predates_will() {
+        // A sheet saved before `will` existed (a pre-C5 campaign) has no such
+        // field. The hit rule must resolve against the schema default (12), not
+        // error on nil -- otherwise convince silently fails against every legacy
+        // token.
+        let mut sys = srd_5e();
+        let mut bard = sys.default_sheet();
+        bard.set_int("cha", 20); // +5, plus prof 2 => 1d20+7
+        bard.set_int("prof", 2);
+        // A bare sheet with only a name: no `will`, as an old save would be.
+        let mut legacy = SheetData::new("5e-srd");
+        legacy.set_text("name", "Old Goblin");
+        assert!(legacy.int("will").is_none(), "the legacy sheet has no will");
+
+        // Must resolve (not ScriptFailed) and behave as DC 12.
+        let r = sys
+            .resolve_action("convince", KNIGHT, &bard, (4, 4), GOBLIN, &legacy, (5, 4), &mut Rng::new(1))
+            .expect("resolves against the default DC, not an error");
+        // The roll landed or missed against 12; either way, no script failure.
+        assert_eq!(r.recruited.is_some(), r.hit);
+    }
+
+    #[test]
+    fn only_a_recruit_action_reports_a_recruit() {
+        // A plain attack must never set `recruited`, or the host would change
+        // ownership on every hit.
+        let (mut sys, knight, goblin) = duel(1, 50);
+        let r = sys
+            .resolve_action("attack", KNIGHT, &knight, (4, 4), GOBLIN, &goblin, (5, 4), &mut Rng::new(3))
+            .expect("resolves");
+        assert!(r.hit);
+        assert!(r.recruited.is_none());
     }
 
     #[test]

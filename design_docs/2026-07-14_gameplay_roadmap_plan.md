@@ -21,11 +21,7 @@ displacement, conditions, allegiance) grows one type at a time.
    was the door.)
 3. **C3: Split-party time** — **landed 2026-07-15**, below.
 4. **C4: Generators + command grammar** — **landed 2026-07-15**, below.
-5. **C5: Multi-character parties + recruitment** — ownership is already
-   per-token; add a configurable cap (default 4) and a `convince` action whose
-   consequence is allegiance (`OwnerSet`), adjudicated like any other action.
-   Done when a player runs four tokens with correct fog and a convinced goblin
-   fights for them on every peer.
+5. **C5: Multi-character parties + recruitment** — **landed 2026-07-15**, below.
 6. **C6: Dialogue** — surface storylet choices in-app; the conversation-economy
    lane stays post-keystone with the intelligence vision.
 7. **C7: Factions as participants** — worldbuilding rung 7; a faction player is
@@ -195,6 +191,57 @@ and `>roll` hard-coded "DM", misattributing a joined player's roll — now the a
 roller. The first two were pre-existing bugs in the spawn path that `>spawn`
 exposed, so the fix improves the compendium spawn button too.
 
+## C5: Multi-character parties + recruitment (LANDED 2026-07-15)
+
+**Allegiance is the next consequence, and the resolver's layering carried it
+unchanged.** Multi-character control was already free: fog computes per-owner over
+*all* a viewer's tokens, so owning four is owning four. C5 added the cap and
+recruitment.
+
+- **`convince`** is a targeted action shaped exactly like an attack: a Charisma
+  pitch (`1d20 + cha_mod + prof`) against the target's resolve DC (a new `will`
+  field; monsters get `8 + WIS mod`). Its consequence is allegiance, not damage.
+- **The split held.** The resolver only *reports* the win (`Resolution.recruited`
+  = the target won over); it never touches owners, because owners live on the
+  token and the cap is table policy — neither is the sheet's. The **host** rules
+  the owner change and the cap, exactly as it rules where a shove lands: the new
+  owner is the *actor's* owner, a player's party is capped (the DM, owner `None`,
+  is uncapped), and a full party makes the pitch land-but-not-hold.
+- **`party_cap`** (default 4) rides on the snapshot, so every peer enforces the
+  same limit. The owner change replicates as `ActionResolved.owner_changes`, and
+  every peer recomputes fog from it (a new ally feeds your sight; an ex-ally
+  stops).
+- **Temporary allegiance** (charm that lifts) is a follow-on: it wants condition
+  *durations*, which the on/off condition model does not have yet. V1 ships
+  permanent-until-changed; the DM can re-own to revert.
+
+**Done when:** a player runs four tokens with correct fog and a convinced goblin
+fights for them on every peer. **Verified 2026-07-15.** Unit: convince reports a
+recruit when the pitch beats the resolve DC and none when it misses; a plain
+attack never reports a recruit. Replication: the owner change lands on host and
+client, and does no damage. In-app (`ISOMETRY_CONVINCE_SELFTEST`): a bard (party
+of 2, cap 3) convinces a goblin — it joins A (party of 3, at the cap) — then a
+second pitch lands its roll but is refused, "sways Goblin (21) but your party is
+full". Fog recomputes for the new owner.
+
+An adversarial review pass caught four real bugs the happy-path tests missed,
+all fixed with regressions: the cap counted only the *active* map, so a split
+party across stored maps (C3) could exceed it — now campaign-global; in a session
+the recruit is deferred to `net_outbox`, so a batch of same-owner intents all read
+a stale count and blew past the cap — the Remote branch now folds the owner change
+into the local map immediately (idempotent on mirror-back); `a_convince_hit`
+errored on a pre-C5 sheet with no `will` field — now `t.will or 12`; and
+`apply_snapshot` never mirrored `clocks` (a C3 omission) or `party_cap` into the
+view. The review also surfaced a latent sharp edge fixed here: a zero-damage
+action (convince, shove, trip) was pushing a `field -= 0` delta, which on a sheet
+lacking that field *created* it at 0 — an invented `hp_current` of 0 then read as
+defeated. Zero deltas are no longer pushed.
+
+**Adjacent gap noted (not fixed):** a client's `TokenMoved` is not
+ownership-gated on the host — a joined player could move any token, not only its
+own. Not required by the done-when (which is about controlling *your* tokens),
+but a real authority follow-up.
+
 ## Progress
 
 - 2026-07-14: Doc created with Mark's ordering. C1 design settled: the
@@ -214,3 +261,7 @@ exposed, so the fix improves the compendium spawn button too.
   `>gen npc` ends in a statted, fightable creature. Mapped with a parallel
   understanding pass and checked with an adversarial review pass. 165 workspace
   tests green. C5 (multi-character parties + recruitment) is next.
+- 2026-07-15: C5 landed and verified. `convince` recruits a creature to your
+  side; the resolver reports the win, the host rules the owner change and the
+  cap; allegiance replicates and refreshes fog. Adversarially reviewed. 170
+  workspace tests green. C6 (dialogue) is next.

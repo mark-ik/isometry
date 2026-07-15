@@ -173,6 +173,8 @@ mod tests {
                 active_map: None,
                 world: Default::default(),
                 clocks: Default::default(),
+
+                party_cap: isometry_net::default_party_cap(),
                 last_beats: Vec::new(),
                 beat_seq: 0,
             },

@@ -61,6 +61,12 @@ pub struct GameSnapshot {
     /// clock is simply the latest location. `serde(default)` so older saves load.
     #[serde(default)]
     pub clocks: BTreeMap<String, u64>,
+    /// How many tokens one player may command. Table policy, replicated so every
+    /// peer enforces the same limit; a recruit that would exceed it fails to
+    /// hold. The DM (owner `None`) is uncapped. `serde(default)` gives older
+    /// saves the default when the field is absent.
+    #[serde(default = "default_party_cap")]
+    pub party_cap: u32,
     /// The beats of the most recently applied event, kept so that *every* peer
     /// can play them and not only the peer that produced them. A client renders
     /// from the snapshot, so without this the defender's recoil would be seen on
@@ -80,6 +86,11 @@ pub struct GameSnapshot {
 
 /// Rolls kept in the shared log; older ones drop off.
 pub const ROLL_LOG_CAP: usize = 50;
+
+/// Default tokens per player: a small party a table can actually run.
+pub fn default_party_cap() -> u32 {
+    4
+}
 
 /// One adjudicated action, resolved by whoever held the sequencer, applied by
 /// everyone.
@@ -132,6 +143,12 @@ pub struct ActionResolved {
     /// fog and reach preview locally) apply the numbers verbatim.
     #[serde(default)]
     pub mobility: Vec<(TokenId, Option<(u32, u32)>)>,
+    /// Allegiance changes: `(token, new owner)`. Truth, like the deltas: a
+    /// convinced creature joins your side, which changes whose fog it feeds and
+    /// who may command it. The host decides these (the actor's owner, gated by
+    /// the party cap), because owners and the cap are the map's, not the rules'.
+    #[serde(default)]
+    pub owner_changes: Vec<(TokenId, Option<String>)>,
 }
 
 /// The replicated unit: a map mutation or a turn-order change. The host
