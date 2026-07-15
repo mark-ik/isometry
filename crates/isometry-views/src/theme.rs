@@ -39,6 +39,18 @@ pub fn board_css() -> String {
 }
 .side-status { color: #9fd48a; font-size: 12px; margin-top: 10px; min-height: 14px; }
 
+/* The > command line and its find-results. Amber to read as a live prompt,
+   distinct from the whisper composer's chrome. */
+.cmd-box { margin-top: 4px; }
+.cmd-line {
+    color: #ffd766;
+    background-color: #23262f;
+    font-size: 13px;
+    padding: 3px 6px;
+    margin-bottom: 2px;
+}
+.cmd-result { color: #b9c0cf; font-size: 12px; padding: 1px 6px; }
+
 .btn-row { display: flex; flex-wrap: wrap; }
 .btn {
     padding: 3px 8px;

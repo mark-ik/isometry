@@ -31,6 +31,13 @@
       "default_args": { "type": "text", "value": "river" },
       "script": "generators/campaign.lua",
       "fixtures": []
+    },
+    {
+      "id": "npc",
+      "name": "Wandering NPC",
+      "default_args": { "type": "text", "value": "wilds" },
+      "script": "generators/npc.lua",
+      "fixtures": []
     }
   ]
 }

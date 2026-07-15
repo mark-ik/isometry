@@ -350,6 +350,12 @@ pub struct UiState {
     pub template_size: u32,
     /// The message log (whispers sent and received), display strings.
     pub messages: Vec<String>,
+    /// The `>` command line. `command_active` captures keystrokes into
+    /// `command_draft` (the whisper-composer pattern); `command_results` holds
+    /// the last `>find` list, shown until the next command.
+    pub command_active: bool,
+    pub command_draft: String,
+    pub command_results: Vec<String>,
     /// Whether a whisper is being typed (keys route to the draft).
     pub composing: bool,
     /// The whisper being typed.
@@ -493,6 +499,9 @@ impl UiState {
             template_kind: TemplateKind::Burst,
             template_size: 3,
             messages: Vec::new(),
+            command_active: false,
+            command_draft: String::new(),
+            command_results: Vec::new(),
             composing: false,
             whisper_draft: String::new(),
             whisper_target: None,
@@ -841,13 +850,21 @@ impl UiState {
         let (sprite, name, key) = (m.sprite.clone(), m.name.clone(), m.key.clone());
         let at = self.free_spawn_tile();
         let id = self.next_token_id();
-        self.apply_step(vec![SessionEvent::TokenPlaced(Token {
+        let placed = SessionEvent::TokenPlaced(Token {
             id,
             at,
             facing: Facing::South,
             sprite,
             owner: None,
-        })]);
+        });
+        // In a session the placement must land authoritatively, or the token
+        // shows only on the DM's screen and is wiped by the next snapshot mirror
+        // (leaving an orphan sheet behind, since the SheetSet below still
+        // replicates). Route it through the authority like every other mutator;
+        // apply locally only when solo.
+        if !self.net_emit(GameEvent::Map(placed.clone())) {
+            self.apply_step(vec![placed]);
+        }
         // Ask the host to bind the stat block. Without this the monster is a
         // sprite: its hit points and AC stay in the compendium and nothing can
         // be done to it. The view does not build the sheet itself, because what
@@ -858,17 +875,29 @@ impl UiState {
         self.compendium_selected = None;
     }
 
-    /// A free tile to spawn onto: the selection if empty, else scanning a
-    /// small block outward from it.
+    /// A free tile to spawn onto: the selection if empty, else scanning a small
+    /// block outward from it. Bounds-checked, because placing a token off-map is
+    /// rejected (and on a narrow map the block can walk off the edge).
     fn free_spawn_tile(&self) -> TileCoord {
-        let start = self.selected.unwrap_or((2, 2));
+        let free = |at: TileCoord| {
+            self.map.ground.in_bounds(at.0, at.1) && self.token_at(at).is_none()
+        };
+        let start = self.selected.filter(|&s| free(s)).unwrap_or((2, 2));
         for d in 0..64 {
             let at = (start.0 + (d % 8), start.1 + (d / 8));
-            if self.token_at(at).is_none() {
+            if free(at) {
                 return at;
             }
         }
-        start
+        let (w, h) = (self.map.ground.width() as i32, self.map.ground.height() as i32);
+        for row in 0..h {
+            for col in 0..w {
+                if free((col, row)) {
+                    return (col, row);
+                }
+            }
+        }
+        (0, 0)
     }
 
     /// Queue a field edit (a stepper on the open sheet); the host applies
@@ -1123,6 +1152,172 @@ impl UiState {
         } else {
             self.push_roll(record);
         }
+    }
+
+    /// Open the `>` command line (host keys route to the draft until submit or
+    /// cancel). Entered by the `>` key, the same way `w` opens a whisper.
+    pub fn start_command(&mut self) {
+        self.command_active = true;
+        self.command_draft.clear();
+        self.command_results.clear();
+        self.status = "> command (enter run, esc cancel)".to_owned();
+    }
+
+    pub fn command_char(&mut self, c: char) {
+        if self.command_active {
+            self.command_draft.push(c);
+        }
+    }
+
+    pub fn command_backspace(&mut self) {
+        if self.command_active {
+            self.command_draft.pop();
+        }
+    }
+
+    pub fn command_cancel(&mut self) {
+        self.command_active = false;
+        self.command_draft.clear();
+        self.status = "command cancelled".to_owned();
+    }
+
+    /// Parse and dispatch the command line, then close it. Every verb routes to
+    /// machinery that already exists; the command layer is just the front door.
+    pub fn command_submit(&mut self) {
+        let input = self.command_draft.trim().to_owned();
+        self.command_active = false;
+        self.command_draft.clear();
+        if input.is_empty() {
+            return;
+        }
+        match crate::command::parse(&input) {
+            crate::command::Command::Spawn(query) => self.spawn_query(&query),
+            crate::command::Command::Gen(kind) => self.start_generator(&kind),
+            crate::command::Command::Find(query) => self.find_query(&query),
+            crate::command::Command::Roll(expr) => {
+                if expr.trim().is_empty() {
+                    self.status = "roll what? e.g. >roll 2d6+3".to_owned();
+                } else {
+                    // Attribute to the actual roller (a joined player rolls as
+                    // themselves, not "DM"), the same way `roll_dice` does.
+                    self.roll_dice(&expr);
+                }
+            }
+            crate::command::Command::Time(ticks) => self.pass_time(ticks),
+            crate::command::Command::Help => {
+                self.status = "commands: >spawn >gen >find >roll >time".to_owned();
+            }
+            crate::command::Command::Unknown(verb) => {
+                self.status = format!("unknown command: {verb} (try >help)");
+            }
+        }
+    }
+
+    /// `>spawn <query>`: place a statted creature. Host/DM only, because a
+    /// spawn is authoring. Resolves the query to a bestiary entry and reuses the
+    /// same path the compendium spawn button takes.
+    pub fn spawn_query(&mut self, query: &str) {
+        if !self.can_edit_inventory {
+            self.status = "spawning requires the host".to_owned();
+            return;
+        }
+        match self.resolve_bestiary(query) {
+            Some(key) => self.spawn_monster(&key),
+            None => self.status = format!("no monster matches '{query}'"),
+        }
+    }
+
+    /// Resolve a free-text query to a bestiary key, most specific first: an
+    /// exact key, then an exact name, then a name substring, then a key
+    /// substring. Deterministic first-match; `>find` is for browsing.
+    fn resolve_bestiary(&self, query: &str) -> Option<String> {
+        let q = query.trim().to_ascii_lowercase();
+        if q.is_empty() {
+            return None;
+        }
+        let by = |pred: &dyn Fn(&MonsterRow) -> bool| {
+            self.bestiary.iter().find(|m| pred(m)).map(|m| m.key.clone())
+        };
+        by(&|m| m.key.to_ascii_lowercase() == q)
+            .or_else(|| by(&|m| m.name.to_ascii_lowercase() == q))
+            .or_else(|| by(&|m| m.name.to_ascii_lowercase().contains(&q)))
+            .or_else(|| by(&|m| m.key.to_ascii_lowercase().contains(&q)))
+    }
+
+    /// `>gen <kind>`: select a matching generator and open the existing
+    /// generator overlay on a fresh preview. The whole reroll/lock/commit
+    /// surface is already built; this is just the front door to it.
+    pub fn start_generator(&mut self, kind: &str) {
+        if !self.can_edit_inventory {
+            self.status = "generation requires the host".to_owned();
+            return;
+        }
+        let k = kind.trim().to_ascii_lowercase();
+        if k.is_empty() {
+            self.status = "generate what? e.g. >gen npc".to_owned();
+            return;
+        }
+        // Match by the id's trailing segment (`demo:npc` -> `npc`), then by a
+        // substring of the id or the friendly name.
+        let idx = self.generator_choices.iter().position(|c| {
+            let suffix = c.id.rsplit(':').next().unwrap_or(&c.id).to_ascii_lowercase();
+            suffix == k
+                || suffix.contains(&k)
+                || c.name.to_ascii_lowercase().contains(&k)
+        });
+        match idx {
+            Some(i) => {
+                self.generator_selected = i;
+                self.generator_preview = None;
+                self.generator_locks.clear();
+                self.generator_open = true;
+                // Fire the first preview immediately, so `>gen npc` shows a
+                // candidate the DM can reroll or commit at once.
+                self.generation_request = Some(GenerationRequest::Generate);
+                self.status = format!("generating {}", self.generator_choices[i].name);
+            }
+            None => self.status = format!("no generator matches '{kind}'"),
+        }
+    }
+
+    /// `>find <query>`: a unified substring search over the compendium
+    /// (monsters, items, spells), shown as a list under the command line. Pure
+    /// view-side and read-only, so any peer may browse.
+    pub fn find_query(&mut self, query: &str) {
+        let q = query.trim().to_ascii_lowercase();
+        self.command_results.clear();
+        if q.is_empty() {
+            self.status = "find what? e.g. >find sword".to_owned();
+            return;
+        }
+        const CAP: usize = 12;
+        let mut out = Vec::new();
+        for m in &self.bestiary {
+            if m.name.to_ascii_lowercase().contains(&q) || m.key.to_ascii_lowercase().contains(&q) {
+                out.push(format!("monster · {} ({})", m.name, m.key));
+            }
+        }
+        for i in &self.items {
+            if i.name.to_ascii_lowercase().contains(&q) {
+                out.push(format!("item · {}", i.name));
+            }
+        }
+        for s in &self.spells {
+            if s.name.to_ascii_lowercase().contains(&q) {
+                out.push(format!("spell · {}", s.name));
+            }
+        }
+        let total = out.len();
+        out.truncate(CAP);
+        if total > CAP {
+            out.push(format!("… and {} more", total - CAP));
+        }
+        self.command_results = out;
+        self.status = if total == 0 {
+            format!("no matches for '{query}'")
+        } else {
+            format!("{total} match{} for '{query}'", if total == 1 { "" } else { "es" })
+        };
     }
 
     /// Start typing a whisper (host keys route to the draft until send or
@@ -1612,8 +1807,22 @@ impl UiState {
         self.recompute_reach();
     }
 
+    /// The next free token id across the *whole campaign*, not just the active
+    /// map: a spawn (or a Token-mode placement) must not reuse an id already
+    /// resident on a stored map or held by an inventory, because inventories key
+    /// on `TokenId` globally. Same discipline as travel's id minting and the
+    /// generator commit's `next_snapshot_id`.
     fn next_token_id(&self) -> TokenId {
-        TokenId(self.map.tokens.iter().map(|t| t.id.0).max().unwrap_or(0) + 1)
+        let max = self
+            .campaign_maps
+            .values()
+            .flat_map(|m| m.document.tokens.iter())
+            .chain(self.map.tokens.iter())
+            .map(|t| t.id.0)
+            .chain(self.inventories.keys().map(|id| id.0))
+            .max()
+            .unwrap_or(0);
+        TokenId(max + 1)
     }
 
     fn token_at(&self, at: TileCoord) -> Option<TokenId> {
@@ -2350,5 +2559,71 @@ mod tests {
         assert_ne!(ui.map, pristine);
         ui.undo();
         assert_eq!(ui.map, pristine);
+    }
+
+    #[test]
+    fn spawn_in_a_session_routes_through_the_authority_not_the_local_map() {
+        // The bug the adversarial review caught: a hosted DM's `>spawn` mutated
+        // the local map directly, so the token never replicated and was wiped by
+        // the next snapshot mirror (leaving an orphan sheet). It must emit an
+        // authoritative TokenPlaced instead.
+        let mut ui = UiState::new(demo_map());
+        ui.net_mode = NetMode::Remote;
+        ui.bestiary = vec![MonsterRow {
+            key: "goblin".to_owned(),
+            name: "Goblin".to_owned(),
+            cr: 0.25,
+            cr_label: "1/4".to_owned(),
+            kind: "humanoid".to_owned(),
+            size: "small".to_owned(),
+            alignment: "ne".to_owned(),
+            hp: 7,
+            hit_dice: "2d6".to_owned(),
+            ac: 15,
+            speed_ft: 30,
+            xp: 50,
+            abilities: [8, 14, 10, 10, 8, 8],
+            actions: Vec::new(),
+            sprite: "goblin".to_owned(),
+        }];
+        let before = ui.map.tokens.len();
+
+        ui.spawn_query("goblin");
+
+        // The local map is untouched; the placement is queued for the authority.
+        assert_eq!(ui.map.tokens.len(), before, "no local mutation in a session");
+        let placed = ui.net_outbox.iter().any(|e| {
+            matches!(e, GameEvent::Map(SessionEvent::TokenPlaced(_)))
+        });
+        assert!(placed, "the spawn must replicate as an authoritative event");
+        // And the stat-block bind is queued for the same id.
+        assert!(ui.spawn_sheet_request.is_some());
+    }
+
+    #[test]
+    fn a_spawn_tile_stays_on_the_board_on_a_narrow_map() {
+        // free_spawn_tile's outward scan could walk off a map narrower than its
+        // stride, yielding an off-board tile that fails placement. It must clamp.
+        let mut ui = UiState::new(MapDocument::new("slot", 3, 3));
+        // Pack the whole 3x3 but one cell, forcing the scan to the survivor.
+        for row in 0..3 {
+            for col in 0..3 {
+                if (col, row) != (2, 2) {
+                    ui.map.tokens.push(Token {
+                        id: TokenId(100 + (row * 3 + col) as u32),
+                        at: (col, row),
+                        facing: Facing::South,
+                        sprite: "goblin".to_owned(),
+                        owner: None,
+                    });
+                }
+            }
+        }
+        let at = ui.free_spawn_tile();
+        assert!(
+            ui.map.ground.in_bounds(at.0, at.1),
+            "spawn tile {at:?} is off the 3x3 board"
+        );
+        assert_eq!(at, (2, 2), "the one free in-bounds cell");
     }
 }

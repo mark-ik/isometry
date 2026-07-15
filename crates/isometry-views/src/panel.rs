@@ -230,6 +230,25 @@ fn action_button(label: &'static str, enabled: bool, act: fn(&mut UiState)) -> U
     ))
 }
 
+/// The `>` command line: the live draft while active, then the last `>find`
+/// result list. Distinct from the whisper composer (which shares the `>`
+/// display prefix) by its own `cmd-*` classes. Renders nothing when idle and
+/// empty, so it costs a table that never opens it exactly one empty div.
+fn command_line(ui: &UiState) -> UiChild {
+    let mut rows: Vec<UiChild> = Vec::new();
+    if ui.command_active {
+        rows.push(Box::new(
+            el("div", text(format!("> {}_", ui.command_draft))).attr("class", "cmd-line"),
+        ));
+    }
+    for line in &ui.command_results {
+        rows.push(Box::new(
+            el("div", text(line.clone())).attr("class", "cmd-result"),
+        ));
+    }
+    Box::new(el("div", rows).attr("class", "cmd-box"))
+}
+
 pub fn side_panel(ui: &UiState) -> UiChild {
     let modes: Vec<UiChild> = EditMode::ALL
         .iter()
@@ -269,6 +288,7 @@ pub fn side_panel(ui: &UiState) -> UiChild {
             .attr("class", "side-line"),
         ),
         Box::new(el("div", text(selected)).attr("class", "side-line side-strong")),
+        command_line(ui),
         Box::new(el("div", text("Mode")).attr("class", "side-heading")),
         Box::new(el("div", modes).attr("class", "btn-row")),
         Box::new(el("div", text("Brush")).attr("class", "side-heading")),

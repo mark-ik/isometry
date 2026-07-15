@@ -29,7 +29,7 @@ use isometry_campaign::{
     CampaignStore, EntropyTape, GenValue, GeneratorRequest, ItemId, ItemInstance, MapScale,
     WorldFact,
 };
-use isometry_core::{FieldValue, Rng, TileCoord, TokenId};
+use isometry_core::{Facing, FieldValue, MapDocument, Rng, SessionEvent, SheetData, TileCoord, Token, TokenId};
 use isometry_net::{
     apply_game, ActionIntent, ActionResolved, GameEvent, GameSnapshot, HostSession,
 };
@@ -147,6 +147,10 @@ struct App {
     /// and walk the knight through it. Focus-free, like the others.
     travel_selftest: bool,
     travel_fired: bool,
+    /// `ISOMETRY_CMD_SELFTEST`: drive the `>` command line: spawn, find, and a
+    /// full `>gen npc` generate/commit into a statted NPC.
+    cmd_selftest: bool,
+    cmd_fired: bool,
     /// `ISOMETRY_COMBAT_SELFTEST`: drive a short adjudicated exchange on boot.
     combat_selftest: bool,
     /// Swings left to throw, when the last one landed, and whether the winner
@@ -195,6 +199,50 @@ fn campaign_path(name: &str) -> std::path::PathBuf {
 
 /// Search the bundled example, a project-local pack root, and user-selected
 /// roots. Entries may be pack directories or directories containing packs.
+/// A free tile to place a generated token on, scanning outward from (2, 2) past
+/// anything occupied. The host commit path holds only a snapshot, so this is the
+/// snapshot twin of the view's `free_spawn_tile`.
+fn free_snapshot_tile(map: &MapDocument) -> TileCoord {
+    let occupied: std::collections::HashSet<TileCoord> =
+        map.tokens.iter().map(|t| t.at).collect();
+    let free = |at: TileCoord| map.ground.in_bounds(at.0, at.1) && !occupied.contains(&at);
+    // Prefer a free interior tile scanning outward from (2, 2), but never leave
+    // the board: a narrow or short map has no col/row 2..17, and placing a token
+    // off-map fails the whole commit (TokenPlaced rejects out-of-bounds).
+    for d in 0..256 {
+        let at = (2 + (d % 16), 2 + (d / 16));
+        if free(at) {
+            return at;
+        }
+    }
+    // The window missed (a small or packed map): take any free in-bounds tile.
+    let (w, h) = (map.ground.width() as i32, map.ground.height() as i32);
+    for row in 0..h {
+        for col in 0..w {
+            if free((col, row)) {
+                return (col, row);
+            }
+        }
+    }
+    (0, 0) // board is full or empty; (0,0) is in-bounds for any non-empty map
+}
+
+/// The next free token id across the whole campaign, so a generated NPC never
+/// collides with a resident of another stored map (inventories key on `TokenId`
+/// globally). Same discipline as travel's id minting.
+fn next_snapshot_id(snapshot: &GameSnapshot) -> TokenId {
+    let max = snapshot
+        .maps
+        .values()
+        .flat_map(|m| m.document.tokens.iter())
+        .chain(snapshot.map.tokens.iter())
+        .map(|t| t.id.0)
+        .chain(snapshot.inventories.keys().map(|id| id.0))
+        .max()
+        .unwrap_or(0);
+    TokenId(max + 1)
+}
+
 fn generator_pack_roots() -> Vec<std::path::PathBuf> {
     // The `core` pack ships the default beat vocabulary (strike, recoil, fall,
     // cheer...). It is a pack like any other, so a campaign overrides a beat
@@ -1468,6 +1516,44 @@ impl App {
                             inventory,
                         });
                     }
+                    GenValue::Npc { npc } => {
+                        // Lower a generated NPC into a *statted* creature. The
+                        // proposal is thin (key, name, tags); its key doubles as
+                        // a bestiary slug, so a generated "Skreek" is a goblin's
+                        // stat block under a generated name. That reuse is what
+                        // makes `>gen npc` end in something fightable rather than
+                        // a nameless sprite. A key with no bestiary match falls
+                        // back to a plain default sheet.
+                        let snapshot = local_snapshot.as_ref();
+                        let (at, id) = match snapshot {
+                            Some(s) => (free_snapshot_tile(&s.map), next_snapshot_id(s)),
+                            None => ((2, 2), TokenId(1)),
+                        };
+                        let monster = srd_bestiary().into_iter().find(|m| m.key == npc.key);
+                        let (sprite, mut sheet) = match monster {
+                            Some(m) => (m.sprite.clone(), monster_sheet(&m)),
+                            None => {
+                                let sheet = self
+                                    .system
+                                    .as_ref()
+                                    .map(System::default_sheet)
+                                    .unwrap_or_else(|| SheetData::new("5e-srd"));
+                                ("knight".to_owned(), sheet)
+                            }
+                        };
+                        // The generated name over the base creature's.
+                        sheet.set_text("name", npc.name.clone());
+                        events.push(GameEvent::Map(SessionEvent::TokenPlaced(Token {
+                            id,
+                            at,
+                            facing: Facing::South,
+                            sprite,
+                            owner: None,
+                        })));
+                        events.push(GameEvent::SheetSet { token: id, sheet });
+                        // A fightable NPC joins initiative.
+                        events.push(GameEvent::TurnAdd(id));
+                    }
                     _ => {}
                 }
                 if remote {
@@ -1634,6 +1720,72 @@ impl App {
         }
     }
 
+    /// `ISOMETRY_CMD_SELFTEST=1` (pair with `ISOMETRY_GEN_SEED` for a fixed
+    /// NPC): drive the whole `>` command surface once, focus-free.
+    fn maybe_cmd_selftest(&mut self) {
+        if !self.cmd_selftest || self.cmd_fired {
+            return;
+        }
+        if !self.started.is_some_and(|t| t.elapsed() > Duration::from_secs(2)) {
+            return;
+        }
+        self.cmd_fired = true;
+        let before = self
+            .runner
+            .as_ref()
+            .map(|r| r.state().map.tokens.len())
+            .unwrap_or(0);
+
+        // >spawn: a statted goblin, resolved from a free-text query.
+        if let Some(runner) = self.runner.as_mut() {
+            runner.update(|ui| ui.spawn_query("gobl"));
+        }
+        self.pump_sheets(); // binds the stat block
+
+        // >find: a unified compendium search.
+        if let Some(runner) = self.runner.as_mut() {
+            runner.update(|ui| ui.find_query("sword"));
+            eprintln!(
+                "[isometry] cmd selftest: find 'sword' -> {} results, first: {:?}",
+                runner.state().command_results.len(),
+                runner.state().command_results.first(),
+            );
+        }
+
+        // >gen npc: open the generator, generate a preview, commit it.
+        if let Some(runner) = self.runner.as_mut() {
+            runner.update(|ui| ui.start_generator("npc"));
+        }
+        self.pump_generators(); // Generate -> preview
+        let previewed = self
+            .runner
+            .as_ref()
+            .and_then(|r| r.state().generator_preview.clone());
+        eprintln!("[isometry] cmd selftest: gen npc preview = {previewed:?}");
+        if let Some(runner) = self.runner.as_mut() {
+            runner.update(|ui| ui.commit_generation_preview());
+        }
+        self.pump_generators(); // Commit -> lower into a statted token
+        self.pump_sheets();
+
+        if let Some(runner) = self.runner.as_ref() {
+            let ui = runner.state();
+            let newest = ui.map.tokens.last();
+            eprintln!(
+                "[isometry] cmd selftest: tokens {} -> {} | newest {:?} sheet name {:?} hp {:?} | status: {}",
+                before,
+                ui.map.tokens.len(),
+                newest.map(|t| (t.id.0, t.sprite.clone(), t.at)),
+                newest.and_then(|t| ui.map.sheet(t.id)).and_then(|s| s.text("name").map(str::to_owned)),
+                newest.and_then(|t| ui.map.sheet(t.id)).and_then(|s| s.int("hp_current")),
+                ui.status,
+            );
+        }
+        if let Some(window) = self.window.as_ref() {
+            window.request_redraw();
+        }
+    }
+
     fn maybe_combat_selftest(&mut self) {
         if !self.combat_selftest || (self.combat_swings == 0 && self.combat_emoted) {
             return;
@@ -1752,6 +1904,35 @@ impl App {
             }
             return;
         }
+        // While the > command line is open, keys go to its draft. Wins over the
+        // whisper composer below so it is never shadowed.
+        if runner.state().command_active {
+            match &event.logical_key {
+                WinitKey::Named(WinitNamedKey::Escape) => {
+                    runner.update(|ui| ui.command_cancel());
+                }
+                WinitKey::Named(WinitNamedKey::Enter) => {
+                    runner.update(|ui| ui.command_submit());
+                }
+                WinitKey::Named(WinitNamedKey::Backspace) => {
+                    runner.update(|ui| ui.command_backspace());
+                }
+                WinitKey::Named(WinitNamedKey::Space) => {
+                    runner.update(|ui| ui.command_char(' '));
+                }
+                WinitKey::Character(c) => {
+                    let s = c.to_string();
+                    runner.update(|ui| {
+                        for ch in s.chars() {
+                            ui.command_char(ch);
+                        }
+                    });
+                }
+                _ => {}
+            }
+            self.after_dispatch();
+            return;
+        }
         // While composing a whisper, keys go to the draft.
         if runner.state().composing {
             match &event.logical_key {
@@ -1806,6 +1987,13 @@ impl App {
             return;
         }
         match &event.logical_key {
+            WinitKey::Character(c) if c.as_str() == ">" => {
+                // The command sigil opens the > line, the way `w` opens a
+                // whisper. The draft starts empty; the ">" is the prompt.
+                runner.update(|ui| ui.start_command());
+                self.after_dispatch();
+                return;
+            }
             WinitKey::Character(c) if c.as_str() == "w" && !self.modifiers.control_key() => {
                 runner.update(|ui| ui.start_compose());
                 self.after_dispatch();
@@ -2031,7 +2219,8 @@ impl ApplicationHandler for App {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.maybe_combat_selftest();
         self.maybe_travel_selftest();
-        if self.travel_selftest && !self.travel_fired {
+        self.maybe_cmd_selftest();
+        if (self.travel_selftest && !self.travel_fired) || (self.cmd_selftest && !self.cmd_fired) {
             event_loop.set_control_flow(ControlFlow::WaitUntil(
                 Instant::now() + Duration::from_millis(100),
             ));
@@ -2429,6 +2618,8 @@ fn main() {
         net_selftest: std::env::var_os("ISOMETRY_NET_SELFTEST").is_some(),
         travel_selftest: std::env::var_os("ISOMETRY_TRAVEL_SELFTEST").is_some(),
         travel_fired: false,
+        cmd_selftest: std::env::var_os("ISOMETRY_CMD_SELFTEST").is_some(),
+        cmd_fired: false,
         combat_selftest: std::env::var_os("ISOMETRY_COMBAT_SELFTEST").is_some(),
         combat_swings: 4,
         last_swing: None,
@@ -2438,11 +2629,19 @@ fn main() {
         selftest_fired: false,
         system: None,
         last_sheet_open: None,
+        // `ISOMETRY_GEN_SEED` fixes the generator tape so `>gen` previews and
+        // rerolls are reproducible (headed verification, and a table that wants
+        // a deterministic session); otherwise the wall clock seeds it as before.
         generation_tape: EntropyTape::from_seed(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|duration| duration.as_nanos() as u64)
-                .unwrap_or(1),
+            std::env::var("ISOMETRY_GEN_SEED")
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or_else(|| {
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|duration| duration.as_nanos() as u64)
+                        .unwrap_or(1)
+                }),
         ),
         generation_ordinal: 0,
         generator_catalog,

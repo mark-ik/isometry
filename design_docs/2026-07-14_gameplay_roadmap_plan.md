@@ -20,9 +20,7 @@ displacement, conditions, allegiance) grows one type at a time.
    below. (REGION-scale maps were already just `MapDocument`s; what was missing
    was the door.)
 3. **C3: Split-party time** — **landed 2026-07-15**, below.
-4. **C4: Generators + command grammar** — `>gen`, `>spawn`, `>find` on the
-   existing composer, over the landed W2 runtime. Done when `>gen npc` previews,
-   rerolls, and commits a statted spawn.
+4. **C4: Generators + command grammar** — **landed 2026-07-15**, below.
 5. **C5: Multi-character parties + recruitment** — ownership is already
    per-token; add a configurable cap (default 4) and a `convince` action whose
    consequence is allegiance (`OwnerSet`), adjudicated like any other action.
@@ -149,6 +147,54 @@ also caught a real bug the sim could not: solo travel's scratch snapshot was
 built without the clocks, so reconciliation ran against empty time and wiped
 the ledger on copy-back.
 
+## C4: Generators + command grammar (LANDED 2026-07-15)
+
+**A `>` command line, and the NPC-lowering gap closed.** The map-first pass found
+that the flagship (`>gen npc`) mostly needed a front door: the generator overlay's
+generate/reroll/lock/commit surface already existed, and the real missing piece was
+that committing a generated NPC did *nothing* (a `_ => {}` no-op) and no npc
+generator existed.
+
+- **The command line** is a dedicated, testable mode entered by `>` (the way `w`
+  opens a whisper), captured with the host-keystroke pattern. The parser is a pure
+  `command.rs` module (unit-tested); dispatch on `UiState` routes each verb to
+  machinery that already exists.
+- **Verbs**: `>spawn <query>` (bestiary-resolved statted creature, host-gated),
+  `>gen <kind>` (selects a matching generator and opens the existing overlay on a
+  fresh preview), `>find <query>` (unified read-only substring search over monsters,
+  items, spells, shown in the panel), `>roll <expr>` (shared log), `>time <n>` (the
+  C3 clock verb), `>help`. Short aliases (`s`/`g`/`r`/`t`).
+- **The NPC bridge**: `npc.lua` picks a bestiary archetype by entropy plus a name;
+  the commit arm looks the key up in the bestiary and lowers it through
+  `monster_sheet` under the generated name, so a generated "Vane" is a real,
+  fightable kobold that joins initiative. A key with no bestiary match falls back to
+  a default sheet. Placement uses snapshot-side free-tile and globally-unique-id
+  helpers (the travel id discipline), and the events flow through the existing
+  Remote/Local commit dispatch, so a generated NPC replicates.
+- **Determinism**: `ISOMETRY_GEN_SEED` fixes the generator tape so previews and
+  rerolls are reproducible; otherwise the wall clock seeds it as before.
+
+**Done when:** `>gen npc` previews, rerolls, and commits a statted spawn.
+**Verified 2026-07-15.** Unit: the parser (verbs, aliases, tolerated `>`/case/pad,
+non-numeric time is a mistake not zero); the npc generator yields a bestiary-backed
+creature that stats up, is deterministic per seed, and varies on reroll. In-app
+(`ISOMETRY_CMD_SELFTEST` + `ISOMETRY_GEN_SEED=5`): `>find sword` returns a unified
+list (Flying Sword monster, Greatsword/Longsword/Shortsword items, Arcane Sword
+spell); `>spawn gobl` places a statted goblin; `>gen npc` previews kobold "Vane",
+commits, and a 5-HP NPC named Vane stands on the board in initiative (tokens 4->6).
+
+An adversarial review pass (parallel reviewers, each finding verified by a skeptic)
+caught four real bugs the happy-path tests missed, all now fixed with regressions:
+`>spawn` in a hosted session mutated the local map directly (token never
+replicated, wiped by the next mirror, orphan sheet) — now routed through the
+authority like every other mutator; `next_token_id` maxed only the active map,
+risking a collision with a resident of another stored map — now campaign-global;
+`free_snapshot_tile`/`free_spawn_tile` could return an off-board tile on a map
+narrower than the scan stride, failing the commit forever — now bounds-clamped;
+and `>roll` hard-coded "DM", misattributing a joined player's roll — now the actual
+roller. The first two were pre-existing bugs in the spawn path that `>spawn`
+exposed, so the fix improves the compendium spawn button too.
+
 ## Progress
 
 - 2026-07-14: Doc created with Mark's ordering. C1 design settled: the
@@ -163,3 +209,8 @@ the ledger on copy-back.
 - 2026-07-15: C3 landed and verified. Rounds are substrate truth, clocks are
   per-location, the DM declares downtime, and the door is where timelines
   meet. 158 workspace tests green. C4 (generators + command grammar) is next.
+- 2026-07-15: C4 landed and verified. A `>` command line fronts spawn/gen/find/
+  roll/time; the NPC-lowering gap is closed (npc.lua + bestiary bridge), so
+  `>gen npc` ends in a statted, fightable creature. Mapped with a parallel
+  understanding pass and checked with an adversarial review pass. 165 workspace
+  tests green. C5 (multi-character parties + recruitment) is next.

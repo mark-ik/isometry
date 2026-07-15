@@ -2599,6 +2599,49 @@ end"#,
     }
 
     #[test]
+    fn the_npc_generator_yields_a_bestiary_backed_creature_that_can_be_statted() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/packs/demo");
+        let pack = GeneratorPack::load(root).unwrap();
+        let request = GeneratorRequest {
+            generator: "demo:npc".to_owned(),
+            args: GenValue::Text { value: "wilds".to_owned() },
+            locks: BTreeMap::new(),
+        };
+        let gen = |seed: u64| {
+            let mut tape = EntropyTape::from_seed(seed);
+            let record = pack
+                .generate("generated.demo.npc.1", &request, &mut tape, GeneratorLimits::default())
+                .unwrap();
+            match record.proposal {
+                GenValue::Npc { npc } => npc,
+                other => panic!("expected an npc proposal, got {other:?}"),
+            }
+        };
+
+        // The proposal's key is a real bestiary slug, so it lowers to a stat
+        // block: this is the bridge `>gen npc` relies on.
+        let npc = gen(1);
+        let bestiary: Vec<_> = srd_bestiary().into_iter().map(|m| m.key).collect();
+        assert!(
+            bestiary.contains(&npc.key),
+            "generated key {:?} is not a bestiary creature",
+            npc.key
+        );
+        assert!(!npc.name.is_empty(), "an NPC needs a name");
+        // And that creature really does stat up.
+        let monster = srd_bestiary().into_iter().find(|m| m.key == npc.key).unwrap();
+        let mut sheet = monster_sheet(&monster);
+        sheet.set_text("name", npc.name.clone());
+        assert!(sheet.int("hp_current").unwrap() > 0);
+        assert_eq!(sheet.text("name"), Some(npc.name.as_str()));
+
+        // Deterministic per seed; a different draw (reroll) can change the pick.
+        assert_eq!(gen(1), gen(1), "same seed, same NPC");
+        let differs = (1..8).any(|s| gen(s) != npc);
+        assert!(differs, "reroll should be able to produce a different NPC");
+    }
+
+    #[test]
     fn a_spawned_goblin_arrives_statted() {
         let goblin = srd_bestiary()
             .into_iter()

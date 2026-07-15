@@ -7,6 +7,7 @@
 //! web host both drive [`board_root`].
 
 mod board;
+mod command;
 mod compendium;
 mod demo;
 mod generator;
