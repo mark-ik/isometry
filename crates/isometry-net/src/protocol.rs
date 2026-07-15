@@ -114,6 +114,16 @@ pub struct ActionResolved {
     /// next player's options all change because of it.
     #[serde(default)]
     pub displaced: Vec<(TokenId, TileCoord)>,
+    /// Conditions this action applied or cleared: `(token, name, on)`. Truth,
+    /// like the deltas: `prone` changes what the victim can do next turn.
+    #[serde(default)]
+    pub conditions: Vec<(TokenId, String, bool)>,
+    /// The system's recomputed `(move budget, sight radius)` for every token
+    /// whose conditions changed; `None` clears back to sheet base. Rules run
+    /// once on the resolver, and clients (who hold no rules engine but compute
+    /// fog and reach preview locally) apply the numbers verbatim.
+    #[serde(default)]
+    pub mobility: Vec<(TokenId, Option<(u32, u32)>)>,
 }
 
 /// The replicated unit: a map mutation or a turn-order change. The host
@@ -184,6 +194,16 @@ pub enum GameEvent {
     /// Unlike an action, a player may throw this for themselves, since the worst
     /// a liar can do is wave.
     Emoted { token: TokenId, beat: String },
+    /// Apply or clear one named condition outside an action (the DM's ruling, or
+    /// standing up from prone), carrying the system's recomputed mobility for
+    /// that token. Host-committed: what a condition *means* is the rules', so
+    /// the numbers must come from the machine that holds them.
+    ConditionSet {
+        token: TokenId,
+        condition: String,
+        on: bool,
+        mobility: Option<(u32, u32)>,
+    },
 }
 
 /// One message on the wire. The host is the authority: clients send

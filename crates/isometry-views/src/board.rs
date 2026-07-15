@@ -223,6 +223,14 @@ fn token_el(ui: &UiState, token: &Token) -> UiChild {
     if down {
         wrapper.push_str(" beat-down");
     }
+    // Conditions render as classes, like beats and equipment layers, so a pack
+    // can style `cond-prone` the way it styles a swing.
+    if let Some(conditions) = ui.map.conditions.get(&id) {
+        for name in conditions {
+            wrapper.push_str(" cond-");
+            wrapper.push_str(name);
+        }
+    }
     // A corpse is not a target, so it does not offer itself as one.
     if ui.picking_target() && !down {
         wrapper.push_str(" beat-targetable");
@@ -289,6 +297,29 @@ fn marker_el(ui: &UiState, token_id: isometry_core::TokenId, class: &str) -> Opt
     ))
 }
 
+/// One menu row per active condition: clicking asks the host to clear it.
+fn condition_items(ui: &UiState, id: isometry_core::TokenId) -> Vec<UiChild> {
+    ui.map
+        .conditions
+        .get(&id)
+        .map(|set| {
+            set.iter()
+                .map(|name| {
+                    let name = name.clone();
+                    let label = format!("Clear: {name}");
+                    Box::new(clickable(
+                        el("div", text(label)).attr("class", "menu-item"),
+                        move |ui: &mut UiState, _| {
+                            ui.clear_condition_request = Some((id, name.clone()));
+                            ui.close_context_menu();
+                        },
+                    )) as UiChild
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// One menu row per emote the *packs* offer.
 ///
 /// The app no longer owns this vocabulary. A pack declares which beats are
@@ -335,6 +366,9 @@ fn context_menu_overlay(ui: &UiState) -> Option<UiChild> {
                 // Emotes: the same beat primitive combat uses, with no
                 // resolution behind it. A player may throw one for themselves.
                 emote_items(ui, id),
+                // One "shake off <condition>" row per active condition. The
+                // click only *asks*; the host recomputes what the token can do.
+                condition_items(ui, id),
                 clickable(
                     el("div", text("Remove")).attr("class", "menu-item"),
                     move |ui: &mut UiState, _| ui.remove_token(id),

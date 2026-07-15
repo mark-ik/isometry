@@ -100,6 +100,8 @@ fn attack_hit(damage: i64) -> GameEvent {
         ],
         defeated: Vec::new(),
         displaced: Vec::new(),
+        conditions: Vec::new(),
+        mobility: Vec::new(),
     })
 }
 
@@ -388,6 +390,65 @@ fn forced_movement_is_truth_and_lands_on_the_same_tile_everywhere() {
         (7, 6),
         "forced movement is game truth, so it cannot be left to each peer"
     );
+    assert_converged(&sim);
+}
+
+#[test]
+fn a_condition_and_its_numbers_replicate_and_standing_up_restores_them() {
+    let mut sim = Sim::new(HostSession::new(snapshot()));
+    sim.connect(PeerId(10));
+    sim.host_event(GameEvent::SheetSet {
+        token: TokenId(2),
+        sheet: sheet("Goblin", 7, 15),
+    });
+
+    // A trip lands: prone plus the rules' recomputed numbers, one event.
+    let mut trip = attack_hit(0);
+    if let GameEvent::ActionResolved(res) = &mut trip {
+        res.action_key = "trip".to_owned();
+        res.deltas.clear();
+        res.conditions = vec![(TokenId(2), "prone".to_owned(), true)];
+        res.mobility = vec![(TokenId(2), Some((2, 6)))];
+    }
+    sim.host_event(trip);
+
+    let check = |s: &GameSnapshot| {
+        (
+            s.map.has_condition(TokenId(2), "prone"),
+            s.map.effective_mobility(TokenId(2), (5, 6)),
+        )
+    };
+    assert_eq!(check(sim.host.state()), (true, (2, 6)));
+    assert_eq!(
+        check(sim.clients[&PeerId(10)].state().unwrap()),
+        (true, (2, 6)),
+        "the client computes fog and reach locally, so it must hold the numbers"
+    );
+
+    // Standing up: the condition clears and the override clears with it, so the
+    // sheet's base values stand again.
+    sim.host_event(GameEvent::ConditionSet {
+        token: TokenId(2),
+        condition: "prone".to_owned(),
+        on: false,
+        mobility: None,
+    });
+    assert_eq!(check(sim.host.state()), (false, (5, 6)));
+    assert_eq!(check(sim.clients[&PeerId(10)].state().unwrap()), (false, (5, 6)));
+    assert_converged(&sim);
+
+    // A client may not pronounce a condition: that is a rules ruling.
+    let seq = sim.host.seq();
+    sim.client_intent(
+        PeerId(10),
+        GameEvent::ConditionSet {
+            token: TokenId(2),
+            condition: "blinded".to_owned(),
+            on: true,
+            mobility: Some((5, 0)),
+        },
+    );
+    assert_eq!(sim.host.seq(), seq, "a client ruled on a condition");
     assert_converged(&sim);
 }
 

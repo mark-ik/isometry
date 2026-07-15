@@ -232,6 +232,14 @@ pub fn board_css() -> String {
     opacity: 0.55;
 }
 
+/* Conditions render as `cond-<name>` classes on the beat wrapper, so a pack can
+   style them like it styles beats. This prone pose is the structural default a
+   pack may override: half-slumped, still alive. */
+.cond-prone {
+    transform: translate(4px, 6px);
+    opacity: 0.8;
+}
+
 /* Target-pick mode: everything clickable reads as a victim. */
 .beat-targetable { cursor: crosshair; }
 

@@ -118,6 +118,10 @@ pub struct TargetSpec {
     /// placed it there, so this beat slides it *in from* where it used to be:
     /// the same directional keyframes as a stagger, run the other way.
     pub push_beat: String,
+    /// Condition applied to the victim on a hit (`prone` for a trip). The name
+    /// is system vocabulary; the substrate stores it blind and the mechanical
+    /// numbers travel alongside as recomputed mobility.
+    pub condition_on_hit: Option<String>,
 }
 
 /// Why an intent was refused. Every one of these is checked before any die is
@@ -157,6 +161,27 @@ pub struct Resolution {
     /// token can stop a shove short, and that is the substrate's ruling. The host
     /// walks it with [`isometry_core::push_path`].
     pub push: Option<((i32, i32), u32)>,
+    /// Conditions this action applied: `(token, name, on)`.
+    pub conditions: Vec<(TokenId, String, bool)>,
+    /// The recomputed `(move budget, sight radius)` for each token whose
+    /// conditions changed; `None` clears back to sheet base.
+    pub mobility: Vec<(TokenId, Option<(u32, u32)>)>,
+}
+
+/// Copy `sheet` with each active condition added as a boolean field, so Lua
+/// reads `c.prone` with no new marshalling: conditions ride the existing
+/// character table. A sheet field with the same name would be shadowed, which is
+/// why condition names are validated against the schema's field keys by packs
+/// rather than guarded here.
+pub fn sheet_with_conditions<'a>(
+    sheet: &SheetData,
+    conditions: impl IntoIterator<Item = &'a String>,
+) -> SheetData {
+    let mut out = sheet.clone();
+    for name in conditions {
+        out.fields.insert(name.clone(), FieldValue::Bool(true));
+    }
+    out
 }
 
 /// A loaded game system: schema + a live sandboxed Lua interpreter with
@@ -171,6 +196,11 @@ pub struct System {
     /// with no such concept (a pure worldbuilding pack). The substrate never
     /// asks *why*; it only acts on the answer.
     pub defeat_func: Option<String>,
+    /// Lua `f(c) -> tiles`, the movement and sight projections. The character
+    /// table carries condition booleans, so `prone` halving speed is one line of
+    /// script. `None` means the sheet's base numbers stand unmodified.
+    pub speed_func: Option<String>,
+    pub sight_func: Option<String>,
     lua: Lua,
 }
 
@@ -1240,6 +1270,8 @@ impl System {
             derived,
             actions,
             defeat_func: None,
+            speed_func: None,
+            sight_func: None,
             lua,
         })
     }
@@ -1249,6 +1281,36 @@ impl System {
     pub fn with_defeat(mut self, func: impl Into<String>) -> Self {
         self.defeat_func = Some(func.into());
         self
+    }
+
+    /// Declare the movement and sight projections.
+    pub fn with_mobility(
+        mut self,
+        speed_func: impl Into<String>,
+        sight_func: impl Into<String>,
+    ) -> Self {
+        self.speed_func = Some(speed_func.into());
+        self.sight_func = Some(sight_func.into());
+        self
+    }
+
+    /// The system's mechanical ruling for a character *as conditioned*: pass a
+    /// sheet already augmented via [`sheet_with_conditions`]. Returns `None`
+    /// when the system declares no projection, or when no condition is in force
+    /// (the base numbers stand, so the substrate stores no override at all).
+    pub fn mobility_for(
+        &mut self,
+        conditioned: &SheetData,
+        any_condition: bool,
+    ) -> Option<(u32, u32)> {
+        if !any_condition {
+            return None;
+        }
+        let (speed_func, sight_func) =
+            (self.speed_func.clone()?, self.sight_func.clone()?);
+        let speed = self.call_int(&speed_func, conditioned)?.max(0) as u32;
+        let sight = self.call_int(&sight_func, conditioned)?.max(0) as u32;
+        Some((speed, sight))
     }
 
     /// Ask the system whether `sheet` is out of play. False when the system
@@ -1470,6 +1532,7 @@ impl System {
             stagger_beat: spec.stagger_beat.clone(),
             push_func: spec.push_func.clone(),
             push_beat: spec.push_beat.clone(),
+            condition_on_hit: spec.condition_on_hit.clone(),
         };
         let by = actor_sheet.text("name").unwrap_or("?").to_owned();
 
@@ -1586,6 +1649,29 @@ impl System {
             Beat::new(target, victim_beat),
         ];
 
+        // 7. Conditions. A corpse does not need `prone` on top of being dead,
+        //    and re-applying a condition the victim already has is noise (the
+        //    caller passes the target sheet already carrying its condition
+        //    booleans, so "already has it" is one field read).
+        let mut conditions = Vec::new();
+        let mut mobility = Vec::new();
+        if hit && defeated.is_empty() {
+            if let Some(name) = spec.condition_on_hit.as_ref() {
+                let already = matches!(
+                    target_sheet.fields.get(name),
+                    Some(FieldValue::Bool(true))
+                );
+                if !already {
+                    conditions.push((target, name.clone(), true));
+                    // The projection, computed against the sheet as it will be:
+                    // with the new condition set.
+                    let conditioned =
+                        sheet_with_conditions(target_sheet, std::iter::once(name));
+                    mobility.push((target, self.mobility_for(&conditioned, true)));
+                }
+            }
+        }
+
         Ok(Resolution {
             attack,
             hit,
@@ -1594,6 +1680,8 @@ impl System {
             beats,
             defeated,
             push: (push_tiles > 0).then_some((step, push_tiles)),
+            conditions,
+            mobility,
         })
     }
 }
@@ -1621,6 +1709,9 @@ pub fn monster_sheet(m: &Monster) -> SheetData {
     sheet.set_int("hp_current", m.hit_points as i64);
     sheet.set_int("ac", m.armor_class as i64);
     sheet.set_int("attack_bonus", 0);
+    // 5 ft to a tile, floored: a 30 ft goblin walks 6 tiles.
+    sheet.set_int("speed", (m.speed_ft / 5).max(1) as i64);
+    sheet.set_int("sight", 6);
     sheet
 }
 
@@ -1675,6 +1766,18 @@ pub fn srd_5e() -> System {
             label: "Attack bonus".to_owned(),
             default: FieldValue::Int(0),
         },
+        // The retired MOVE_BUDGET / SIGHT_RADIUS constants, as data. Base
+        // values; conditions project them through s_speed / s_sight.
+        FieldDef {
+            key: "speed".to_owned(),
+            label: "Speed".to_owned(),
+            default: FieldValue::Int(5),
+        },
+        FieldDef {
+            key: "sight".to_owned(),
+            label: "Sight".to_owned(),
+            default: FieldValue::Int(6),
+        },
     ];
     let m = |ab: &str| DerivedDef {
         key: format!("{ab}_mod"),
@@ -1715,6 +1818,7 @@ pub fn srd_5e() -> System {
                 stagger_beat: "staggered".to_owned(),
                 push_func: None,
                 push_beat: "shoved".to_owned(),
+                condition_on_hit: None,
             }),
         },
         // The other half of the contrast, and the reason both exist: a shove
@@ -1739,6 +1843,32 @@ pub fn srd_5e() -> System {
                 stagger_beat: "staggered".to_owned(),
                 push_func: Some("a_shove_push".to_owned()),
                 push_beat: "shoved".to_owned(),
+                condition_on_hit: None,
+            }),
+        },
+        // Trip: the first condition-inflicting action. No damage, no shove: a
+        // hit knocks the target prone, and prone is what changes the game (half
+        // speed until it stands).
+        ActionDef {
+            key: "trip".to_owned(),
+            label: "Trip".to_owned(),
+            base: "1d20".to_owned(),
+            func: "a_attack".to_owned(),
+            target: Some(TargetSpec {
+                range: 1,
+                hit_func: "a_attack_hit".to_owned(),
+                damage: "0".to_owned(),
+                damage_func: "a_zero".to_owned(),
+                damage_field: "hp_current".to_owned(),
+                actor_beat: "strike".to_owned(),
+                hit_beat: "recoil".to_owned(),
+                miss_beat: "dodge".to_owned(),
+                fall_beat: "fall".to_owned(),
+                stagger_func: None,
+                stagger_beat: "staggered".to_owned(),
+                push_func: None,
+                push_beat: "shoved".to_owned(),
+                condition_on_hit: Some("prone".to_owned()),
             }),
         },
         check("str"),
@@ -1791,6 +1921,25 @@ pub fn srd_5e() -> System {
         -- only say how far and which way.
         function a_shove_push(c, t, dmg) return 1 end
 
+        -- Movement and senses, as rules. The substrate retired its hardcoded
+        -- MOVE_BUDGET/SIGHT_RADIUS constants; these own the numbers now, and a
+        -- condition is one more input. Conditions arrive as booleans on the
+        -- character table (c.prone), so the projection is plain arithmetic.
+        function s_speed(c)
+            local v = c.speed
+            if c.prone then
+                local r = ((v % 2) + 2) % 2
+                v = (v - r) // 2
+            end
+            if c.immobilized then v = 0 end
+            return v
+        end
+        function s_sight(c)
+            local v = c.sight
+            if c.blinded then v = 0 end
+            return v
+        end
+
         -- Out of play. In 5e a creature at 0 hit points drops; a PC would roll
         -- death saves, which is a rule this system can grow without the
         -- substrate learning anything new (it only ever sees the verdict).
@@ -1801,6 +1950,7 @@ pub fn srd_5e() -> System {
     System::load("5e-srd", "5e SRD", fields, derived, actions, script)
         .expect("builtin 5e system loads")
         .with_defeat("s_defeated")
+        .with_mobility("s_speed", "s_sight")
 }
 
 #[cfg(test)]
@@ -2401,6 +2551,51 @@ end"#,
         // Stopped short by an obstacle on the second tile.
         let short = isometry_core::push_path((5, 4), (1, 0), 2, |at| at == (6, 4));
         assert_eq!(short, Some((6, 4)));
+    }
+
+    #[test]
+    fn a_trip_inflicts_prone_and_the_rules_recompute_mobility() {
+        // AC 1: the trip cannot miss, so this isolates the consequence.
+        let (mut sys, knight, goblin) = duel(1, 50);
+        let r = sys
+            .resolve_action("trip", KNIGHT, &knight, (4, 4), GOBLIN, &goblin, (5, 4), &mut Rng::new(3))
+            .expect("resolves");
+        assert!(r.hit);
+        // No damage: prone IS the consequence.
+        assert!(r.deltas.iter().all(|d| d.add == 0));
+        assert_eq!(r.conditions, vec![(GOBLIN, "prone".to_owned(), true)]);
+        // The projection travels with the change: base speed 5 halves to 2,
+        // sight untouched. Rules ran once, on the resolver.
+        assert_eq!(r.mobility, vec![(GOBLIN, Some((2, 6)))]);
+    }
+
+    #[test]
+    fn tripping_the_already_prone_is_not_a_new_condition() {
+        let (mut sys, knight, goblin) = duel(1, 50);
+        // The caller passes the target sheet with its condition booleans on it,
+        // which is how the resolver can tell "apply" from "already there".
+        let prone = sheet_with_conditions(&goblin, std::iter::once(&"prone".to_owned()));
+        let r = sys
+            .resolve_action("trip", KNIGHT, &knight, (4, 4), GOBLIN, &prone, (5, 4), &mut Rng::new(3))
+            .expect("resolves");
+        assert!(r.hit);
+        assert!(r.conditions.is_empty(), "already prone: nothing new to apply");
+        assert!(r.mobility.is_empty());
+    }
+
+    #[test]
+    fn the_projection_is_lua_not_rust() {
+        // Blinded is nowhere in the Rust: the system script owns what a
+        // condition does to the numbers.
+        let mut sys = srd_5e();
+        let sheet = sys.default_sheet();
+        let blinded = sheet_with_conditions(&sheet, std::iter::once(&"blinded".to_owned()));
+        assert_eq!(sys.mobility_for(&blinded, true), Some((5, 0)), "dark, not slow");
+        let immobilized =
+            sheet_with_conditions(&sheet, std::iter::once(&"immobilized".to_owned()));
+        assert_eq!(sys.mobility_for(&immobilized, true), Some((0, 6)), "slow, not dark");
+        // No conditions: no override at all; the sheet's base numbers stand.
+        assert_eq!(sys.mobility_for(&sheet, false), None);
     }
 
     #[test]

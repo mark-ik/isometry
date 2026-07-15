@@ -439,6 +439,11 @@ probes.
    senses (speed, blinded, immobilized) be substrate-visible so movement and
    fog honor them, or stay pure plugin data? Decides whether
    `MOVE_BUDGET`/`SIGHT_RADIUS` become system-driven inputs.
+   **ANSWERED 2026-07-15: substrate-visible, system-judged.** Conditions are
+   opaque names the substrate stores; their mechanical projection (speed,
+   sight) is computed by the system's Lua and replicated as numbers. The two
+   constants are demoted to sheetless-token defaults. See the
+   [gameplay roadmap](2026-07-14_gameplay_roadmap_plan.md) C1.
 6. **Systems as loadable data vs compiled-in, and when.** Commit to a
    data-driven system-pack format (third-party OSR without recompiling), and
    if so, does it land with campaign packs or after a second built-in proves

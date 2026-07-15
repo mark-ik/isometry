@@ -5,7 +5,7 @@ use isometry_campaign::{
     Inventory, ItemId,
 };
 use isometry_core::{
-    apply, distance, reachable, roll, template_tiles, visible_tiles, Facing, IsoGeometry, Layer,
+    apply, distance, reachable, roll, template_tiles, visible_from, Facing, IsoGeometry, Layer,
     MapDocument, MoveRules, Rng, RollRecord, SessionEvent, SightRules, TemplateKind, TileCoord,
     TileKindId, Token, TokenId, TurnList,
 };
@@ -16,6 +16,9 @@ use isometry_net::{GameEvent, GameSnapshot, ROLL_LOG_CAP};
 pub const PANEL_W: f32 = 228.0;
 
 /// Default move budget until system plugins supply speed stats (I6).
+/// Fallback move budget for a sheetless token. The real number is
+/// system-driven: sheet `speed` projected through conditions into
+/// `MapDocument::mobility` (next-horizons B.5, answered).
 const MOVE_BUDGET: u32 = 5;
 
 /// Default token sight radius until system plugins supply per-token
@@ -387,6 +390,10 @@ pub struct UiState {
     /// A monster spawn awaiting its stat block: `(token, monster key)`. The host
     /// owns the system, so it is what turns a compendium row into a sheet.
     pub spawn_sheet_request: Option<(TokenId, String)>,
+    /// A request to clear one condition (`(token, name)`, standing up from
+    /// prone). The host rules on it, because clearing a condition means
+    /// recomputing what the token can do, and the rules live there.
+    pub clear_condition_request: Option<(TokenId, String)>,
     pub inventory_request: Option<InventoryRequest>,
     /// False for a joined player. The host still validates its own event path;
     /// this only keeps DM authoring controls out of player UI.
@@ -499,6 +506,7 @@ impl UiState {
             beats: BTreeMap::new(),
             beat_seq: 0,
             spawn_sheet_request: None,
+            clear_condition_request: None,
             inventory_request: None,
             can_edit_inventory: true,
             generations: Vec::new(),
@@ -1236,18 +1244,29 @@ impl UiState {
             self.explored.clear();
             return;
         }
-        let origins: Vec<TileCoord> = self
+        // Each token sees with its *own* effective sight (system-driven via
+        // conditions), so a blinded scout goes dark without dimming its allies.
+        let origins: Vec<(TileCoord, u32)> = self
             .map
             .tokens
             .iter()
             .filter(|t| t.owner.as_deref() == self.viewer.as_deref())
-            .map(|t| t.at)
+            .map(|t| {
+                let (_, sight) = self
+                    .map
+                    .effective_mobility(t.id, (MOVE_BUDGET, self.sight_radius));
+                (t.at, sight)
+            })
             .collect();
-        let rules = SightRules {
-            radius: self.sight_radius,
-            opaque: &|kind| kind == "tree" || kind == "wall",
-        };
-        self.visible = visible_tiles(&self.map, &origins, &rules);
+        let mut visible = HashSet::new();
+        for (at, radius) in origins {
+            let rules = SightRules {
+                radius,
+                opaque: &|kind| kind == "tree" || kind == "wall",
+            };
+            visible.extend(visible_from(&self.map, at, &rules));
+        }
+        self.visible = visible;
         self.explored.extend(self.visible.iter().copied());
     }
 
@@ -1487,7 +1506,7 @@ impl UiState {
         !self.turns.contains(id) || self.turns.active() == Some(id)
     }
 
-    fn recompute_reach(&mut self) {
+    pub fn recompute_reach(&mut self) {
         self.reach.clear();
         let Some(id) = self.selected_token else { return };
         let Some(token) = self.map.token(id) else {
@@ -1497,8 +1516,11 @@ impl UiState {
         if !self.may_move(id) {
             return;
         }
+        let (budget, _) = self
+            .map
+            .effective_mobility(id, (MOVE_BUDGET, SIGHT_RADIUS));
         let rules = MoveRules {
-            budget: MOVE_BUDGET,
+            budget,
             step_up: 1,
             step_down: 2,
             passable: &|kind| kind != "water",

@@ -34,8 +34,8 @@ use isometry_net::{
     apply_game, ActionIntent, ActionResolved, GameEvent, GameSnapshot, HostSession,
 };
 use isometry_system::{
-    monster_sheet, srd_5e, srd_bestiary, srd_items, srd_spells, ActionError, GeneratorCatalog,
-    GeneratorLimits, System,
+    monster_sheet, sheet_with_conditions, srd_5e, srd_bestiary, srd_items, srd_spells, ActionError,
+    GeneratorCatalog, GeneratorLimits, System,
 };
 use isometry_views::{
     board_css, board_root, demo_map, synth_map, ActionRow, GenerationRequest, InventoryRequest,
@@ -666,7 +666,7 @@ impl App {
         if self.system.is_none() {
             return;
         }
-        let (bind, edit, action, inventory_request, open, intent, spawn_sheet) =
+        let (bind, edit, action, inventory_request, open, intent, spawn_sheet, clear_condition) =
             match self.runner.as_ref() {
                 Some(r) => {
                     let s = r.state();
@@ -678,6 +678,7 @@ impl App {
                         s.open_sheet,
                         s.action_intent.clone(),
                         s.spawn_sheet_request.clone(),
+                        s.clear_condition_request.clone(),
                     )
                 }
                 None => return,
@@ -693,6 +694,7 @@ impl App {
             && inventory_request.is_none()
             && intent.is_none()
             && spawn_sheet.is_none()
+            && clear_condition.is_none()
             && !open_changed
             && !effective_missing
         {
@@ -888,6 +890,44 @@ impl App {
             });
         }
 
+        // Clear one condition: the ask half of standing up. The rules recompute
+        // what the token can do without it; if no condition remains, the
+        // mobility override clears entirely and the sheet's base numbers stand.
+        if let Some((token, name)) = clear_condition {
+            let (sheet, remaining) = {
+                let s = runner.state();
+                let mut set = s.map.conditions.get(&token).cloned().unwrap_or_default();
+                set.remove(&name);
+                (s.map.sheet(token).cloned(), set)
+            };
+            let mobility = match (&sheet, remaining.is_empty()) {
+                (_, true) => None,
+                (Some(sheet), false) => {
+                    let conditioned = sheet_with_conditions(sheet, remaining.iter());
+                    system.mobility_for(&conditioned, true)
+                }
+                (None, false) => None,
+            };
+            runner.update(|ui| {
+                ui.clear_condition_request = None;
+                let event = GameEvent::ConditionSet {
+                    token,
+                    condition: name.clone(),
+                    on: false,
+                    mobility,
+                };
+                if ui.net_mode == NetMode::Remote {
+                    ui.net_outbox.push(event);
+                } else {
+                    ui.map.set_condition(token, &name, false);
+                    ui.map.set_mobility(token, mobility);
+                    ui.recompute_fog();
+                    ui.recompute_reach();
+                    ui.status = format!("cleared {name}");
+                }
+            });
+        }
+
         // Where does an action get adjudicated? On the authority, always.
         //
         // A joined player *asks*: the intent goes over the wire as an
@@ -1006,9 +1046,24 @@ impl App {
                     target_sheet.ok_or_else(|| "target has no sheet".to_owned())?;
                 // Equipment counts: resolve against the effective sheets, so a
                 // magic sword's bonus lands and armour raises the AC it is
-                // compared against.
-                let actor_eff = system.effective_sheet(&actor_sheet, actor_inv.as_ref());
-                let target_eff = system.effective_sheet(&target_sheet, target_inv.as_ref());
+                // compared against. Conditions ride along as boolean fields, so
+                // the rules can read `t.prone` and the resolver can tell "apply
+                // prone" from "already prone".
+                let (actor_conds, target_conds) = {
+                    let s = runner.state();
+                    (
+                        s.map.conditions.get(&actor).cloned().unwrap_or_default(),
+                        s.map.conditions.get(&target).cloned().unwrap_or_default(),
+                    )
+                };
+                let actor_eff = sheet_with_conditions(
+                    &system.effective_sheet(&actor_sheet, actor_inv.as_ref()),
+                    actor_conds.iter(),
+                );
+                let target_eff = sheet_with_conditions(
+                    &system.effective_sheet(&target_sheet, target_inv.as_ref()),
+                    target_conds.iter(),
+                );
                 system
                     .resolve_action(
                         &key,
@@ -1110,6 +1165,8 @@ impl App {
                     beats: resolution.beats,
                     defeated: resolution.defeated,
                     displaced,
+                    conditions: resolution.conditions,
+                    mobility: resolution.mobility,
                 });
                 if ui.net_mode == NetMode::Remote {
                     // In session the authority applies it and mirrors the
@@ -1128,6 +1185,19 @@ impl App {
                     }
                     for token in &res.defeated {
                         ui.map.set_defeated(*token, true);
+                    }
+                    for (token, name, on) in &res.conditions {
+                        ui.map.set_condition(*token, name, *on);
+                    }
+                    for (token, mobility) in &res.mobility {
+                        ui.map.set_mobility(*token, *mobility);
+                    }
+                    if !res.conditions.is_empty() || !res.displaced.is_empty() {
+                        // A condition or a shove changes what can be seen and
+                        // reached; recompute so the board tells the truth now
+                        // rather than on the next unrelated click.
+                        ui.recompute_fog();
+                        ui.recompute_reach();
                     }
                     ui.push_roll(res.attack.clone());
                     if let Some(damage) = &res.damage {
@@ -1506,21 +1576,23 @@ impl App {
                     ui.map.sheet(TokenId(2)).and_then(|s| s.int("ac")),
                 );
             }
-            // Shove first, then attack, so the run contrasts the two kinds of
-            // force. A shove *displaces* (truth: the goblin's tile really
-            // changes, and the knight can no longer reach it) while an attack at
-            // most *staggers* (a flourish that moves nobody).
-            let action = if swings_left >= 2 { "shove" } else { "attack" };
+            // Trip first (a condition: prone halves speed, truth on every
+            // peer), then attacks. The prone goblin keeps its tile, unlike the
+            // shove run: a condition changes what it can DO, not where it is.
+            // The fixed tape rolls 11 then 22: the first swing misses whatever
+            // it is, so the trip goes second, where it connects.
+            let action = if swings_left == 2 { "trip" } else { "attack" };
             ui.action_intent = Some((TokenId(1), TokenId(2), action.to_owned()));
         });
         self.pump_sheets();
         if let Some(runner) = self.runner.as_ref() {
             let ui = runner.state();
             eprintln!(
-                "[isometry] combat selftest: {} | goblin @{:?} hp {:?} | beats = {:?}",
+                "[isometry] combat selftest: {} | goblin hp {:?} conds {:?} mobility {:?} | beats = {:?}",
                 ui.status,
-                ui.map.token(TokenId(2)).map(|t| t.at),
                 ui.map.sheet(TokenId(2)).and_then(|s| s.int("hp_current")),
+                ui.map.conditions.get(&TokenId(2)),
+                ui.map.effective_mobility(TokenId(2), (5, 6)),
                 ui.beats,
             );
         }

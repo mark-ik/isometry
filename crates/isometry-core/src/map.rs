@@ -74,6 +74,20 @@ pub struct MapDocument {
     /// and let the view show it as fallen. `serde(default)` so older saves load.
     #[serde(default)]
     pub defeated: BTreeSet<TokenId>,
+    /// Named conditions on tokens (`prone`, `blinded`, ...). Opaque to the
+    /// substrate: a system plugin decides what a name means and when it applies;
+    /// the substrate stores it for display, for the rules' own reading, and for
+    /// pack CSS (`cond-<name>` on the board). The *mechanical* projection of a
+    /// condition arrives separately as [`Self::mobility`] numbers.
+    #[serde(default)]
+    pub conditions: BTreeMap<TokenId, BTreeSet<String>>,
+    /// The system's current mechanical ruling per token: `(move budget, sight
+    /// radius)` in tiles. Host-computed by the rules whenever conditions change,
+    /// then replicated, because clients hold no rules engine and fog and reach
+    /// preview are computed client-side. Absent means "use the sheet's base
+    /// values": most tokens never enter this map.
+    #[serde(default)]
+    pub mobility: BTreeMap<TokenId, (u32, u32)>,
 }
 
 impl MapDocument {
@@ -88,7 +102,62 @@ impl MapDocument {
             tokens: Vec::new(),
             sheets: BTreeMap::new(),
             defeated: BTreeSet::new(),
+            conditions: BTreeMap::new(),
+            mobility: BTreeMap::new(),
         }
+    }
+
+    /// Whether `id` currently has the named condition.
+    pub fn has_condition(&self, id: TokenId, name: &str) -> bool {
+        self.conditions
+            .get(&id)
+            .is_some_and(|set| set.contains(name))
+    }
+
+    /// Apply or clear one named condition. The substrate has no opinion about
+    /// the name; the caller (the rules, via a replicated event) supplies the
+    /// mechanical consequences separately through [`Self::set_mobility`].
+    pub fn set_condition(&mut self, id: TokenId, name: &str, on: bool) {
+        if on {
+            self.conditions.entry(id).or_default().insert(name.to_owned());
+        } else if let Some(set) = self.conditions.get_mut(&id) {
+            set.remove(name);
+            if set.is_empty() {
+                self.conditions.remove(&id);
+            }
+        }
+    }
+
+    /// Record the system's mechanical ruling for `id`. `None` clears it back to
+    /// the sheet's base values (the common case once every condition lifts).
+    pub fn set_mobility(&mut self, id: TokenId, mobility: Option<(u32, u32)>) {
+        match mobility {
+            Some(m) => {
+                self.mobility.insert(id, m);
+            }
+            None => {
+                self.mobility.remove(&id);
+            }
+        }
+    }
+
+    /// The effective `(move budget, sight radius)` for `id`: the system's
+    /// ruling when one is in force, else the sheet's base `speed`/`sight`
+    /// fields, else the caller's defaults. The substrate itself has no numbers
+    /// of its own here; `defaults` is the *view's* fallback for a sheetless
+    /// token, not a rule.
+    pub fn effective_mobility(&self, id: TokenId, defaults: (u32, u32)) -> (u32, u32) {
+        if let Some(&m) = self.mobility.get(&id) {
+            return m;
+        }
+        let sheet = self.sheet(id);
+        let read = |key: &str, default: u32| {
+            sheet
+                .and_then(|s| s.int(key))
+                .map(|v| v.max(0) as u32)
+                .unwrap_or(default)
+        };
+        (read("speed", defaults.0), read("sight", defaults.1))
     }
 
     /// Whether `id` is out of play.

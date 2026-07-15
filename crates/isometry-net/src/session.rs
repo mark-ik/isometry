@@ -120,6 +120,12 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
             for token in &res.defeated {
                 state.map.set_defeated(*token, true);
             }
+            for (token, name, on) in &res.conditions {
+                state.map.set_condition(*token, name, *on);
+            }
+            for (token, mobility) in &res.mobility {
+                state.map.set_mobility(*token, *mobility);
+            }
             push_roll(state, &res.attack);
             if let Some(damage) = &res.damage {
                 push_roll(state, damage);
@@ -131,6 +137,18 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
         GameEvent::Emoted { token, beat } => {
             require_token(state, *token)?;
             play_beats(state, vec![isometry_core::Beat::new(*token, beat.clone())]);
+            Ok(())
+        }
+        GameEvent::ConditionSet {
+            token,
+            condition,
+            on,
+            mobility,
+        } => {
+            require_token(state, *token)?;
+            state.map.set_condition(*token, condition, *on);
+            state.map.set_mobility(*token, *mobility);
+            sync_active_map(state);
             Ok(())
         }
         GameEvent::SheetSet { token, sheet } => {
@@ -667,6 +685,17 @@ impl HostSession {
                 Recipient::One(from),
                 NetMessage::Rejected {
                     reason: "actions are adjudicated by the host".to_owned(),
+                },
+            )],
+            // A condition is a rules ruling with numbers attached; a client
+            // proposing one would be pronouncing what `prone` means. Standing up
+            // travels as an action intent instead, so the host's rules answer.
+            NetMessage::Intent {
+                event: GameEvent::ConditionSet { .. },
+            } => vec![(
+                Recipient::One(from),
+                NetMessage::Rejected {
+                    reason: "conditions are ruled by the host".to_owned(),
                 },
             )],
             NetMessage::Intent {
