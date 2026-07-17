@@ -90,6 +90,14 @@ pub fn pf2e_srd() -> System {
             label: "Will DC".to_owned(),
             default: FieldValue::Int(14),
         },
+        // The three-action economy, as a sheet number rather than a baked
+        // constant: a quickened creature could carry 4, a slowed one 2. The
+        // substrate never sees it; only the afford rule reads it.
+        FieldDef {
+            key: "actions_per_turn".to_owned(),
+            label: "Actions/turn".to_owned(),
+            default: FieldValue::Int(3),
+        },
     ];
     let m = |ab: &str| DerivedDef {
         key: format!("{ab}_mod"),
@@ -132,6 +140,15 @@ pub fn pf2e_srd() -> System {
             push_beat: "shoved".to_owned(),
             condition_on_hit: None,
             recruit_on_hit: false,
+            // The action economy and the multiple-attack penalty, both riding
+            // the substrate's one per-turn counter primitive: a Strike costs an
+            // action, and each Strike this turn counts toward MAP (read by
+            // `p_strike`). A missed Strike still spends both, as PF2e says.
+            afford_func: Some("p_afford_strike".to_owned()),
+            turn_effect: vec![
+                ("actions_spent".to_owned(), 1),
+                ("strikes".to_owned(), 1),
+            ],
         }),
     }];
 
@@ -154,8 +171,28 @@ pub fn pf2e_srd() -> System {
             if rank <= 0 then return 0 end
             return level + rank
         end
-        function p_strike(c) return ab_mod(c.str) + prof(c.level, c.rank_attack) end
+        -- The Strike bonus, with the multiple-attack penalty folded in. Each
+        -- Strike this turn (counted by the substrate as `turn_strikes`) is -5 on
+        -- the next, capped at -10 -- so the first is unpenalized, the second -5,
+        -- the third and beyond -10. The counter is the substrate's; the penalty
+        -- rule is entirely here.
+        function p_strike(c)
+            local map = c.turn_strikes or 0
+            if map > 2 then map = 2 end
+            return ab_mod(c.str) + prof(c.level, c.rank_attack) - 5 * map
+        end
         function p_strike_dmg(c) return ab_mod(c.str) end
+
+        -- Can you afford a Strike? Only if you have an action left this turn.
+        -- `actions_per_turn` is the sheet's (3 by default); `turn_actions_spent`
+        -- is the substrate's running count. Neither is baked into any Rust.
+        function p_afford_strike(c)
+            if (c.turn_actions_spent or 0) < c.actions_per_turn then
+                return 1
+            else
+                return 0
+            end
+        end
 
         -- The four-rung ladder, and the reason hit_func had to stop being a
         -- boolean. Beat the DC by 10: critical success. Miss it by 10: critical

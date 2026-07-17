@@ -145,6 +145,18 @@ pub struct TargetSpec {
     /// sees) and the party cap is table policy. The resolver reports the win;
     /// the host decides the new owner and whether the party has room.
     pub recruit_on_hit: bool,
+    /// Lua `f(c) -> 1|0`: can the actor afford this action *right now*, given its
+    /// per-turn counters (injected as `c.turn_<key>`) and its sheet? `None`
+    /// means always affordable, so a system with no action economy (5e) never
+    /// pays for one. This is where "you have an action left" lives -- entirely
+    /// in the ruleset, over the substrate's blind counter store.
+    pub afford_func: Option<String>,
+    /// Counters the actor spends or counts by on a resolved action, as
+    /// `(counter, delta)`: a PF2e Strike is `[("actions_spent", 1),
+    /// ("strikes", 1)]`. The substrate applies these to the actor's per-turn
+    /// ledger and resets them when its turn begins; what they cost and mean is
+    /// the ruleset's.
+    pub turn_effect: Vec<(String, i64)>,
 }
 
 /// Why an intent was refused. Every one of these is checked before any die is
@@ -157,6 +169,8 @@ pub enum ActionError {
     OutOfRange { range: u32, distance: u32 },
     /// The victim is already out of play. Hitting a corpse is not a move.
     AlreadyDefeated,
+    /// The actor's per-turn budget will not cover this action (out of actions).
+    CannotAfford(String),
     ScriptFailed(String),
     BadDice(String),
 }
@@ -198,6 +212,10 @@ pub struct Resolution {
     /// the party has room). `None` for every action that is not a recruit, and
     /// for a recruit that missed.
     pub recruited: Option<TokenId>,
+    /// Per-turn counters this action spent or counted, as `(token, counter,
+    /// delta)` on the actor. The host applies them to the substrate's per-turn
+    /// ledger; they reset at turn start.
+    pub turn_counters: Vec<(TokenId, String, i64)>,
 }
 
 /// Copy `sheet` with each active condition added as a boolean field, so Lua
@@ -212,6 +230,22 @@ pub fn sheet_with_conditions<'a>(
     let mut out = sheet.clone();
     for name in conditions {
         out.fields.insert(name.clone(), FieldValue::Bool(true));
+    }
+    out
+}
+
+/// Copy `sheet` with each per-turn counter injected as a `turn_<key>` integer
+/// field, so a script reads `c.turn_actions_spent` or `c.turn_strikes` through
+/// the existing flat character table -- no new marshalling, the same trick
+/// conditions use. An absent counter is simply not injected and reads as nil,
+/// which a script `or`s to zero.
+pub fn sheet_with_turn_counters<'a>(
+    sheet: &SheetData,
+    counters: impl IntoIterator<Item = (&'a String, &'a i64)>,
+) -> SheetData {
+    let mut out = sheet.clone();
+    for (key, value) in counters {
+        out.fields.insert(format!("turn_{key}"), FieldValue::Int(*value));
     }
     out
 }
@@ -1585,8 +1619,24 @@ impl System {
             push_beat: spec.push_beat.clone(),
             condition_on_hit: spec.condition_on_hit.clone(),
             recruit_on_hit: spec.recruit_on_hit,
+            afford_func: spec.afford_func.clone(),
+            turn_effect: spec.turn_effect.clone(),
         };
         let by = actor_sheet.text("name").unwrap_or("?").to_owned();
+
+        // Can the actor afford it, given its per-turn counters (injected into
+        // the sheet by the host)? Checked before any die, so an unaffordable
+        // action -- out of actions this turn -- costs nothing. The rule is the
+        // system's; the substrate only stored the counters it reads.
+        if let Some(afford) = spec.afford_func.clone() {
+            let ok = self
+                .call_int(&afford, actor_sheet)
+                .ok_or_else(|| ActionError::ScriptFailed(afford.clone()))?
+                != 0;
+            if !ok {
+                return Err(ActionError::CannotAfford(action_key.to_owned()));
+            }
+        }
 
         // 1. The attack: base die plus the actor's Lua bonus.
         let bonus = self
@@ -1763,6 +1813,12 @@ impl System {
             None
         };
 
+        let turn_counters: Vec<(TokenId, String, i64)> = spec
+            .turn_effect
+            .iter()
+            .map(|(key, delta)| (actor, key.clone(), *delta))
+            .collect();
+
         Ok(Resolution {
             attack,
             degree,
@@ -1775,6 +1831,7 @@ impl System {
             conditions,
             mobility,
             recruited,
+            turn_counters,
         })
     }
 }
@@ -1924,6 +1981,8 @@ pub fn srd_5e() -> System {
                 push_beat: "shoved".to_owned(),
                 condition_on_hit: None,
                 recruit_on_hit: false,
+                afford_func: None,
+                turn_effect: Vec::new(),
             }),
         },
         // The other half of the contrast, and the reason both exist: a shove
@@ -1951,6 +2010,8 @@ pub fn srd_5e() -> System {
                 push_beat: "shoved".to_owned(),
                 condition_on_hit: None,
                 recruit_on_hit: false,
+                afford_func: None,
+                turn_effect: Vec::new(),
             }),
         },
         // Trip: the first condition-inflicting action. No damage, no shove: a
@@ -1978,6 +2039,8 @@ pub fn srd_5e() -> System {
                 push_beat: "shoved".to_owned(),
                 condition_on_hit: Some("prone".to_owned()),
                 recruit_on_hit: false,
+                afford_func: None,
+                turn_effect: Vec::new(),
             }),
         },
         // Convince: win a creature over to your side. A social action shaped
@@ -2008,6 +2071,8 @@ pub fn srd_5e() -> System {
                 push_beat: "shoved".to_owned(),
                 condition_on_hit: None,
                 recruit_on_hit: true,
+                afford_func: None,
+                turn_effect: Vec::new(),
             }),
         },
         check("str"),
@@ -2887,6 +2952,105 @@ end"#,
         assert_eq!(c, p * 2, "a critical doubles dice and modifiers together");
         // And the log says why, rather than silently reporting a bigger number.
         assert!(crit.damage.unwrap().expr.contains("200%"));
+    }
+
+    /// The action economy and the multiple-attack penalty, both proven against
+    /// the one per-turn counter primitive. The host would inject the running
+    /// counters into the sheet; here the test does it by hand, so a Strike sees
+    /// how many actions it has spent and how many times it has struck.
+    #[test]
+    fn pf2e_action_economy_and_map_ride_the_turn_counters() {
+        let mut sys = pf2e_srd();
+        // A quickened fighter (5 actions) so the multiple-attack penalty can be
+        // watched past the point the three-action budget would cut it off --
+        // proving the penalty and the economy are independent counters.
+        let mut base = sys.default_sheet();
+        base.set_int("actions_per_turn", 5);
+        let foe = {
+            let mut f = sys.default_sheet();
+            f.set_int("ac", 10);
+            f.set_int("hp_current", 500);
+            f.set_int("hp_max", 500);
+            f
+        };
+        // A per-turn counter ledger the test advances as the host would.
+        let mut counters: std::collections::BTreeMap<String, i64> = Default::default();
+        let strike = |sys: &mut System, counters: &std::collections::BTreeMap<String, i64>| {
+            let sheet = sheet_with_turn_counters(&base, counters.iter());
+            sys.resolve_action(
+                "strike",
+                KNIGHT,
+                &sheet,
+                (4, 4),
+                GOBLIN,
+                &foe,
+                (5, 4),
+                &mut Rng::new(7),
+            )
+        };
+
+        // The multiple-attack penalty is in the *bonus*, so the same die gives a
+        // lower total on each successive Strike: 0, -5, -10, then -10 (capped).
+        let mut totals = Vec::new();
+        for _ in 0..4 {
+            let r = strike(&mut sys, &counters).expect("affordable while actions remain");
+            totals.push(r.attack.total);
+            // Apply this Strike's counter effect, as the host would.
+            for (_, key, delta) in &r.turn_counters {
+                *counters.entry(key.clone()).or_insert(0) += delta;
+            }
+        }
+        assert_eq!(
+            totals[0] - totals[1],
+            5,
+            "the second Strike takes -5 from the multiple-attack penalty"
+        );
+        assert_eq!(totals[1] - totals[2], 5, "the third takes -10");
+        assert_eq!(totals[2], totals[3], "the penalty caps at -10");
+
+        // The economy, now with a plain three-action fighter. Spend down from
+        // an empty turn: three Strikes are affordable, the fourth is not.
+        let plain = sys.default_sheet(); // actions_per_turn defaults to 3
+        let strike3 = |sys: &mut System, spent: &std::collections::BTreeMap<String, i64>| {
+            sys.resolve_action(
+                "strike",
+                KNIGHT,
+                &sheet_with_turn_counters(&plain, spent.iter()),
+                (4, 4),
+                GOBLIN,
+                &foe,
+                (5, 4),
+                &mut Rng::new(7),
+            )
+        };
+        let mut spent: std::collections::BTreeMap<String, i64> = Default::default();
+        for i in 0..3 {
+            let r = strike3(&mut sys, &spent);
+            assert!(r.is_ok(), "action {i} is within the three-action budget");
+            for (_, key, delta) in &r.unwrap().turn_counters {
+                *spent.entry(key.clone()).or_insert(0) += delta;
+            }
+        }
+        // The fourth is refused before any die: out of actions.
+        assert_eq!(
+            strike3(&mut sys, &spent),
+            Err(ActionError::CannotAfford("strike".to_owned())),
+            "the fourth Strike has no action to pay for it"
+        );
+
+        // A fresh turn (counters cleared) affords a Strike again.
+        assert!(strike3(&mut sys, &Default::default()).is_ok());
+    }
+
+    #[test]
+    fn a_system_with_no_action_economy_pays_nothing_for_one() {
+        // 5e's attack declares no afford rule and no turn effect, so it is always
+        // affordable and touches no counter -- the primitive is opt-in.
+        let (mut sys, knight, goblin) = duel(1, 50);
+        let r = sys
+            .resolve_action("attack", KNIGHT, &knight, (4, 4), GOBLIN, &goblin, (5, 4), &mut Rng::new(3))
+            .expect("resolves");
+        assert!(r.turn_counters.is_empty(), "5e spends no per-turn counter");
     }
 
     #[test]

@@ -306,13 +306,29 @@ save-for-half (a fireball) could not be expressed either**, and now can, as 50.
 
 **Not fixed, and now named** (each wants its own plan, none blocks the other):
 
-- **No action economy.** PF2e's defining feature is three actions per turn; the
-  substrate has no per-turn budget at all. next-horizons already predicted this
-  is "the one place the substrate genuinely must bend, toward turns" — an
-  optional per-turn budget, default `None` so 5e is unaffected.
-- **No multiple-attack penalty.** MAP (-5 on the second Strike, -10 on the
-  third) needs per-turn attack *counting*; `resolve_action` is stateless across
-  actions and sees only this one.
+- ~~**No action economy.**~~ and ~~**No multiple-attack penalty.**~~ **Both
+  fixed 2026-07-17 at the system level, by one primitive.** The two turned out
+  to be the *same* need -- per-turn, per-token integer state that resets at turn
+  start -- so `MapDocument.turn_counters` (a named-integer ledger the substrate
+  stores blind and clears when a token's turn begins) buys both, and neither
+  "three actions" nor "-5 per attack" is baked anywhere. An action declares an
+  `afford_func` (Lua guard reading the counters) and a `turn_effect` (counter
+  deltas); the counters inject into the character table as `c.turn_<key>`. PF2e
+  configures it entirely in Lua and on the sheet: `actions_per_turn = 3` (a
+  sheet field, so a quickened creature carries 4), a Strike costs one action and
+  counts toward MAP, `p_strike` folds `-5 * min(turn_strikes, 2)` into the bonus,
+  and `p_afford_strike` refuses a fourth Strike. It is **opt-in**: 5e declares
+  neither hook and spends no counter, exactly like the degree ladder. This is
+  precisely the "one place the substrate must bend, toward turns" next-horizons
+  predicted -- and it bent generically, not toward PF2e. **Verified at the
+  system layer** (a quickened fighter's four Strikes read 0/-5/-10/-10 MAP; a
+  plain fighter's fourth Strike is `CannotAfford`; 5e spends nothing).
+  **The app-integration is pending** -- the host must inject a token's counters
+  before resolving, replicate the `turn_effect` deltas, and clear them on
+  `TurnAdvance -- and that wiring is blocked behind a mere-churn build break
+  (mere-transport bumped to iroh 1.0 while isometry-net is on 0.98; the whole
+  workspace lock is wedged until the iroh/p2panda migration settles). The
+  primitive and the rules are proven; the turn-loop wiring waits on the build.
 - **Conditions have no values.** PF2e's `frightened 2` / `clumsy 1` are
   magnitudes; C1's conditions are opaque on/off names. Encoding the value in
   the name (`frightened-2`) works but is a lie the substrate would have to keep.

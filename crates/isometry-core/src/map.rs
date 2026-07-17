@@ -88,6 +88,16 @@ pub struct MapDocument {
     /// values": most tokens never enter this map.
     #[serde(default)]
     pub mobility: BTreeMap<TokenId, (u32, u32)>,
+    /// Per-turn, per-token named integer counters, cleared when a token's turn
+    /// begins. The substrate's one primitive for *every* per-turn resource: the
+    /// system spends them, counts with them, and reads them, and the substrate
+    /// only stores them and resets them at turn start. It knows nothing of
+    /// "actions" or "attacks" -- a ruleset names the counters and decides what
+    /// they cost and mean, so a three-action economy, a multiple-attack penalty,
+    /// or a regenerating mana pool are all just configurations of this one map,
+    /// none of them baked in. Absent counters read as zero.
+    #[serde(default)]
+    pub turn_counters: BTreeMap<TokenId, BTreeMap<String, i64>>,
 }
 
 impl MapDocument {
@@ -104,6 +114,7 @@ impl MapDocument {
             defeated: BTreeSet::new(),
             conditions: BTreeMap::new(),
             mobility: BTreeMap::new(),
+            turn_counters: BTreeMap::new(),
         }
     }
 
@@ -139,6 +150,36 @@ impl MapDocument {
                 self.mobility.remove(&id);
             }
         }
+    }
+
+    /// A token's per-turn counter, zero when unset.
+    pub fn turn_counter(&self, id: TokenId, key: &str) -> i64 {
+        self.turn_counters
+            .get(&id)
+            .and_then(|c| c.get(key))
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Add `delta` to a per-turn counter (creating it at zero). A counter that
+    /// returns to zero is dropped, so an untouched turn stores nothing.
+    pub fn bump_turn_counter(&mut self, id: TokenId, key: &str, delta: i64) {
+        let entry = self.turn_counters.entry(id).or_default();
+        let v = entry.entry(key.to_owned()).or_insert(0);
+        *v += delta;
+        if *v == 0 {
+            entry.remove(key);
+        }
+        if entry.is_empty() {
+            self.turn_counters.remove(&id);
+        }
+    }
+
+    /// Wipe a token's per-turn counters. Called when its turn begins, so every
+    /// per-turn resource refreshes at once without the substrate knowing what
+    /// any of them mean.
+    pub fn clear_turn_counters(&mut self, id: TokenId) {
+        self.turn_counters.remove(&id);
     }
 
     /// The effective `(move budget, sight radius)` for `id`: the system's
@@ -225,6 +266,29 @@ impl MapDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn turn_counters_bump_read_and_clear() {
+        let mut m = MapDocument::new("t", 4, 4);
+        let a = TokenId(1);
+        assert_eq!(m.turn_counter(a, "actions_spent"), 0, "unset reads zero");
+
+        m.bump_turn_counter(a, "actions_spent", 1);
+        m.bump_turn_counter(a, "actions_spent", 1);
+        m.bump_turn_counter(a, "strikes", 3);
+        assert_eq!(m.turn_counter(a, "actions_spent"), 2);
+        assert_eq!(m.turn_counter(a, "strikes"), 3);
+
+        // A counter returning to zero drops, so an untouched token stores nothing.
+        m.bump_turn_counter(a, "actions_spent", -2);
+        assert_eq!(m.turn_counter(a, "actions_spent"), 0);
+        assert!(m.turn_counters[&a].get("actions_spent").is_none());
+
+        // The turn ends: everything the token accrued clears at once.
+        m.clear_turn_counters(a);
+        assert_eq!(m.turn_counter(a, "strikes"), 0);
+        assert!(m.turn_counters.get(&a).is_none());
+    }
 
     #[test]
     fn intern_reuses_existing_kinds() {
