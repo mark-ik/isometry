@@ -1,6 +1,6 @@
 //! Host composition of campaign storage with p2panda LogSync and gossip.
 
-use mooting::MunimentStore;
+use murm_replication::MunimentStore;
 use muniment::Backend;
 use p2panda_core::{Operation, Topic};
 use p2panda_net::sync::SyncHandle;

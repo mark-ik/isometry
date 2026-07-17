@@ -8,10 +8,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use isometry_campaign::CampaignProposal;
+// Replication lives in `murm-replication` (Murm's peer-exchange foundation);
+// `mooting` keeps only the governance policy. They were one crate until Murm's
+// peer-runtime split, and mooting's compatibility re-export has since been
+// removed, so the two must be imported from their real homes.
 use mooting::{
-    MunimentStore, RecognitionContext, RecognitionDecision, RecognitionPolicy,
-    RecognitionPolicyError,
+    RecognitionContext, RecognitionDecision, RecognitionPolicy, RecognitionPolicyError,
 };
+use murm_replication::MunimentStore;
 use muniment::{Backend, StoreError};
 use p2panda_core::cbor::{decode_cbor, encode_cbor};
 use p2panda_core::operation::validate_operation;

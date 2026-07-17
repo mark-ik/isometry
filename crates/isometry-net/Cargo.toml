@@ -17,6 +17,7 @@ campaign-p2p = [
     "dep:personae",
     "dep:muniment",
     "dep:mooting",
+    "dep:murm-replication",
     "dep:p2panda-core",
     "dep:p2panda-store",
     "dep:thiserror",
@@ -42,6 +43,7 @@ postcard = { version = "1", features = ["alloc"] }
 personae = { workspace = true, optional = true }
 muniment = { workspace = true, optional = true }
 mooting = { workspace = true, optional = true }
+murm-replication = { workspace = true, optional = true }
 gemot = { workspace = true, optional = true }
 p2panda-core = { workspace = true, optional = true }
 p2panda-net = { workspace = true, optional = true }

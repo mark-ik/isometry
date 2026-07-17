@@ -39,6 +39,10 @@ codicil = { git = "https://github.com/mark-ik/codicil.git", branch = "main" }
 armillary = { git = "https://github.com/mark-ik/armillary.git", branch = "main" }
 personae = { git = "https://github.com/mark-ik/personae.git", branch = "master" }
 mooting = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+# Murm's peer-exchange replication foundation (SyncedSpace/MunimentStore/
+# processor). Split out of `mooting` by mere's murm peer-runtime work; mooting
+# now keeps only governance policy.
+murm-replication = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 gemot = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 # mere renamed the package to `mere-transport` (the lib is still `transport`),
 # and `[patch]` keys match the *package* name, so both this dep and the local
@@ -72,6 +76,11 @@ winit = "0.30"
 # graph needs; patches are per-workspace-root and do NOT inherit through
 # a git dep. Copied from the woodshed root (the maintained model).
 [patch.crates-io]
+# `murm-replication` (from mere) depends on the *published* muniment, while this
+# workspace tracks the repo. Two sources means two `muniment::Backend` traits and
+# `MunimentStore`'s bounds stop matching, so redirect the registry edge at the
+# same git source: exactly one muniment lands. Track the branch, not a pin.
+muniment = { git = "https://github.com/mark-ik/muniment.git", branch = "main" }
 layout-dom-api = { git = "https://github.com/mark-ik/genet.git", branch = "main", version = "=0.1.0" }
 genet-scripted-dom = { git = "https://github.com/mark-ik/genet.git", branch = "main", version = "=0.1.0" }
 # Only one package in the graph may declare `links = "servo_style_crate"`, so
