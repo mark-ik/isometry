@@ -159,14 +159,21 @@ pub fn pf2e_srd() -> System {
 
         -- The four-rung ladder, and the reason hit_func had to stop being a
         -- boolean. Beat the DC by 10: critical success. Miss it by 10: critical
-        -- failure. (A natural 20/1 shifts one step in real PF2e; that needs the
-        -- raw die, which the ABI does not pass yet -- see the C9 findings.)
-        function p_strike_degree(c, t, roll)
+        -- failure. Then the natural die shifts the result one rung either way,
+        -- which is why the ABI passes it alongside the total: a 20 promotes a
+        -- success to a critical, a 1 demotes a failure to a fumble.
+        function p_strike_degree(c, t, roll, die)
             local ac = t.ac or 16
-            if roll >= ac + 10 then return 2
-            elseif roll >= ac then return 1
-            elseif roll <= ac - 10 then return -1
-            else return 0 end
+            local d
+            if roll >= ac + 10 then d = 2
+            elseif roll >= ac then d = 1
+            elseif roll <= ac - 10 then d = -1
+            else d = 0 end
+            if die == 20 then d = d + 1
+            elseif die == 1 then d = d - 1 end
+            if d > 2 then d = 2 end
+            if d < -1 then d = -1 end
+            return d
         end
 
         -- A critical Strike doubles dice and modifiers together.

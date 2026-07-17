@@ -1412,6 +1412,20 @@ impl System {
         target: Option<&SheetData>,
         extra: Option<i64>,
     ) -> Option<i64> {
+        self.call_int_ctx2(func, sheet, target, extra, None)
+    }
+
+    /// `f(c, t, n, m)`: the same call with a second scalar. Lua discards
+    /// arguments a function does not declare, so every existing `f(c, t, n)`
+    /// script is unaffected by the extra slot.
+    fn call_int_ctx2(
+        &mut self,
+        func: &str,
+        sheet: &SheetData,
+        target: Option<&SheetData>,
+        extra: Option<i64>,
+        extra2: Option<i64>,
+    ) -> Option<i64> {
         // The `try_enter` closure is higher-ranked over `'gc`, so it can
         // capture only owned data; copy the sheets and the name in.
         let func = func.to_owned();
@@ -1454,12 +1468,16 @@ impl System {
                     Some(n) => Value::Integer(n),
                     None => Value::Nil,
                 };
+                let m = match extra2 {
+                    Some(m) => Value::Integer(m),
+                    None => Value::Nil,
+                };
                 let fname = piccolo::String::from_slice(&ctx, func.as_bytes());
                 let f = ctx.globals().get(ctx, fname);
                 let Value::Function(f) = f else {
                     return Err("not a function".into_value(ctx).into());
                 };
-                Ok(ctx.stash(Executor::start(ctx, f, (table, t, n))))
+                Ok(ctx.stash(Executor::start(ctx, f, (table, t, n, m))))
             })
             .ok()?;
         self.lua.execute::<i64>(&ex).ok()
@@ -1585,12 +1603,18 @@ impl System {
 
         // 2. The verdict. The script owns it, seeing both sheets and the roll,
         //    so "beats AC" is a rule and not a Rust branch.
+        // The verdict sees the total *and* the natural die, so a script can
+        // treat a 20 or a 1 specially (5e crits on a natural 20; PF2e shifts the
+        // degree one rung either way). A single-die base gives `Some(die)`; a
+        // multi-die base has no one natural roll, so it gives nil.
+        let natural = (attack.dice.len() == 1).then(|| attack.dice[0] as i64);
         let degree = self
-            .call_int_ctx(
+            .call_int_ctx2(
                 &spec.hit_func,
                 actor_sheet,
                 Some(target_sheet),
                 Some(total as i64),
+                natural,
             )
             .ok_or_else(|| ActionError::ScriptFailed(spec.hit_func.clone()))?;
         // Anything at or above a plain success landed. A binary system returns
@@ -1886,7 +1910,7 @@ pub fn srd_5e() -> System {
                 hit_func: "a_attack_hit".to_owned(),
                 damage: "1d8".to_owned(),
                 damage_func: "a_attack_dmg".to_owned(),
-                damage_mult_func: None,
+                damage_mult_func: Some("a_attack_mult".to_owned()),
                 damage_field: "hp_current".to_owned(),
                 actor_beat: "strike".to_owned(),
                 hit_beat: "recoil".to_owned(),
@@ -2014,10 +2038,20 @@ pub fn srd_5e() -> System {
         -- The hit rule. This is the line that makes Isometry adjudicate rather
         -- than merely roll, and it lives in the system, not the substrate: the
         -- core never learns what AC is. `roll` is the actor's total (die +
-        -- a_attack), `t` is the defender's sheet. Crits and fumbles need the
-        -- raw die, which the ABI does not pass yet.
-        function a_attack_hit(c, t, roll)
+        -- a_attack), `die` the natural roll, `t` the defender's sheet.
+        -- 5e is a two-rung system: hit or miss. A natural 20 is the one
+        -- exception -- it always hits, and crits (degree 2, which doubles the
+        -- damage via a_attack_mult); a natural 1 always misses.
+        function a_attack_hit(c, t, roll, die)
+            if die == 20 then return 2 end
+            if die == 1 then return 0 end
             if roll >= (t.ac or 12) then return 1 else return 0 end
+        end
+        -- 5e doubles the dice on a crit. (Strictly it doubles only the dice and
+        -- not the modifier; the percent seam scales the whole effect, so this is
+        -- the honest approximation until the seam can split them.)
+        function a_attack_mult(c, t, degree)
+            if degree >= 2 then return 200 else return 100 end
         end
         function a_attack_dmg(c) return ab_mod(c.str) end
 
@@ -2458,8 +2492,11 @@ end"#,
     #[test]
     fn a_hit_subtracts_from_the_target_and_nothing_else() {
         // AC 1: the attack cannot fail, so this isolates the consequence.
-        let (mut sys, knight, goblin) = duel(1, 7);
-        let mut rng = Rng::new(42);
+        // Seed 3 rolls a 16: a plain hit, neither a natural 1 (which always
+        // misses) nor a natural 20 (which crits). 50 hit points so the blow
+        // cannot fell it -- this test is about the delta, not about defeat.
+        let (mut sys, knight, goblin) = duel(1, 50);
+        let mut rng = Rng::new(3);
         let r = sys
             .resolve_action("attack", KNIGHT, &knight, (0, 0), GOBLIN, &goblin, (1, 0), &mut rng)
             .expect("resolves");
@@ -2553,7 +2590,7 @@ end"#,
     fn a_killing_blow_puts_the_target_out_of_play_and_it_falls() {
         // AC 1 so it always lands; 1 hit point so any damage is lethal.
         let (mut sys, knight, goblin) = duel(1, 1);
-        let mut rng = Rng::new(42);
+        let mut rng = Rng::new(3);
         let r = sys
             .resolve_action("attack", KNIGHT, &knight, (0, 0), GOBLIN, &goblin, (1, 0), &mut rng)
             .expect("resolves");
@@ -2569,7 +2606,7 @@ end"#,
         // 50 hit points: a longsword is not going to do it.
         let (mut sys, knight, goblin) = duel(1, 50);
         let r = sys
-            .resolve_action("attack", KNIGHT, &knight, (0, 0), GOBLIN, &goblin, (1, 0), &mut Rng::new(42))
+            .resolve_action("attack", KNIGHT, &knight, (0, 0), GOBLIN, &goblin, (1, 0), &mut Rng::new(3))
             .expect("resolves");
         assert!(r.hit);
         assert!(r.defeated.is_empty());
@@ -2853,22 +2890,30 @@ end"#,
     }
 
     #[test]
-    fn the_binary_system_is_unchanged_by_the_ladder() {
-        // 5e never returns a degree other than 1 or 0, and never scales damage.
-        // The generalization must be invisible to it.
+    fn each_system_picks_its_own_rungs_on_the_ladder() {
+        // The ladder is opt-in. 5e uses three rungs -- crit on a natural 20,
+        // hit, miss -- and never a critical failure, because a natural 1 in 5e
+        // simply misses rather than fumbling. PF2e uses all four. Neither pays
+        // for the other's complexity, and both ride one resolver.
         let (mut sys, knight, goblin) = duel(1, 50);
         let hit = sys
             .resolve_action("attack", KNIGHT, &knight, (4, 4), GOBLIN, &goblin, (5, 4), &mut Rng::new(3))
-            .expect("resolves");
-        assert_eq!(hit.degree, 1, "a 5e hit is a plain success");
-        assert!(hit.hit);
-        assert!(hit.damage.unwrap().expr.contains("1d8"), "no multiplier in the log");
+            .expect("resolves"); // seed 3 rolls a 16
+        assert_eq!(hit.degree, 1, "a plain 5e hit");
+        assert!(hit.damage.unwrap().expr.contains("1d8"), "unscaled");
 
-        let (mut sys, knight, wall) = duel(100, 50);
-        let miss = sys
-            .resolve_action("attack", KNIGHT, &knight, (4, 4), GOBLIN, &wall, (5, 4), &mut Rng::new(3))
-            .expect("resolves");
-        assert_eq!(miss.degree, 0, "a 5e miss is a plain failure, never a fumble");
+        // A natural 1 misses even against AC 1, and is a plain failure, never
+        // the fourth rung.
+        let (mut sys, knight, goblin) = duel(1, 50);
+        let fumble = sys
+            .resolve_action("attack", KNIGHT, &knight, (4, 4), GOBLIN, &goblin, (5, 4), &mut Rng::new(42))
+            .expect("resolves"); // seed 42 rolls a natural 1
+        assert_eq!(fumble.degree, 0, "5e has no critical-failure rung");
+        assert!(!fumble.hit, "a natural 1 always misses, whatever the AC");
+
+        // 5e never reaches -1; PF2e does.
+        let pf2e_fumble = pf2e_strike(10, 100, 4);
+        assert_eq!(pf2e_fumble.degree, -1, "the fourth rung is PF2e's");
     }
 
     #[test]

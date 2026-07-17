@@ -316,9 +316,19 @@ save-for-half (a fireball) could not be expressed either**, and now can, as 50.
 - **Conditions have no values.** PF2e's `frightened 2` / `clumsy 1` are
   magnitudes; C1's conditions are opaque on/off names. Encoding the value in
   the name (`frightened-2`) works but is a lie the substrate would have to keep.
-- **No raw die.** Crits and fumbles from a natural 20/1 (both systems want it:
-  5e crits, PF2e shifts a degree) need the unmodified die, which the ABI does
-  not pass — only the total. Adding it is one more `extra` slot.
+- ~~**No raw die.**~~ **Fixed 2026-07-17.** `call_int_ctx2` passes the natural
+  die beside the total (`f(c, t, roll, die)`), and Lua discards arguments a
+  function does not declare, so every existing script was unaffected. Both
+  systems immediately wanted it, which is the tell that it was a real gap: PF2e
+  shifts the degree a rung on a natural 20/1, and **5e finally crits**, closing
+  a TODO its own script had been carrying ("crits and fumbles need the raw die,
+  which the ABI does not pass yet"). A single-die base yields the natural roll;
+  a multi-die base has no one natural roll, so it passes nil.
+
+**The ladder is opt-in, which is the real result.** 5e uses three rungs (crit on
+a natural 20, hit, miss) and never a critical failure, because a natural 1 in 5e
+simply misses. PF2e uses all four. Neither system pays for the other's
+complexity, and both ride one resolver.
 
 **Done when:** a second ruleset exercises the action spec and the 5e-isms are
 either fixed or named. **Verified 2026-07-17.** PF2e reports all four degrees

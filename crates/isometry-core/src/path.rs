@@ -43,7 +43,21 @@ pub fn reachable(
         let mut next = Vec::new();
         for &at in &frontier {
             let h = *map.elevation.get(at.0 as u32, at.1 as u32).unwrap_or(&0);
-            for step in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+            // All eight neighbours, to agree with the rest of the substrate.
+            // [`crate::distance`] is Chebyshev and [`crate::away`] names eight
+            // compass points, so a four-way walk meant a diagonal tile was
+            // "one away" -- close enough to hit and to be shoved into, but not
+            // to step to. One diagonal step costs one, as Chebyshev says.
+            for step in [
+                (1, 0),
+                (-1, 0),
+                (0, 1),
+                (0, -1),
+                (1, 1),
+                (1, -1),
+                (-1, 1),
+                (-1, -1),
+            ] {
                 let to = (at.0 + step.0, at.1 + step.1);
                 if prev.contains_key(&to) || !map.ground.in_bounds(to.0, to.1) {
                     continue;
@@ -147,7 +161,14 @@ mod tests {
         let prev = reachable(&m, (0, 0), &rules(2), TokenId(9));
         assert!(prev.contains_key(&(2, 0)));
         assert!(prev.contains_key(&(1, 1)));
-        assert!(!prev.contains_key(&(2, 1)), "3 steps > budget 2");
+        // A diagonal step costs one, so the budget buys Chebyshev distance --
+        // the same metric `distance()` measures reach with. (2, 1) is two steps
+        // (one diagonal, one straight) and (2, 2) is two diagonals.
+        assert!(prev.contains_key(&(2, 1)), "one diagonal then one straight");
+        assert!(prev.contains_key(&(2, 2)), "two diagonal steps");
+        // Three away in any direction is still out of reach. Column 3 is the
+        // water wall, so measure up the grass instead.
+        assert!(!prev.contains_key(&(0, 3)), "Chebyshev 3 > budget 2");
     }
 
     #[test]
