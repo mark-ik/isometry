@@ -103,6 +103,16 @@ file I/O. Event log semantics live in core; transport lives in
 - Check the Merely ecosystem before writing a new module: genet,
   netrender, mere, woodshed, and the wgpu-* repos may already have the
   piece or the pattern.
+- **Guard the feature-gated code**: run
+  `cargo check --workspace --all-features --all-targets` after touching a
+  sibling repo, and before committing anything in `isometry-net`. Every
+  campaign feature is `default = []`, so a plain `cargo test` compiles
+  neither them nor their tests: `--all-features` runs 182 tests where the
+  default runs 173. They rot silently whenever mere moves, and nothing else
+  will tell you. This is not hypothetical — 2026-07-17 found all four
+  campaign features uncompilable (a removed `mooting` re-export, a
+  duplicate `muniment`, and a de-async'd `MootStore::in_memory`), broken for
+  days behind the default build.
 
 ## Important Don'ts
 

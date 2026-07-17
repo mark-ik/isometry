@@ -84,7 +84,7 @@ mod tests {
 
     #[tokio::test]
     async fn live_moot_membership_drives_campaign_recognition() {
-        let moot = MootStore::in_memory().await.unwrap();
+        let moot = MootStore::in_memory();
         let alice = Ed25519Keypair::from_seed([51; 32]);
         let bob = Ed25519Keypair::from_seed([52; 32]);
         for (key, name, at_ms) in [(&alice, "alice", 1), (&bob, "bob", 2)] {
