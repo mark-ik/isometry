@@ -1212,6 +1212,10 @@ impl App {
                         ActionError::AlreadyDefeated => "that one is already down".to_owned(),
                         ActionError::NotTargeted(key) => format!("{key} needs no target"),
                         ActionError::UnknownAction(key) => format!("no such action: {key}"),
+                        // The system's afford rule refused it -- out of actions
+                        // this turn, not enough mana, whatever the ruleset gates
+                        // on. The substrate names the action, not the resource.
+                        ActionError::CannotAfford(key) => format!("can't afford {key} right now"),
                         // A script or dice-expression fault is the system's bug,
                         // not the player's; name it rather than hiding it.
                         ActionError::ScriptFailed(f) => format!("system script failed: {f}"),

@@ -1,0 +1,8 @@
+# Workspace toolchain, pinned to match mere's. The campaign net path pulls
+# p2panda 0.7 and mere's crates, both of which floor at rustc 1.96; the default
+# desktop toolchain here was 1.92 and could not build them. Pinned to 1.96
+# rather than the bare floor so the build tracks mere and does not drift back.
+# isometry-core / isometry-system still build on far less, but there is no
+# reason to hold the workspace behind their MSRV.
+[toolchain]
+channel = "1.96.0"

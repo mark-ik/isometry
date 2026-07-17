@@ -49,10 +49,10 @@ gemot = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 # override in .cargo/config.toml must say so.
 transport = { package = "mere-transport", git = "https://github.com/mark-ik/mere.git", branch = "main" }
 murm = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
-p2panda-core = "0.6.1"
-p2panda-net = "0.6.1"
-p2panda-store = { version = "0.6.1", default-features = false }
-p2panda-sync = "0.6.1"
+p2panda-core = "0.7.0"
+p2panda-net = "0.7.0"
+p2panda-store = { version = "0.7.0", default-features = false }
+p2panda-sync = "0.7.0"
 thiserror = "1"
 
 # UI: the Genet host stack (I1, the Woodshed pattern). Git deps on the

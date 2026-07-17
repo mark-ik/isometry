@@ -78,9 +78,9 @@ where
         parents: Vec<[u8; 32]>,
     ) -> Result<Operation<CampaignExt>, CampaignSyncError> {
         let operation = self.space.author(keypair, event, parents).await?;
+        // p2panda 0.7: SyncHandle::publish is no longer async.
         self.handle
             .publish(operation.clone())
-            .await
             .map_err(|error| CampaignSyncError::Sync(error.to_string()))?;
         Ok(operation)
     }

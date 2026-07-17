@@ -19,7 +19,7 @@ use murm_replication::MunimentStore;
 use muniment::{Backend, StoreError};
 use p2panda_core::cbor::{decode_cbor, encode_cbor};
 use p2panda_core::operation::validate_operation;
-use p2panda_core::{Body, Hash, Header, Operation, SigningKey, Timestamp, Topic, VerifyingKey};
+use p2panda_core::{Body, Hash, Header, Operation, SigningKey, Topic, VerifyingKey};
 use p2panda_store::logs::LogStore;
 use p2panda_store::topics::TopicStore;
 use personae::Ed25519Keypair;
@@ -526,7 +526,7 @@ pub fn to_operation(
     campaign_id: [u8; 32],
     branch_id: [u8; 32],
     event: &CampaignCollaborationEvent,
-    seq_num: u64,
+    seq_num: u32,
     backlink: Option<[u8; 32]>,
     parents: Vec<[u8; 32]>,
 ) -> Operation<CampaignExt> {
@@ -539,7 +539,10 @@ pub fn to_operation(
         signature: None,
         payload_size: body.size(),
         payload_hash: Some(body.hash()),
-        timestamp: Timestamp::from(event.at_ms()),
+        // p2panda 0.7 dropped Header.timestamp. Isometry orders a branch by
+        // seq_num + backlink + parents (a DAG), never the header clock, and the
+        // event body still carries at_ms(), so nothing here is lost. Fresh-data
+        // prototype: no stored operations to keep hash-stable across the bump.
         seq_num,
         backlink: backlink.map(Hash::from),
         extensions: CampaignExt {
