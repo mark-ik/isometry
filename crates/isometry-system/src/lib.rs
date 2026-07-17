@@ -32,9 +32,11 @@ use piccolo::{Closure, Executor, Fuel, IntoValue, Lua, StashedExecutor, Table, V
 
 mod bestiary;
 mod items;
+mod pf2e;
 mod spells;
 pub use bestiary::{srd_bestiary, Monster, MonsterAction};
 pub use items::{srd_items, Item};
+pub use pf2e::pf2e_srd;
 pub use spells::{srd_spells, Spell};
 
 /// A schema field: an editable value on the sheet.
@@ -77,13 +79,28 @@ pub struct ActionDef {
 pub struct TargetSpec {
     /// Maximum Chebyshev distance in tiles. 1 is adjacent melee.
     pub range: u32,
-    /// Lua `f(c, t, roll) -> 1|0`: given the actor, the target, and the actor's
-    /// total roll, did it land? This is where "beats AC" lives.
+    /// Lua `f(c, t, roll) -> degree`: given the actor, the target, and the
+    /// actor's total roll, how well did it land? This is where "beats AC" lives.
+    ///
+    /// The return is a **degree of success**, not a boolean: `2` critical
+    /// success, `1` success, `0` failure, `-1` critical failure. Anything `>= 1`
+    /// is a hit. A binary system simply returns 1 or 0 and never sees the
+    /// difference (5e's `a_attack_hit` is unchanged); a four-tier system (PF2e,
+    /// and the whole roll-and-compare family) returns the full range. This costs
+    /// no ABI change, because the Lua boundary already returns an integer.
     pub hit_func: String,
     /// Dice rolled for effect on a hit.
     pub damage: String,
     /// Lua `f(c, t) -> int`: the effect's flat bonus.
     pub damage_func: String,
+    /// Lua `f(c, t, degree) -> percent`: scale the effect by the degree. `200`
+    /// doubles (a PF2e critical hit), `50` halves (5e's save-for-half), `100` is
+    /// the default when no function is declared.
+    ///
+    /// A percent rather than a float because the Lua boundary is integers only,
+    /// and a multiplier rather than a bonus because doubling *dice plus
+    /// modifiers* is not expressible as an addend.
+    pub damage_mult_func: Option<String>,
     /// The target-sheet field the effect subtracts from.
     pub damage_field: String,
     /// Beat played by the actor, and by the target on a hit or a miss. Pack
@@ -153,6 +170,11 @@ pub enum ActionError {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Resolution {
     pub attack: RollRecord,
+    /// How well it landed: `2` critical success, `1` success, `0` failure, `-1`
+    /// critical failure. [`Self::hit`] is simply `degree >= 1`, so a binary
+    /// system never has to think about this and a four-tier one is expressible
+    /// without a second resolver.
+    pub degree: i64,
     pub hit: bool,
     pub damage: Option<RollRecord>,
     pub deltas: Vec<SheetDelta>,
@@ -1533,6 +1555,7 @@ impl System {
             hit_func: spec.hit_func.clone(),
             damage: spec.damage.clone(),
             damage_func: spec.damage_func.clone(),
+            damage_mult_func: spec.damage_mult_func.clone(),
             damage_field: spec.damage_field.clone(),
             actor_beat: spec.actor_beat.clone(),
             hit_beat: spec.hit_beat.clone(),
@@ -1562,15 +1585,18 @@ impl System {
 
         // 2. The verdict. The script owns it, seeing both sheets and the roll,
         //    so "beats AC" is a rule and not a Rust branch.
-        let hit = self
+        let degree = self
             .call_int_ctx(
                 &spec.hit_func,
                 actor_sheet,
                 Some(target_sheet),
                 Some(total as i64),
             )
-            .ok_or_else(|| ActionError::ScriptFailed(spec.hit_func.clone()))?
-            != 0;
+            .ok_or_else(|| ActionError::ScriptFailed(spec.hit_func.clone()))?;
+        // Anything at or above a plain success landed. A binary system returns
+        // 1 or 0 and this is exactly its old meaning; a four-tier one also says
+        // *how well*, and the multiplier below is what reads that.
+        let hit = degree >= 1;
 
         // 3. The consequence.
         let mut damage = None;
@@ -1581,12 +1607,26 @@ impl System {
                 .ok_or_else(|| ActionError::ScriptFailed(spec.damage_func.clone()))?;
             let (dmg_raw, dmg_dice) = roll(&spec.damage, rng)
                 .ok_or_else(|| ActionError::BadDice(spec.damage.clone()))?;
+            // The degree scales the whole effect, dice and modifiers together:
+            // a PF2e critical doubles it, a 5e save-for-half halves it. Percent
+            // because the Lua boundary carries integers; 100 when unspecified.
+            let mult = match spec.damage_mult_func.as_ref() {
+                Some(func) => self
+                    .call_int_ctx(func, actor_sheet, Some(target_sheet), Some(degree))
+                    .ok_or_else(|| ActionError::ScriptFailed(func.clone()))?,
+                None => 100,
+            };
             // Damage never heals: a big negative modifier floors at zero rather
             // than restoring the victim.
             let dmg_total = (dmg_raw + dmg_bonus as i32).max(0);
+            let dmg_total = ((dmg_total as i64 * mult.max(0)) / 100) as i32;
             damage = Some(RollRecord {
                 by,
-                expr: format!("{}{dmg_bonus:+}", spec.damage),
+                expr: if mult == 100 {
+                    format!("{}{dmg_bonus:+}", spec.damage)
+                } else {
+                    format!("({}{dmg_bonus:+}) x{mult}%", spec.damage)
+                },
                 dice: dmg_dice,
                 total: dmg_total,
             });
@@ -1701,6 +1741,7 @@ impl System {
 
         Ok(Resolution {
             attack,
+            degree,
             hit,
             damage,
             deltas,
@@ -1845,6 +1886,7 @@ pub fn srd_5e() -> System {
                 hit_func: "a_attack_hit".to_owned(),
                 damage: "1d8".to_owned(),
                 damage_func: "a_attack_dmg".to_owned(),
+                damage_mult_func: None,
                 damage_field: "hp_current".to_owned(),
                 actor_beat: "strike".to_owned(),
                 hit_beat: "recoil".to_owned(),
@@ -1873,6 +1915,7 @@ pub fn srd_5e() -> System {
                 hit_func: "a_attack_hit".to_owned(),
                 damage: "0".to_owned(),
                 damage_func: "a_zero".to_owned(),
+                damage_mult_func: None,
                 damage_field: "hp_current".to_owned(),
                 actor_beat: "strike".to_owned(),
                 hit_beat: "recoil".to_owned(),
@@ -1899,6 +1942,7 @@ pub fn srd_5e() -> System {
                 hit_func: "a_attack_hit".to_owned(),
                 damage: "0".to_owned(),
                 damage_func: "a_zero".to_owned(),
+                damage_mult_func: None,
                 damage_field: "hp_current".to_owned(),
                 actor_beat: "strike".to_owned(),
                 hit_beat: "recoil".to_owned(),
@@ -1928,6 +1972,7 @@ pub fn srd_5e() -> System {
                 hit_func: "a_convince_hit".to_owned(),
                 damage: "0".to_owned(),
                 damage_func: "a_zero".to_owned(),
+                damage_mult_func: None,
                 damage_field: "hp_current".to_owned(),
                 actor_beat: "cheer".to_owned(),
                 hit_beat: "cheer".to_owned(),
@@ -2719,6 +2764,111 @@ end"#,
         assert_eq!(gen(1), gen(1), "same seed, same NPC");
         let differs = (1..8).any(|s| gen(s) != npc);
         assert!(differs, "reroll should be able to produce a different NPC");
+    }
+
+    /// A PF2e Strike against a known AC, with the d20 forced by choosing the
+    /// attacker's bonus: the skeleton's whole job is proving the four-rung
+    /// ladder and crit-doubling ride the *same* resolver 5e uses.
+    fn pf2e_strike(attack_bonus_str: i64, target_ac: i64, seed: u64) -> Resolution {
+        let mut sys = pf2e_srd();
+        let mut fighter = sys.default_sheet();
+        fighter.set_text("name", "Fighter");
+        fighter.set_int("str", attack_bonus_str);
+        fighter.set_int("level", 1);
+        fighter.set_int("rank_attack", 2);
+        let mut foe = sys.default_sheet();
+        foe.set_text("name", "Foe");
+        foe.set_int("ac", target_ac);
+        foe.set_int("hp_current", 200); // survives, so defeat never masks a degree
+        foe.set_int("hp_max", 200);
+        sys.resolve_action(
+            "strike",
+            KNIGHT,
+            &fighter,
+            (4, 4),
+            GOBLIN,
+            &foe,
+            (5, 4),
+            &mut Rng::new(seed),
+        )
+        .expect("resolves")
+    }
+
+    #[test]
+    fn pf2e_strike_reports_four_degrees_of_success() {
+        // STR 30 (+10) and trained at level 1 (+3) is 1d20+13, so the lowest
+        // possible total (14) still beats AC 1 by 10: always a critical.
+        let crit = pf2e_strike(30, 1, 4);
+        assert_eq!(crit.degree, 2, "beat the AC by 10 or more");
+        assert!(crit.hit);
+
+        // AC 100: even a 20 misses by 10+, so it always critically fails.
+        let fumble = pf2e_strike(10, 100, 4);
+        assert_eq!(fumble.degree, -1, "missed the AC by 10 or more");
+        assert!(!fumble.hit);
+        assert!(fumble.damage.is_none());
+
+        // A plain success and a plain failure are the two middle rungs, and
+        // `hit` reads them exactly as a binary system always did.
+        let (mut saw_success, mut saw_failure) = (false, false);
+        for seed in 1..40u64 {
+            // STR 10 (+0), level 1, trained (+3) => 1d20+3 against AC 13:
+            // rolls 10..19 succeed but never by 10; 1..9 fail but never by 10.
+            let r = pf2e_strike(10, 13, seed);
+            match r.degree {
+                1 => {
+                    saw_success = true;
+                    assert!(r.hit);
+                }
+                0 => {
+                    saw_failure = true;
+                    assert!(!r.hit);
+                }
+                _ => {}
+            }
+        }
+        assert!(saw_success && saw_failure, "the middle rungs are reachable");
+    }
+
+    #[test]
+    fn a_pf2e_critical_doubles_the_whole_effect() {
+        // 1d20+13 against AC 1 always crits (the lowest total, 14, beats it by
+        // 10). Re-run with the AC set to exactly the roll: the same seed rolls
+        // the same die and the same damage, but the total now *meets* the AC
+        // without beating it by 10, so it is a plain success. The only thing
+        // that differs between the two is the degree, and therefore the
+        // multiplier.
+        let crit = pf2e_strike(30, 1, 11);
+        assert_eq!(crit.degree, 2);
+        let rolled = crit.attack.total as i64;
+        let plain = pf2e_strike(30, rolled, 11);
+        assert_eq!(plain.degree, 1);
+        let (c, p) = (
+            crit.damage.as_ref().expect("crit damages").total,
+            plain.damage.as_ref().expect("hit damages").total,
+        );
+        assert_eq!(c, p * 2, "a critical doubles dice and modifiers together");
+        // And the log says why, rather than silently reporting a bigger number.
+        assert!(crit.damage.unwrap().expr.contains("200%"));
+    }
+
+    #[test]
+    fn the_binary_system_is_unchanged_by_the_ladder() {
+        // 5e never returns a degree other than 1 or 0, and never scales damage.
+        // The generalization must be invisible to it.
+        let (mut sys, knight, goblin) = duel(1, 50);
+        let hit = sys
+            .resolve_action("attack", KNIGHT, &knight, (4, 4), GOBLIN, &goblin, (5, 4), &mut Rng::new(3))
+            .expect("resolves");
+        assert_eq!(hit.degree, 1, "a 5e hit is a plain success");
+        assert!(hit.hit);
+        assert!(hit.damage.unwrap().expr.contains("1d8"), "no multiplier in the log");
+
+        let (mut sys, knight, wall) = duel(100, 50);
+        let miss = sys
+            .resolve_action("attack", KNIGHT, &knight, (4, 4), GOBLIN, &wall, (5, 4), &mut Rng::new(3))
+            .expect("resolves");
+        assert_eq!(miss.degree, 0, "a 5e miss is a plain failure, never a fumble");
     }
 
     #[test]

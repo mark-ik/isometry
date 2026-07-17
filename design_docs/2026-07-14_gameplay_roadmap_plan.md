@@ -27,9 +27,9 @@ displacement, conditions, allegiance) grows one type at a time.
    an owner name over a faction-turn channel. Waits on the moot/murm rebase.
 8. **C8: World map (pointcrawl)** — stays deferred per next-horizons' trigger;
    transition points cover the prepared-locale 80%.
-9. **C9: Campaign pack options** — strongest first: a PF2e skeleton to force the
-   action-spec shape to generalize; then a real pixel tileset as pack CSS; pack
-   distribution after the murm peer-runtime lands.
+9. **C9: Campaign pack options** — the PF2e skeleton **landed 2026-07-17**,
+   below. Remaining: a real pixel tileset as pack CSS; pack distribution after
+   the murm peer-runtime lands.
 
 ## C1: Conditions (LANDED 2026-07-15)
 
@@ -282,6 +282,52 @@ collided and hard-failed the whole commit on a second play — the id is now
 disambiguated per grant, matching the replay-safe Fact/History effects; and a
 session storylet outcome reused the campaign-commit channel, mislabelling itself
 "committed campaign draft" — the shared outcome text is now neutral.
+
+## C9a: The PF2e skeleton (LANDED 2026-07-17)
+
+**A second ruleset, to find the 5e-isms before they calcified.** Not a port: a
+skeleton whose job is to put weight on the action spec five phases of 5e work
+hand-rolled. It found two, both now fixed, and both of which **5e wanted too**.
+
+**Fixed: the verdict was a boolean.** `hit_func` returned `1|0`, so hit-or-miss
+was the only expressible outcome. PF2e's Strike has four rungs (beat the DC by
+10 = critical success; miss by 10 = critical failure). `hit_func` now returns a
+**degree** (`2/1/0/-1`) and `hit` is simply `degree >= 1`. This cost **no ABI
+change** — the Lua boundary already returned an integer, so the boolean was
+just a degree we were throwing away. 5e's `a_attack_hit` returns `1|0`
+unchanged and never sees the difference; the binary system is the two middle
+rungs of the same ladder.
+
+**Fixed: damage could not scale.** A PF2e critical doubles dice *and* modifiers,
+which is not expressible as an addend. `TargetSpec.damage_mult_func` returns a
+**percent** (integers only, like the rest of the ABI): 200 doubles, 100 is the
+default. The tell that this was a real gap and not a PF2e quirk: **5e's own
+save-for-half (a fireball) could not be expressed either**, and now can, as 50.
+
+**Not fixed, and now named** (each wants its own plan, none blocks the other):
+
+- **No action economy.** PF2e's defining feature is three actions per turn; the
+  substrate has no per-turn budget at all. next-horizons already predicted this
+  is "the one place the substrate genuinely must bend, toward turns" — an
+  optional per-turn budget, default `None` so 5e is unaffected.
+- **No multiple-attack penalty.** MAP (-5 on the second Strike, -10 on the
+  third) needs per-turn attack *counting*; `resolve_action` is stateless across
+  actions and sees only this one.
+- **Conditions have no values.** PF2e's `frightened 2` / `clumsy 1` are
+  magnitudes; C1's conditions are opaque on/off names. Encoding the value in
+  the name (`frightened-2`) works but is a lie the substrate would have to keep.
+- **No raw die.** Crits and fumbles from a natural 20/1 (both systems want it:
+  5e crits, PF2e shifts a degree) need the unmodified die, which the ABI does
+  not pass — only the total. Adding it is one more `extra` slot.
+
+**Done when:** a second ruleset exercises the action spec and the 5e-isms are
+either fixed or named. **Verified 2026-07-17.** PF2e reports all four degrees
+(a guaranteed crit, a guaranteed fumble, and both middle rungs reachable); a
+critical doubles the whole effect (proved by re-running the *same seed* with
+the AC set to exactly the roll, so only the degree differs, and the log says
+`x200%` rather than silently reporting a bigger number); and 5e is provably
+unchanged — a hit is degree 1, a miss is degree 0, never a fumble, and no
+multiplier appears in its log. 185 workspace tests green under `--all-features`.
 
 ## Progress
 
