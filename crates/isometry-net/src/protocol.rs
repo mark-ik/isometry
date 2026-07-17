@@ -149,6 +149,14 @@ pub struct ActionResolved {
     /// the party cap), because owners and the cap are the map's, not the rules'.
     #[serde(default)]
     pub owner_changes: Vec<(TokenId, Option<String>)>,
+    /// Per-turn counter deltas the action spent: `(token, key, delta)`. Truth,
+    /// like the deltas, and applied the same way -- the substrate stores them
+    /// blind and clears them when the token's turn begins; the ruleset's afford
+    /// rule reads them on the next action. What `actions_spent` or `strikes`
+    /// mean lives entirely in the system's script, never here. A miss still
+    /// spends them: they ride the resolution, not the hit.
+    #[serde(default)]
+    pub turn_counters: Vec<(TokenId, String, i64)>,
 }
 
 /// The replicated unit: a map mutation or a turn-order change. The host

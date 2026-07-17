@@ -1986,6 +1986,10 @@ impl UiState {
             }
         }
         if let Some(active) = self.turns.active() {
+            // A turn beginning refreshes its per-turn counters: actions refill,
+            // the multiple-attack penalty resets. Solo path; the session mirrors
+            // this through apply_game on the authority.
+            self.map.clear_turn_counters(active);
             self.select_token(active);
             if let Some(t) = self.map.token(active) {
                 let owner = t.owner.as_deref().unwrap_or("dm");
@@ -2222,6 +2226,31 @@ mod tests {
         // The move is undoable (one step: move + facing).
         ui.select_token(TokenId(1));
         assert!(!ui.may_move(TokenId(1)) || ui.turns.active() == Some(TokenId(1)));
+    }
+
+    #[test]
+    fn ending_a_turn_refreshes_the_incoming_token_per_turn_counters() {
+        use isometry_core::TokenId;
+        let mut ui = UiState::new(demo_map());
+        ui.toggle_turn(TokenId(1));
+        ui.toggle_turn(TokenId(2));
+        assert_eq!(ui.turns.active(), Some(TokenId(1)));
+        // The active knight has spent part of its turn: an action economy, a
+        // multiple-attack tally -- the view never learns which.
+        ui.map.bump_turn_counter(TokenId(1), "actions_spent", 2);
+
+        // The goblin's turn begins. A turn-start wipes the *incoming* token's
+        // counters, so the goblin's clear (they were empty) while the knight
+        // keeps its spend as it waits.
+        ui.end_turn();
+        assert_eq!(ui.turns.active(), Some(TokenId(2)));
+        assert_eq!(ui.map.turn_counter(TokenId(1), "actions_spent"), 2);
+
+        // Back to the knight: its own turn beginning clears the ledger, so it
+        // acts with a whole economy again.
+        ui.end_turn();
+        assert_eq!(ui.turns.active(), Some(TokenId(1)));
+        assert_eq!(ui.map.turn_counter(TokenId(1), "actions_spent"), 0);
     }
 
     #[test]

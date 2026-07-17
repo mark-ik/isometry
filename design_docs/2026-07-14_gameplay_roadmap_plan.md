@@ -323,12 +323,22 @@ save-for-half (a fireball) could not be expressed either**, and now can, as 50.
   predicted -- and it bent generically, not toward PF2e. **Verified at the
   system layer** (a quickened fighter's four Strikes read 0/-5/-10/-10 MAP; a
   plain fighter's fourth Strike is `CannotAfford`; 5e spends nothing).
-  **The app-integration is pending** -- the host must inject a token's counters
-  before resolving, replicate the `turn_effect` deltas, and clear them on
-  `TurnAdvance -- and that wiring is blocked behind a mere-churn build break
-  (mere-transport bumped to iroh 1.0 while isometry-net is on 0.98; the whole
-  workspace lock is wedged until the iroh/p2panda migration settles). The
-  primitive and the rules are proven; the turn-loop wiring waits on the build.
+  **The app-integration landed 2026-07-17**, once the iroh 1.0 / p2panda 0.7
+  upstreaming unwedged the workspace lock (mere had moved to upstream both, so
+  isometry followed; see the iroh/p2panda commit). The turn loop now: the host
+  injects a token's counters as `turn_<key>` sheet fields before resolving (same
+  channel as conditions); the resolver's `turn_effect` rides `ActionResolved`
+  and every peer folds the same integer deltas via `bump_turn_counter`, applied
+  verbatim like any sheet delta (the authority never reruns the afford rule --
+  that gate lives where the Lua ran); and a `TurnAdvance` clears the *incoming*
+  token's counters, so its economy refills the moment its turn begins. **Free
+  play stays inert**: with no initiative there is no turn to reset against, so
+  the host neither injects nor records counters (else a PF2e token would be
+  capped at three strikes forever) -- that policy lives in the host, which knows
+  free-play-vs-initiative, not in the blind substrate. Verified end to end:
+  `per_turn_counters_replicate_and_reset_when_the_turn_comes_round` (net, both
+  peers converge on the same ledger and the same reset) and
+  `ending_a_turn_refreshes_the_incoming_token_per_turn_counters` (views, solo).
 - **Conditions have no values.** PF2e's `frightened 2` / `clumsy 1` are
   magnitudes; C1's conditions are opaque on/off names. Encoding the value in
   the name (`frightened-2`) works but is a lie the substrate would have to keep.

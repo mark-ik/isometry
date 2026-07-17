@@ -34,8 +34,8 @@ use isometry_net::{
     apply_game, ActionIntent, ActionResolved, GameEvent, GameSnapshot, HostSession,
 };
 use isometry_system::{
-    monster_sheet, sheet_with_conditions, srd_5e, srd_bestiary, srd_items, srd_spells, ActionError,
-    GeneratorCatalog, GeneratorLimits, System,
+    monster_sheet, sheet_with_conditions, sheet_with_turn_counters, srd_5e, srd_bestiary,
+    srd_items, srd_spells, ActionError, GeneratorCatalog, GeneratorLimits, System,
 };
 use isometry_views::{
     board_css, board_root, demo_map, synth_map, ActionRow, EditMode, GenerationRequest,
@@ -1145,7 +1145,7 @@ impl App {
         // everything else. Only the resolved outcome is replicated, so peers
         // apply it without rerunning a line of Lua.
         {
-            let (actor_sheet, actor_inv, target_sheet, target_inv, tiles, turn_ok) = {
+            let (actor_sheet, actor_inv, target_sheet, target_inv, tiles, turn_ok, under_initiative) = {
                 let s = runner.state();
                 let tiles = match (s.map.token(actor), s.map.token(target)) {
                     (Some(a), Some(t)) => Some((a.at, t.at)),
@@ -1155,6 +1155,13 @@ impl App {
                 // skirmish before initiative); once initiative exists, only the
                 // active token may act.
                 let turn_ok = s.turns.active().map_or(true, |active| active == actor);
+                // Per-turn counters (the action economy, the multiple-attack
+                // penalty) only exist *within* initiative: with no turn order
+                // there is no turn to reset against, so the afford rule must not
+                // bite and the spend must not accumulate -- otherwise free play
+                // would silently cap a PF2e token at three strikes forever. Under
+                // initiative, turn_ok already proves the actor is the active one.
+                let under_initiative = s.turns.active() == Some(actor);
                 (
                     s.map.sheet(actor).cloned(),
                     s.inventories.get(&actor).cloned(),
@@ -1162,6 +1169,7 @@ impl App {
                     s.inventories.get(&target).cloned(),
                     tiles,
                     turn_ok,
+                    under_initiative,
                 )
             };
 
@@ -1178,16 +1186,31 @@ impl App {
                 // compared against. Conditions ride along as boolean fields, so
                 // the rules can read `t.prone` and the resolver can tell "apply
                 // prone" from "already prone".
-                let (actor_conds, target_conds) = {
+                let (actor_conds, target_conds, actor_counters) = {
                     let s = runner.state();
                     (
                         s.map.conditions.get(&actor).cloned().unwrap_or_default(),
                         s.map.conditions.get(&target).cloned().unwrap_or_default(),
+                        // Free play carries no per-turn counters into the sheet,
+                        // so the afford rule sees a fresh economy every swing.
+                        if under_initiative {
+                            s.map.turn_counters.get(&actor).cloned().unwrap_or_default()
+                        } else {
+                            Default::default()
+                        },
                     )
                 };
-                let actor_eff = sheet_with_conditions(
-                    &system.effective_sheet(&actor_sheet, actor_inv.as_ref()),
-                    actor_conds.iter(),
+                // The actor's per-turn counters ride the sheet as `turn_<key>`
+                // fields, the same channel conditions use, so the afford rule and
+                // any script folding a multiple-attack penalty read them with a
+                // plain `c.turn_strikes`. Only the actor spends, so only the actor
+                // carries them; the target's affordability is never asked.
+                let actor_eff = sheet_with_turn_counters(
+                    &sheet_with_conditions(
+                        &system.effective_sheet(&actor_sheet, actor_inv.as_ref()),
+                        actor_conds.iter(),
+                    ),
+                    actor_counters.iter(),
                 );
                 let target_eff = sheet_with_conditions(
                     &system.effective_sheet(&target_sheet, target_inv.as_ref()),
@@ -1337,6 +1360,15 @@ impl App {
                     conditions: resolution.conditions,
                     mobility: resolution.mobility,
                     owner_changes,
+                    // Symmetric with the injection: outside initiative there is
+                    // no turn to reset against, so the spend is not recorded at
+                    // all. Nothing to read, nothing to accumulate -- free play
+                    // stays inert for per-turn resources.
+                    turn_counters: if under_initiative {
+                        resolution.turn_counters
+                    } else {
+                        Vec::new()
+                    },
                 });
                 if ui.net_mode == NetMode::Remote {
                     // In session the authority applies it and mirrors the
@@ -1359,6 +1391,16 @@ impl App {
                         if !res.owner_changes.is_empty() {
                             ui.recompute_fog();
                             ui.recompute_reach();
+                        }
+                        // Same batch-window reason as the owner change: the next
+                        // queued intent's afford rule reads these counters from
+                        // local state, so fold the spend now instead of waiting
+                        // for the mirror. The authority applies the identical
+                        // bump and mirrors back a whole map (self.map = snap.map),
+                        // which *replaces* this, so the additive delta is never
+                        // double-counted.
+                        for (token, key, delta) in &res.turn_counters {
+                            ui.map.bump_turn_counter(*token, key, *delta);
                         }
                     }
                     ui.net_outbox.push(event);
@@ -1385,6 +1427,11 @@ impl App {
                         if let Some(t) = ui.map.tokens.iter_mut().find(|t| t.id == *token) {
                             t.owner = owner.clone();
                         }
+                    }
+                    // Solo: no authority to route through, so the per-turn spend
+                    // lands in the local ledger here (action economy, MAP).
+                    for (token, key, delta) in &res.turn_counters {
+                        ui.map.bump_turn_counter(*token, key, *delta);
                     }
                     if !res.conditions.is_empty()
                         || !res.displaced.is_empty()

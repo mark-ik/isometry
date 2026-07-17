@@ -106,6 +106,7 @@ fn attack_hit(damage: i64) -> GameEvent {
         conditions: Vec::new(),
         mobility: Vec::new(),
         owner_changes: Vec::new(),
+        turn_counters: Vec::new(),
     })
 }
 
@@ -790,6 +791,69 @@ fn a_resolution_addressing_an_unsheeted_token_is_refused_whole() {
         seq,
         "a half-appliable resolution entered the log"
     );
+    assert_converged(&sim);
+}
+
+#[test]
+fn per_turn_counters_replicate_and_reset_when_the_turn_comes_round() {
+    let mut sim = Sim::new(HostSession::new(snapshot()));
+    sim.connect(PeerId(10));
+    sim.host_event(GameEvent::SheetSet {
+        token: TokenId(1),
+        sheet: sheet("Knight", 12, 16),
+    });
+    sim.host_event(GameEvent::SheetSet {
+        token: TokenId(2),
+        sheet: sheet("Goblin", 7, 15),
+    });
+    sim.host_event(GameEvent::TurnAdd(TokenId(1)));
+    sim.host_event(GameEvent::TurnAdd(TokenId(2)));
+
+    // Two strikes in the knight's turn, each spending an action and adding to
+    // the multiple-attack tally. The net layer carries the integers the rules
+    // decided; it never learns they mean "actions" or "attacks".
+    let strike = || {
+        let mut e = attack_hit(3);
+        if let GameEvent::ActionResolved(res) = &mut e {
+            res.turn_counters = vec![
+                (TokenId(1), "actions_spent".to_owned(), 1),
+                (TokenId(1), "strikes".to_owned(), 1),
+            ];
+        }
+        e
+    };
+    sim.host_event(strike());
+    sim.host_event(strike());
+
+    // The ledger accumulated, and the client holds exactly the same count: a
+    // per-turn resource is truth, applied verbatim like any sheet delta.
+    let spent = |s: &GameSnapshot| s.map.turn_counter(TokenId(1), "actions_spent");
+    assert_eq!(spent(sim.host.state()), 2);
+    assert_eq!(spent(sim.clients[&PeerId(10)].state().unwrap()), 2);
+    assert_eq!(sim.host.state().map.turn_counter(TokenId(1), "strikes"), 2);
+
+    // The knight's turn ends and the goblin's begins. A turn-start wipes the
+    // *incoming* token's counters, so the goblin's clear (they were empty), but
+    // the knight keeps its spend while someone else acts.
+    sim.host_event(GameEvent::TurnAdvance);
+    assert_eq!(sim.host.state().turns.active(), Some(TokenId(2)));
+    assert_eq!(
+        spent(sim.host.state()),
+        2,
+        "another token's turn does not refill yours"
+    );
+
+    // The turn comes back to the knight: now its counters wipe, so it has its
+    // whole action economy again. Every peer computes the identical reset from
+    // the same TurnAdvance -- nobody is told the counts separately.
+    sim.host_event(GameEvent::TurnAdvance);
+    assert_eq!(sim.host.state().turns.active(), Some(TokenId(1)));
+    assert_eq!(
+        spent(sim.host.state()),
+        0,
+        "the knight's own turn refilled its actions"
+    );
+    assert_eq!(spent(sim.clients[&PeerId(10)].state().unwrap()), 0);
     assert_converged(&sim);
 }
 

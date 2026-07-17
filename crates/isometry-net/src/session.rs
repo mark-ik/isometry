@@ -85,6 +85,12 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
             let before = state.turns.round();
             let map = &state.map;
             state.turns.advance_skipping(|id| map.is_defeated(id));
+            // A turn beginning wipes the token's per-turn counters: its action
+            // economy refills, its multiple-attack penalty resets. The substrate
+            // clears the named ledger without knowing what any counter meant.
+            if let Some(active) = state.turns.active() {
+                state.map.clear_turn_counters(active);
+            }
             // A completed round is elapsed time: tick the location's clock by
             // however many rounds the wrap crossed. Time is a campaign feature,
             // so a bare board with no stored map keeps no clock.
@@ -146,6 +152,13 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
                 if let Some(t) = state.map.tokens.iter_mut().find(|t| t.id == *token) {
                     t.owner = owner.clone();
                 }
+            }
+            // The action's per-turn spend: the acting peer's rules decided it,
+            // and every peer folds the same integer deltas into the shared
+            // ledger. Applied verbatim, like the sheet deltas -- the authority
+            // never reruns the afford rule (that gate lives where the Lua ran).
+            for (token, key, delta) in &res.turn_counters {
+                state.map.bump_turn_counter(*token, key, *delta);
             }
             push_roll(state, &res.attack);
             if let Some(damage) = &res.damage {
