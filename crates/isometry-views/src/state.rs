@@ -275,6 +275,19 @@ pub struct StoryletRow {
     pub cast: Vec<(String, String)>,
 }
 
+/// One rolled faction move as the DM sees it in the downtime surface. Display
+/// only: the real `FactionMove` (its world events) lives in the host app, which
+/// commits the ones the DM keeps. `struck` is the DM's edit -- a kept move
+/// commits, a struck one drops from the tick.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FactionMoveRow {
+    pub faction: String,
+    pub verb: String,
+    pub text: String,
+    pub has_change: bool,
+    pub struck: bool,
+}
+
 /// One host-projected candidate in an unresolved campaign-governance
 /// conflict. Labels are presentation data; signed proposal ids remain the
 /// request identity.
@@ -449,6 +462,17 @@ pub struct UiState {
     /// The key of the storylet the DM asked to play; the host drains it, commits
     /// its effects, and they replicate.
     pub storylet_request: Option<String>,
+    /// Host-only downtime surface: the DM rolls a faction tick, edits the batch
+    /// by striking moves, and commits the keepers. These rows are display; the
+    /// host app holds the real moves and commits the un-struck ones. A joined
+    /// client never rolls a tick (it reads the world and spends host entropy).
+    pub faction_moves: Vec<FactionMoveRow>,
+    pub downtime_open: bool,
+    pub downtime_selected: usize,
+    /// One-shot: the DM asked for a fresh tick; the host rolls it and fills rows.
+    pub downtime_roll_request: bool,
+    /// One-shot: the DM committed the kept moves; the host drains and commits.
+    pub downtime_commit_request: bool,
     /// Host-fed competing-binding projection and one-shot resolution request.
     /// The view never reads Moot stores or signs campaign operations.
     pub governance_conflict: Option<GovernanceConflict>,
@@ -559,6 +583,11 @@ impl UiState {
             storylet_open: false,
             storylet_selected: 0,
             storylet_request: None,
+            faction_moves: Vec::new(),
+            downtime_open: false,
+            downtime_selected: 0,
+            downtime_roll_request: false,
+            downtime_commit_request: false,
             generator_open: false,
             generator_preview: None,
             generator_choices: Vec::new(),
@@ -698,6 +727,66 @@ impl UiState {
             Some((false, _, _, status)) => self.status = format!("not yet: {status}"),
             None => self.status = "no storylet selected".to_owned(),
         }
+    }
+
+    /// Open the downtime surface and ask the host to roll a faction tick.
+    /// Host-only, like storylets: the roll reads the world and spends entropy
+    /// the host owns, so a joined client never sees it.
+    pub fn open_downtime(&mut self) {
+        if !self.can_edit_inventory {
+            self.status = "downtime is the DM's".to_owned();
+            return;
+        }
+        self.downtime_open = true;
+        self.downtime_selected = 0;
+        self.downtime_roll_request = true;
+    }
+
+    pub fn close_downtime(&mut self) {
+        self.downtime_open = false;
+    }
+
+    pub fn cycle_downtime(&mut self) {
+        if !self.faction_moves.is_empty() {
+            self.downtime_selected = (self.downtime_selected + 1) % self.faction_moves.len();
+        }
+    }
+
+    /// Roll a fresh tick, discarding the current batch and its edits.
+    pub fn reroll_downtime(&mut self) {
+        if !self.can_edit_inventory {
+            return;
+        }
+        self.downtime_selected = 0;
+        self.downtime_roll_request = true;
+    }
+
+    pub fn selected_downtime_move(&self) -> Option<&FactionMoveRow> {
+        self.faction_moves.get(self.downtime_selected)
+    }
+
+    /// Strike or keep the selected move: the DM's edit before commit. A struck
+    /// move is dropped from the tick; a kept one commits.
+    pub fn toggle_strike_downtime(&mut self) {
+        if let Some(row) = self.faction_moves.get_mut(self.downtime_selected) {
+            row.struck = !row.struck;
+        }
+    }
+
+    /// Commit the kept moves. Arms a one-shot the host drains and commits; a
+    /// batch with everything struck commits nothing.
+    pub fn commit_downtime(&mut self) {
+        if !self.can_edit_inventory {
+            self.status = "downtime is the DM's".to_owned();
+            return;
+        }
+        let kept = self.faction_moves.iter().filter(|m| !m.struck).count();
+        if kept == 0 {
+            self.status = "no moves kept to commit".to_owned();
+            return;
+        }
+        self.downtime_commit_request = true;
+        self.status = format!("committing {kept} downtime move(s)");
     }
 
     pub fn open_generator(&mut self) {
@@ -2752,6 +2841,52 @@ mod tests {
         ui.storylet_selected = 1; // the ready one
         ui.play_storylet();
         assert_eq!(ui.storylet_request.as_deref(), Some("ready"));
+    }
+
+    #[test]
+    fn the_downtime_surface_is_dm_only_and_commits_only_the_kept() {
+        let mut ui = UiState::new(demo_map());
+        // A joined player cannot open downtime (the roll reads the world and
+        // spends host entropy), so nothing is armed.
+        ui.can_edit_inventory = false;
+        ui.open_downtime();
+        assert!(!ui.downtime_open, "a client must not open the downtime surface");
+        assert!(!ui.downtime_roll_request);
+
+        // The DM can: opening arms a roll request the host fills with rows.
+        ui.can_edit_inventory = true;
+        ui.open_downtime();
+        assert!(ui.downtime_open && ui.downtime_roll_request);
+        ui.downtime_roll_request = false; // the host consumed it and filled rows
+        ui.faction_moves = vec![
+            FactionMoveRow {
+                faction: "tide".to_owned(),
+                verb: "court".to_owned(),
+                text: "Bran swore to the Tide Court.".to_owned(),
+                has_change: true,
+                struck: false,
+            },
+            FactionMoveRow {
+                faction: "ash".to_owned(),
+                verb: "raid".to_owned(),
+                text: "The Ash Company raided a rival.".to_owned(),
+                has_change: false,
+                struck: false,
+            },
+        ];
+
+        // Strike the raid; it will not commit.
+        ui.downtime_selected = 1;
+        ui.toggle_strike_downtime();
+        assert!(ui.faction_moves[1].struck);
+        ui.commit_downtime();
+        assert!(ui.downtime_commit_request, "one kept move arms the commit");
+
+        // Strike everything and commit refuses: an empty tick is no tick.
+        ui.downtime_commit_request = false;
+        ui.faction_moves.iter_mut().for_each(|m| m.struck = true);
+        ui.commit_downtime();
+        assert!(!ui.downtime_commit_request, "nothing kept, nothing to commit");
     }
 
     #[test]

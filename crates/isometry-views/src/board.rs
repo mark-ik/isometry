@@ -453,6 +453,9 @@ pub fn board_root(ui: &UiState) -> UiChild {
     if let Some(overlay) = crate::storylet::storylet_overlay(ui) {
         pane_children.push(overlay);
     }
+    if let Some(overlay) = crate::downtime::downtime_overlay(ui) {
+        pane_children.push(overlay);
+    }
     if let Some(overlay) = crate::governance::governance_overlay(ui) {
         pane_children.push(overlay);
     }

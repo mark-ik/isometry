@@ -229,6 +229,16 @@ impl HostNet {
         Ok(())
     }
 
+    /// Commit a downtime faction tick, broadcasting each move's world events.
+    pub async fn commit_faction_turn(
+        &self,
+        moves: Vec<isometry_campaign::FactionMove>,
+    ) -> Result<(), String> {
+        let out = self.session.lock().await.commit_faction_turn(moves)?;
+        dispatch(&self.peers, out).await;
+        Ok(())
+    }
+
     /// The DM whispers to a named player (directed, not broadcast).
     pub async fn whisper(&self, from: &str, to: &str, text: &str) {
         let out = self.session.lock().await.whisper(from, to, text);

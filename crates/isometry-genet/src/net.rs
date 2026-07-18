@@ -40,6 +40,10 @@ enum BridgeCommand {
         key: String,
         item_owner: Option<TokenId>,
     },
+    FactionTurn {
+        request: RequestId,
+        moves: Vec<isometry_campaign::FactionMove>,
+    },
     Whisper {
         to: String,
         text: String,
@@ -211,6 +215,18 @@ impl NetBridge {
             .then_some(request)
     }
 
+    /// Ask the host to commit a downtime faction tick (session path). Each kept
+    /// move's world events replicate to every peer.
+    pub fn commit_faction_turn(
+        &mut self,
+        moves: Vec<isometry_campaign::FactionMove>,
+    ) -> Option<RequestId> {
+        let request = self.request_ids.issue();
+        self.actor
+            .command(BridgeCommand::FactionTurn { request, moves })
+            .then_some(request)
+    }
+
     pub fn take_campaign_outcomes(&mut self) -> Vec<Correlated<Result<(), String>>> {
         std::mem::take(&mut self.campaign_outcomes)
     }
@@ -344,6 +360,13 @@ async fn run_host(
                         request, result,
                     )));
                 }
+                BridgeCommand::FactionTurn { request, moves } => {
+                    // Same one-shot "commit this, tell me if it took" channel.
+                    let result = host.commit_faction_turn(moves).await;
+                    out.emit(BridgeUpdate::CampaignFinished(Correlated::new(
+                        request, result,
+                    )));
+                }
                 BridgeCommand::Whisper { to, text } => host.whisper("dm", &to, &text).await,
             }
         }
@@ -409,6 +432,12 @@ async fn run_client(
                     out.emit(BridgeUpdate::CampaignFinished(Correlated::new(
                         request,
                         Err("storylets are played by the host".to_owned()),
+                    )));
+                }
+                BridgeCommand::FactionTurn { request, .. } => {
+                    out.emit(BridgeUpdate::CampaignFinished(Correlated::new(
+                        request,
+                        Err("faction turns are run by the host".to_owned()),
                     )));
                 }
                 BridgeCommand::Whisper { .. } => {}
