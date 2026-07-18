@@ -307,9 +307,21 @@ pub fn pf2e_srd() -> System {
         function s_defeated(c)
             if c.hp_current <= 0 then return 1 else return 0 end
         end
+
+        -- Overmap navigation: a Wisdom (Survival) check against a DC that rises
+        -- with the route's difficulty (its weight). Beat it and the party travels
+        -- smoothly (100% of the base time); miss it and it loses the way, which
+        -- costs half again as long (150%). The `t` slot is nil (travel has no
+        -- target); wisdom finds the path. What "lost" then does to the party --
+        -- exhaustion, a wandering encounter -- is later rungs; here it is time.
+        function p_navigate(c, t, roll, weight)
+            local dc = 12 + weight
+            if roll + ab_mod(c.wis) >= dc then return 100 else return 150 end
+        end
     "#;
     System::load("pf2e-srd", "Pathfinder 2e (skeleton)", fields, derived, actions, script)
         .expect("builtin pf2e skeleton loads")
         .with_defeat("s_defeated")
         .with_mobility("s_speed", "s_sight")
+        .with_nav("p_navigate")
 }

@@ -259,10 +259,18 @@ scheduled.
   overmap travel is between maps, so which clock advances (a party clock? the
   destination site's, C3-reconciled?) is a resolver decision, not a bare
   primitive's.
-- **E2: The travel resolver.** `resolve_travel` mirroring `resolve_action`; the
-  system rules arrive / lost / time; peers apply. *Done when* a navigation
-  failure lands the party on a different node or adds ticks, decided once and
-  replicated, and a client cannot pronounce its own travel verdict.
+- **E2: The travel resolver. System layer LANDED 2026-07-18.**
+  `System::resolve_travel(navigator, weight, pace, rng) -> TravelResolution`, the
+  travel analogue of `resolve_action`: it rolls the party's navigator, and a
+  system `nav_func` rules whether the trip is smooth (base time) or the party
+  loses the way and pays more (E1's cost is the base). PF2e navigates on Wisdom
+  against a DC that rises with the route; 5e declares no rule and always finds
+  its way. *A navigation failure adds ticks, decided by the system:* met and
+  tested. What remains is the net/host wiring (a `TravelResolved` event that
+  applies the ticks to a clock and moves the party, replicated, so a client
+  cannot forge its own travel verdict) -- the same system-proven-then-wired split
+  the action resolver and the turn counters took. The richer "lost lands you on
+  the *wrong* node" outcome is deferred; E2 does lost = more time.
 - **E3: Exploration activities.** A per-token stance slot the system reads (Scout,
   Search, Avoid Notice). *Done when* choosing Scout versus Search changes a travel
   outcome (initiative on the next encounter, or find-versus-speed), entirely in
@@ -354,3 +362,11 @@ composition again (fog + secrets + a check).
   reading a map (an unskilled character may fail to read it). Scoped as fog (a
   per-party known set) + the secrets/reveal system (host-private nodes) + a
   skill-check resolution. All existing primitives; see "The known map".
+- **2026-07-18:** **E2 travel resolver landed at the system layer.**
+  `resolve_travel` + `TravelResolution` + a `nav_func` hook; PF2e navigates on
+  Wisdom vs a weight-scaled DC (`p_navigate`), 5e has no rule and never loses the
+  way. Verified: `pf2e_travel_costs_more_when_the_party_loses_the_way`,
+  `pace_feeds_the_travel_base_and_no_nav_rule_never_loses_the_way`. This also
+  gives E1's deferred clock-application its home: the resolver produces `ticks`,
+  and the net/host wiring (a `TravelResolved` event applying them and moving the
+  party) is the remaining increment.

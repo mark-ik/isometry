@@ -226,6 +226,24 @@ pub struct Resolution {
     pub turn_counters: Vec<(TokenId, String, i64)>,
 }
 
+/// The outcome of one leg of overmap travel, as the system rules it: the travel
+/// analogue of [`Resolution`]. The substrate applies it (advance the clock by
+/// `ticks`, move the party) and no peer reruns the Lua. E0/E1 primitives feed it
+/// (the route weight, the party's pace); the system decides how well the party
+/// found its way. Attrition and encounters (E4/E5) will add fields; E2 is the
+/// navigation outcome and the time.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TravelResolution {
+    /// The navigation roll, shown to the table like an attack roll.
+    pub roll: RollRecord,
+    /// The travel time in ticks the system ruled: the base cost, plus a penalty
+    /// when the party loses its way.
+    pub ticks: u64,
+    /// Whether the party navigated poorly (took longer than the smooth cost).
+    /// Legible for narration, and the reason the trip cost more.
+    pub lost: bool,
+}
+
 /// Copy `sheet` with each active condition added as a boolean field, so Lua
 /// reads `c.prone` with no new marshalling: conditions ride the existing
 /// character table. A sheet field with the same name would be shadowed, which is
@@ -279,6 +297,13 @@ pub struct System {
     /// script. `None` means the sheet's base numbers stand unmodified.
     pub speed_func: Option<String>,
     pub sight_func: Option<String>,
+    /// Lua `f(c, t, roll, weight) -> percent` for overmap travel: how well the
+    /// party navigates a route. 100 is a smooth trip (the base time stands); more
+    /// is losing the way, which costs that percent of the base. `None` means the
+    /// party always finds its way (a system with no wilderness rules). The `t`
+    /// slot is nil (travel has no target); `roll` is a d20 and `weight` the
+    /// route's difficulty, so the DC can rise with the road.
+    pub nav_func: Option<String>,
     lua: Lua,
 }
 
@@ -1350,6 +1375,7 @@ impl System {
             defeat_func: None,
             speed_func: None,
             sight_func: None,
+            nav_func: None,
             lua,
         })
     }
@@ -1370,6 +1396,48 @@ impl System {
         self.speed_func = Some(speed_func.into());
         self.sight_func = Some(sight_func.into());
         self
+    }
+
+    /// Declare the overmap navigation rule: a Lua `f(c, t, roll, weight) ->
+    /// percent`. A system with no wilderness travel simply never calls this.
+    pub fn with_nav(mut self, func: impl Into<String>) -> Self {
+        self.nav_func = Some(func.into());
+        self
+    }
+
+    /// Resolve one leg of overmap travel: roll the party's navigator against the
+    /// route, and rule how long it takes. The base time is E1's cost (the route
+    /// weight scaled by pace); the system's `nav_func` decides whether the party
+    /// travels it smoothly or loses the way and pays more. The travel analogue of
+    /// [`Self::resolve_action`]: the system judges once, and the substrate applies
+    /// the ticks and moves the party. Absent `nav_func`, the party always finds
+    /// its way at base cost.
+    pub fn resolve_travel(
+        &mut self,
+        navigator: &SheetData,
+        weight: u32,
+        pace: i64,
+        rng: &mut Rng,
+    ) -> TravelResolution {
+        let (raw, dice) = roll("1d20", rng).unwrap_or((0, vec![0]));
+        let base = ((weight as u64 * pace.max(1) as u64) / 100).max(1);
+        let nav_pct = match self.nav_func.clone() {
+            Some(func) => self
+                .call_int_ctx2(&func, navigator, None, Some(raw as i64), Some(weight as i64))
+                .unwrap_or(100),
+            None => 100,
+        };
+        let ticks = ((base * nav_pct.max(0) as u64) / 100).max(1);
+        TravelResolution {
+            roll: RollRecord {
+                by: navigator.text("name").unwrap_or("party").to_owned(),
+                expr: "1d20".to_owned(),
+                dice,
+                total: raw,
+            },
+            ticks,
+            lost: nav_pct > 100,
+        }
     }
 
     /// The system's mechanical ruling for a character *as conditioned*: pass a
@@ -3057,6 +3125,46 @@ end"#,
             2,
             "frightened 2 is a -2 status penalty to the Strike"
         );
+    }
+
+    #[test]
+    fn pf2e_travel_costs_more_when_the_party_loses_the_way() {
+        let mut sys = pf2e_srd();
+        // A keen navigator (WIS 40, +15) beats any DC on an easy route: smooth
+        // travel at the base time, whatever the roll.
+        let mut scout = sys.default_sheet();
+        scout.set_text("name", "Scout");
+        scout.set_int("wis", 40);
+        let smooth = sys.resolve_travel(&scout, 2, 100, &mut Rng::new(1));
+        assert!(!smooth.lost, "a great navigator does not lose the way");
+        assert_eq!(smooth.ticks, 2, "smooth travel is the base (weight 2, normal pace)");
+
+        // A hopeless navigator (WIS 1, -5) on a hard route (weight 20, DC 32)
+        // loses the way on any roll, and pays 150% of the base.
+        let mut greenhorn = sys.default_sheet();
+        greenhorn.set_text("name", "Greenhorn");
+        greenhorn.set_int("wis", 1);
+        let lost = sys.resolve_travel(&greenhorn, 20, 100, &mut Rng::new(1));
+        assert!(lost.lost, "a hopeless navigator on a hard road loses the way");
+        assert_eq!(lost.ticks, 30, "lost is 150% of the base 20");
+    }
+
+    #[test]
+    fn pace_feeds_the_travel_base_and_no_nav_rule_never_loses_the_way() {
+        // Pace scales the base the system rules against; a keen navigator travels
+        // it smoothly, so the ticks track the pace-scaled base directly.
+        let mut sys = pf2e_srd();
+        let mut scout = sys.default_sheet();
+        scout.set_int("wis", 40);
+        assert_eq!(sys.resolve_travel(&scout, 4, 50, &mut Rng::new(2)).ticks, 2, "fast halves the base");
+        assert_eq!(sys.resolve_travel(&scout, 4, 200, &mut Rng::new(2)).ticks, 8, "slow doubles it");
+
+        // 5e declares no nav rule, so the party always finds its way at base cost.
+        let mut plain = srd_5e();
+        let sheet = plain.default_sheet();
+        let calm = plain.resolve_travel(&sheet, 6, 100, &mut Rng::new(3));
+        assert!(!calm.lost, "a system with no nav rule never loses the way");
+        assert_eq!(calm.ticks, 6, "and always pays the base");
     }
 
     /// The action economy and the multiple-attack penalty, both proven against
