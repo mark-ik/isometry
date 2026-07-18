@@ -26,8 +26,13 @@ displacement, conditions, allegiance) grows one type at a time.
 7. **C7: Factions as participants** — worldbuilding rung 7. **LANDED
    2026-07-17/18** (all four slices: downtime tick + UI, time-coupling, radiant
    quests, played-faction channel), below.
-8. **C8: World map (pointcrawl)** — stays deferred per next-horizons' trigger;
-   transition points cover the prepared-locale 80%.
+8. **C8: The overmap (exploration mode)** — **un-deferred 2026-07-18**; Mark
+   pulled the wilderness trigger ("overmap exploration is part of the game").
+   Now the third mode of play, not a travel minigame: the overmap is a pointcrawl
+   graph above the tactical maps, and the wilderness rules ride primitives mostly
+   already shipped. Scoped and scheduled in
+   [2026-07-18_exploration_mode_plan.md](2026-07-18_exploration_mode_plan.md)
+   (phases E0-E5); building from E0.
 9. **C9: Campaign pack options** — the PF2e skeleton **landed 2026-07-17**,
    below. Remaining: a real pixel tileset as pack CSS; pack distribution after
    the murm peer-runtime lands.

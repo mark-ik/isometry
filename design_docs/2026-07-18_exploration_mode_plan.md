@@ -1,8 +1,9 @@
 # Exploration mode
 
 **Date:** 2026-07-18
-**Status:** plan, scoping only. Conditionally un-defers C8. No build committed;
-this decides the shape before the wilderness trigger is pulled.
+**Status:** ACTIVE. **Trigger pulled 2026-07-18** (Mark: "overmap exploration is
+part of the game"). C8 is un-deferred; building from E0. The exploration board is
+the **overmap** (Mark's term): the pointcrawl graph above the tactical maps.
 **Related:**
 [2026-07-07_next_horizons_landscape.md](2026-07-07_next_horizons_landscape.md)
 (decision 2 deferred the WORLD tier; this revisits its trigger),
@@ -36,11 +37,14 @@ and exhaustion) are the *mode itself*. This doc scopes that mode. It does not
 re-scope the graph, which the tile-geometry seam plan already frames as one
 generalization shared with hex and triangle.
 
-## The trigger, restated
+## The trigger, pulled (2026-07-18)
 
 Next-horizons decision 2 deferred the WORLD tier with a specific trigger:
-"Isometry explicitly targeting wilderness-exploration play." That is still the
-product question. What has changed since it was written (2026-07-07):
+"Isometry explicitly targeting wilderness-exploration play." **Mark pulled it on
+2026-07-18**: overmap exploration is part of the game. So the product question is
+answered, and this is now an active build lane rather than a conditional one.
+What had changed since the trigger was written (2026-07-07), which is why the
+cost was already low when the call came:
 
 - C3 gave every map an absolute tick clock and a pass-time verb (`TimeAdvanced`).
 - C7 built the world/downtime tick and banked time (`BANK_PER_MOVE`), which is
@@ -241,4 +245,6 @@ resolver, E3-E5 are Lua-heavy and lean on primitives already shipped.
   foraging, `EncounterAnchor` = encounter triggers, `resolve_action` = the
   resolver template); isolates the two new pieces (the pointcrawl graph, cited to
   the tile-geometry seam plan, and a travel resolver). Recommends emergent mode
-  (option A). No build committed; gated behind the wilderness trigger.
+  (option A).
+- **2026-07-18:** **trigger pulled.** Mark: overmap exploration is part of the
+  game. Status ACTIVE; the board is named the *overmap*. Building from E0.

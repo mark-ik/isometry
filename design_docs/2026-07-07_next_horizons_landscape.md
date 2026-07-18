@@ -426,6 +426,10 @@ probes.
    getting-lost rolls is a heavier, separable feature that matters mainly
    for hexcrawl/wilderness-sandbox campaigns. Revisit the trigger: Isometry
    explicitly targeting wilderness-exploration play.
+   **UPDATE 2026-07-18: trigger pulled.** Mark: overmap exploration is part of the
+   game. The WORLD tier is now an active lane, reframed as *exploration mode* (the
+   third mode of play). See
+   [2026-07-18_exploration_mode_plan.md](2026-07-18_exploration_mode_plan.md).
 3. **Token identity across map swaps.** When the host switches the active
    map, do tokens/initiative/fog persist per-map or migrate with a
    travelling party? Gates the transition and world-graph design.
