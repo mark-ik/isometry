@@ -248,3 +248,21 @@ resolver, E3-E5 are Lua-heavy and lean on primitives already shipped.
   (option A).
 - **2026-07-18:** **trigger pulled.** Mark: overmap exploration is part of the
   game. Status ACTIVE; the board is named the *overmap*. Building from E0.
+- **2026-07-18:** **E0 substrate core landed.** `Overmap` in `isometry-core`
+  (`overmap.rs`): a pointcrawl graph (`OvermapNode` sites, weighted `OvermapEdge`
+  routes, directed or not) with `neighbours`, `reachable_within(from, budget)`,
+  and `route(from, to)`. Pure geometry, 4 tests green. Two findings:
+  1. **Weighted Dijkstra, not the grid's uniform BFS.** The doc said E0 reuses
+     `reachable`; it reuses the *shape* (reachable-within-budget + a path) but not
+     the code, because overmap routes carry unequal weights and uniform BFS
+     cannot cost them. The overmap owns a small bounded Dijkstra instead.
+  2. **The graph likely projects from `CampaignWorld`, not a new authored field.**
+     `CampaignWorld` already models geography as `places` + `routes` (W-plan).
+     The next E0 increment (the party sitting on a node, moving along edges) is
+     probably an `Overmap` *projected* from those (nodes = places, edges =
+     routes + a weight), with the party's node as session state, rather than a
+     second authored graph. Open: `WorldRoute` has no weight yet (derive from
+     place positions, or add one). This keeps the overmap primitive pure and the
+     authored geography single-sourced.
+  Remaining E0: the projection + the party's position on the overmap + moving it,
+  which is the session/app wiring the done-condition names.
