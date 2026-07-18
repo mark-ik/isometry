@@ -23,6 +23,14 @@ use crate::{
     WorldCharacter, WorldEvent, WorldFaction, WorldPlace,
 };
 
+/// World-time a faction must have banked to earn one extra move beyond its
+/// baseline one. More time spent in a scene means a bigger downtime tick.
+const BANK_PER_MOVE: i64 = 10;
+
+/// The most extra moves banked time can buy, so a long absence does not spawn an
+/// unbounded batch. One baseline plus this is the 2-4 events the tick aims for.
+const MAX_EXTRA_MOVES: i64 = 3;
+
 /// What a faction does on its downtime turn: the Stars-Without-Number verb set.
 /// Each is a shape of move the tick can roll, and each writes the world its own
 /// way -- courting brings in a person, fracturing splits off a rival, expanding
@@ -85,19 +93,78 @@ impl FactionMove {
 }
 
 impl CampaignWorld {
-    /// One downtime tick: a move per committed faction, at world time `tick`,
-    /// drawn from a host entropy tape. Pure and replayable; the DM edits and
-    /// commits the batch through [`crate::WorldEvent`]s. Factions are visited in
-    /// id order (the map's), so the draw sequence -- and thus the batch -- is
-    /// stable for a given world, tick, and seed.
+    /// One downtime tick, at world time `tick`, drawn from a host entropy tape.
+    /// Each faction gets a baseline move plus one per [`BANK_PER_MOVE`] of banked
+    /// world time (capped), so the tick is *proportional to the time the table
+    /// spent away* -- a long scene earns the factions a busy downtime, a short
+    /// one barely stirs them. Pure and replayable: the DM edits and commits the
+    /// batch through [`crate::WorldEvent`]s, and the commit empties each acting
+    /// faction's bank. Factions are visited in id order, so the draw sequence --
+    /// and thus the batch -- is stable for a given world, tick, and seed.
     pub fn faction_turn(&self, tick: i64, tape: &mut EntropyTape) -> Vec<FactionMove> {
-        self.factions
-            .values()
-            .map(|faction| {
+        let mut moves = Vec::new();
+        for faction in self.factions.values() {
+            for _ in 0..self.move_budget(&faction.id) {
                 let verb = FactionVerb::from_draw(tape.draw());
-                self.build_move(faction, verb, tick, tape)
-            })
-            .collect()
+                moves.push(self.build_move(faction, verb, tick, tape));
+            }
+        }
+        moves
+    }
+
+    /// How many moves a faction earns this tick: one baseline, plus one per
+    /// [`BANK_PER_MOVE`] of banked world time on its sheet, capped. A faction
+    /// with no sheet (or no banked time) still acts once -- a turn is a turn.
+    pub fn move_budget(&self, faction: &str) -> u32 {
+        let banked = self
+            .faction_sheet(faction)
+            .and_then(|sheet| sheet.get("banked_time"))
+            .copied()
+            .unwrap_or(0);
+        let extra = (banked / BANK_PER_MOVE).clamp(0, MAX_EXTRA_MOVES);
+        1 + extra as u32
+    }
+
+    /// Faction demand as quest supply (rung 7's radiant loop): every faction
+    /// whose sheet names something it `wants` and does not `have` gets a storylet
+    /// with that faction cast as patron. The deficit is the faction's own
+    /// numbers -- `want_<thing>` over `have_<thing>` -- so what a faction lacks
+    /// becomes a standing reason for the party to fetch it. Pure; the DM commits
+    /// the proposals like any other storylet.
+    pub fn radiant_quests(&self) -> Vec<StoryletProposal> {
+        let mut quests = Vec::new();
+        for (id, sheet) in &self.faction_sheets {
+            let Some(faction) = self.factions.get(id) else {
+                continue;
+            };
+            for (key, wanted) in sheet {
+                let Some(thing) = key.strip_prefix("want_") else {
+                    continue;
+                };
+                let held = sheet.get(&format!("have_{thing}")).copied().unwrap_or(0);
+                if *wanted <= held {
+                    continue; // no deficit: the faction has enough
+                }
+                quests.push(StoryletProposal {
+                    key: format!("{id}.demand.{thing}"),
+                    entry: format!("The {} needs {thing}.", faction.name),
+                    // The patron tag is how the faction is cast: a storylet the
+                    // table plays *for* this faction, not merely near it.
+                    tags: vec!["radiant".to_owned(), format!("patron:{id}")],
+                    requirements: StoryletRequirements {
+                        // Playable while the faction that wants it still stands.
+                        faction_tags: faction.tags.first().cloned().into_iter().collect(),
+                        hidden_facts: Vec::new(),
+                        world_laws: Vec::new(),
+                    },
+                    // No role slot: the patron is the faction (the tag), not a
+                    // person to cast. Roles are people; a faction is not one.
+                    roles: Vec::new(),
+                    effects: Vec::new(),
+                });
+            }
+        }
+        quests
     }
 
     fn build_move(
@@ -206,8 +273,14 @@ fn ally_name(nonce: u64) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
     use crate::StoryletError;
+
+    fn faction_sheet(fields: &[(&str, i64)]) -> BTreeMap<String, i64> {
+        fields.iter().map(|(k, v)| (k.to_owned().to_owned(), *v)).collect()
+    }
 
     fn faction(id: &str, name: &str, tags: &[&str]) -> WorldFaction {
         WorldFaction {
@@ -316,5 +389,70 @@ mod tests {
             }
         }
         panic!("a raid move is reachable within 64 seeds");
+    }
+
+    #[test]
+    fn banked_time_makes_a_proportional_tick() {
+        let mut world = world_with(vec![faction("tide", "Tide Court", &["river"])]);
+        // No sheet, no banked time: a turn is still a turn -- one move.
+        assert_eq!(world.move_budget("tide"), 1);
+        let mut tape = EntropyTape::from_seed(1);
+        assert_eq!(world.faction_turn(1, &mut tape).len(), 1);
+
+        // Bank 25 units of world time: 1 + min(25/10, 3) = 3 moves. A long scene
+        // earns a busy downtime.
+        world
+            .faction_sheets
+            .insert("tide".to_owned(), faction_sheet(&[("banked_time", 25)]));
+        assert_eq!(world.move_budget("tide"), 3);
+        let mut tape = EntropyTape::from_seed(1);
+        assert_eq!(
+            world.faction_turn(1, &mut tape).len(),
+            3,
+            "the tick is proportional to time spent away"
+        );
+
+        // The cap holds: a long absence cannot spawn an unbounded batch.
+        world
+            .faction_sheets
+            .insert("tide".to_owned(), faction_sheet(&[("banked_time", 10_000)]));
+        assert_eq!(world.move_budget("tide"), 4, "one baseline plus the cap of 3");
+    }
+
+    #[test]
+    fn a_faction_wants_what_it_lacks_and_that_becomes_a_patron_quest() {
+        let mut world = world_with(vec![faction("mages", "Mages Guild", &["arcane"])]);
+        world.faction_sheets.insert(
+            "mages".to_owned(),
+            // Wants 5 lodestone, holds 1: a deficit. Wants 3 gold, holds 3: met.
+            faction_sheet(&[
+                ("want_lodestone", 5),
+                ("have_lodestone", 1),
+                ("want_gold", 3),
+                ("have_gold", 3),
+            ]),
+        );
+
+        let quests = world.radiant_quests();
+        assert_eq!(quests.len(), 1, "only the unmet want spawns a quest");
+        let quest = &quests[0];
+        assert_eq!(quest.key, "mages.demand.lodestone");
+        assert!(
+            quest.tags.contains(&"patron:mages".to_owned()),
+            "the faction is cast as patron"
+        );
+        assert!(quest.entry.contains("lodestone"), "the demand names the need");
+        // And it is playable right now: the guild carries the tag it requires.
+        assert!(
+            world.resolve_storylet(quest, []).is_ok(),
+            "a radiant quest is eligible the moment the deficit exists"
+        );
+
+        // Fill the deficit and it stops generating: quest supply tracks demand.
+        world.faction_sheets.insert(
+            "mages".to_owned(),
+            faction_sheet(&[("want_lodestone", 5), ("have_lodestone", 5)]),
+        );
+        assert!(world.radiant_quests().is_empty(), "a met want is no quest");
     }
 }

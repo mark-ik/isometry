@@ -1374,6 +1374,55 @@ fn a_faction_turn_commits_and_every_peer_lives_in_the_changed_world() {
 }
 
 #[test]
+fn banked_time_makes_a_bigger_tick_and_the_commit_empties_the_bank() {
+    let mut snap = snapshot();
+    snap.world.factions.insert(
+        "tide".to_owned(),
+        WorldFaction {
+            id: "tide".into(),
+            name: "Tide Court".into(),
+            tags: vec!["river".into()],
+            claims: vec![],
+        },
+    );
+    // The table spent a long scene away: 25 units banked toward this faction.
+    snap.world
+        .faction_sheets
+        .insert("tide".to_owned(), BTreeMap::from([("banked_time".to_owned(), 25)]));
+    let mut sim = Sim::new(HostSession::new(snap));
+    sim.connect(PeerId(10));
+
+    let mut tape = EntropyTape::from_seed(3);
+    let moves = sim.host.state().world.faction_turn(5, &mut tape);
+    assert_eq!(moves.len(), 3, "banked 25 => one baseline plus two earned moves");
+    sim.host_faction_turn(moves).expect("the tick commits");
+
+    // The tick was proportional (3 faction-turn history events), and acting
+    // emptied the bank -- on every peer, so the same time cannot be spent twice.
+    let banked = |s: &GameSnapshot| {
+        s.world
+            .faction_sheet("tide")
+            .and_then(|m| m.get("banked_time"))
+            .copied()
+    };
+    let logged = |s: &GameSnapshot| {
+        s.world
+            .history
+            .iter()
+            .filter(|h| h.kind == "faction-turn" && h.time == 5)
+            .count()
+    };
+    assert_eq!(logged(sim.host.state()), 3);
+    assert_eq!(banked(sim.host.state()), Some(0), "the bank emptied on the host");
+    assert_eq!(
+        banked(sim.clients[&PeerId(10)].state().unwrap()),
+        Some(0),
+        "and on the client -- the spend is replicated truth"
+    );
+    assert_converged(&sim);
+}
+
+#[test]
 fn storylet_matches_private_fact_casts_existing_role_and_commits_effects() {
     let mut host = HostSession::new(snapshot());
     host.campaign_mut().insert_secret(SecretFact {

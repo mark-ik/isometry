@@ -22,6 +22,16 @@ pub struct CampaignWorld {
     pub history: Vec<HistoryEvent>,
     #[serde(default)]
     pub storylets: BTreeMap<String, StoryletProposal>,
+    /// A faction's mutable numbers, keyed by faction id: banked downtime time,
+    /// and the `want_<thing>` / `have_<thing>` pairs that drive radiant quests.
+    /// A faction's "sheet" at a different scale, but integers only for now --
+    /// enough for banking and demand, and `Eq` (unlike the float-carrying
+    /// `SheetData` a token holds). Promoting it to a full sheet a system can read
+    /// through its Lua is the "abilities are projections" refinement. Unlike the
+    /// immutable identity in [`Self::factions`], this changes as a faction acts,
+    /// so it overwrites rather than insert-onces.
+    #[serde(default)]
+    pub faction_sheets: BTreeMap<String, BTreeMap<String, i64>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -226,7 +236,19 @@ impl CampaignWorld {
                 Ok(())
             }
             WorldEvent::Storylet(value) => insert_same(&mut self.storylets, &value.key, value),
+            WorldEvent::FactionSheet { faction, sheet } => {
+                // A faction's resources change as it acts, so this overwrites --
+                // it is the one mutable world entity, and the reason it is a
+                // separate variant rather than another insert_same registry.
+                self.faction_sheets.insert(faction.clone(), sheet.clone());
+                Ok(())
+            }
         }
+    }
+
+    /// A faction's mutable numbers, if it has any bound yet.
+    pub fn faction_sheet(&self, faction: &str) -> Option<&BTreeMap<String, i64>> {
+        self.faction_sheets.get(faction)
     }
 }
 
@@ -258,6 +280,12 @@ pub enum WorldEvent {
     Law(WorldLaw),
     History(HistoryEvent),
     Storylet(StoryletProposal),
+    /// Bind or update a faction's mutable numbers. Overwrites, because a
+    /// faction's resources and banked time change as it acts.
+    FactionSheet {
+        faction: String,
+        sheet: BTreeMap<String, i64>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

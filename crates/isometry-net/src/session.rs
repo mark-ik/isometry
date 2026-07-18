@@ -9,7 +9,8 @@ use std::collections::HashMap;
 use codicil::Codicil;
 use isometry_campaign::{
     CampaignStore, FactionMove, GenerationRecord, GenerationRecordError, InventoryError, ItemId,
-    ItemInstance, ItemModifierReveal, MapScale, StoryletEffect, WorldError, WorldEvent, WorldFact,
+    ItemInstance, ItemModifierReveal, MapScale, StoryletEffect, StoryletProposal, WorldError,
+    WorldEvent, WorldFact,
 };
 use isometry_core::{apply, EventError, TileCoord, TokenId};
 
@@ -737,15 +738,59 @@ impl HostSession {
     /// the whole batch lands in the ordered log and replicates to every peer.
     /// Staged on a clone first, so one rejected move cannot half-apply the tick.
     pub fn commit_faction_turn(&mut self, moves: Vec<FactionMove>) -> Result<Vec<Outbound>, String> {
-        let events: Vec<GameEvent> = moves
+        // A faction empties its bank when it acts: the moves it earned are the
+        // time it spent, so the same banked time cannot buy a busy tick twice.
+        // Collected before the moves are consumed; a faction with nothing banked
+        // gets no spend event, so a sheetless world is untouched.
+        let acted: std::collections::BTreeSet<String> =
+            moves.iter().map(|m| m.faction.clone()).collect();
+        let mut events: Vec<GameEvent> = moves
             .into_iter()
             .flat_map(FactionMove::into_events)
             .map(GameEvent::World)
             .collect();
+        for faction in acted {
+            let Some(sheet) = self.state.world.faction_sheet(&faction) else {
+                continue;
+            };
+            if sheet.get("banked_time").copied().unwrap_or(0) == 0 {
+                continue;
+            }
+            let mut spent = sheet.clone();
+            spent.insert("banked_time".to_owned(), 0);
+            events.push(GameEvent::World(WorldEvent::FactionSheet {
+                faction,
+                sheet: spent,
+            }));
+        }
         let mut preview = self.state.clone();
         for event in &events {
             apply_game(&mut preview, event)
                 .map_err(|error| format!("faction move rejected: {error:?}"))?;
+        }
+        let mut out = Vec::new();
+        for event in events {
+            out.extend(self.try_commit(event)?);
+        }
+        Ok(out)
+    }
+
+    /// Offer a batch of radiant quests: faction-demand storylets the DM chose to
+    /// make playable. Each enters the world as an ordinary storylet proposal, so
+    /// it shows up in the storylet surface (C6) and can be played while its
+    /// patron faction stands. Staged on a clone, like the faction tick.
+    pub fn commit_radiant_quests(
+        &mut self,
+        quests: Vec<StoryletProposal>,
+    ) -> Result<Vec<Outbound>, String> {
+        let events: Vec<GameEvent> = quests
+            .into_iter()
+            .map(|quest| GameEvent::World(WorldEvent::Storylet(quest)))
+            .collect();
+        let mut preview = self.state.clone();
+        for event in &events {
+            apply_game(&mut preview, event)
+                .map_err(|error| format!("radiant quest rejected: {error:?}"))?;
         }
         let mut out = Vec::new();
         for event in events {
