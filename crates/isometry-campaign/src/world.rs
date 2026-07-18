@@ -32,6 +32,15 @@ pub struct CampaignWorld {
     /// so it overwrites rather than insert-onces.
     #[serde(default)]
     pub faction_sheets: BTreeMap<String, BTreeMap<String, i64>>,
+    /// Who plays each faction: faction id -> the player name granted its
+    /// channel. A faction is an owner name like any other (a token owned by a
+    /// faction id belongs to that faction), and this grant lets a player command
+    /// that faction's tokens as if their own -- the per-channel permission that
+    /// makes a faction *playable* rather than only DM-run. Absent means the DM
+    /// runs it. Session state, not authored content, but it lives beside
+    /// `faction_sheets` because both are the mutable per-faction layer.
+    #[serde(default)]
+    pub faction_control: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -243,12 +252,24 @@ impl CampaignWorld {
                 self.faction_sheets.insert(faction.clone(), sheet.clone());
                 Ok(())
             }
+            WorldEvent::FactionControlSet { faction, player } => {
+                match player {
+                    Some(name) => self.faction_control.insert(faction.clone(), name.clone()),
+                    None => self.faction_control.remove(faction),
+                };
+                Ok(())
+            }
         }
     }
 
     /// A faction's mutable numbers, if it has any bound yet.
     pub fn faction_sheet(&self, faction: &str) -> Option<&BTreeMap<String, i64>> {
         self.faction_sheets.get(faction)
+    }
+
+    /// The player who plays `faction`, if its channel has been granted to one.
+    pub fn faction_controller(&self, faction: &str) -> Option<&str> {
+        self.faction_control.get(faction).map(String::as_str)
     }
 }
 
@@ -285,6 +306,13 @@ pub enum WorldEvent {
     FactionSheet {
         faction: String,
         sheet: BTreeMap<String, i64>,
+    },
+    /// Grant (or, with `None`, revoke) a player's control of a faction's channel.
+    /// The DM's ruling; every peer applies it, and a controlling player may then
+    /// command the faction's tokens.
+    FactionControlSet {
+        faction: String,
+        player: Option<String>,
     },
 }
 

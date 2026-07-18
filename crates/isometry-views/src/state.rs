@@ -1713,11 +1713,26 @@ impl UiState {
     /// Whether a token should be drawn: always when omniscient, always if
     /// it is the viewer's own, otherwise only while in current sight (you
     /// see foes only when they are lit).
+    /// Whether the local viewer commands a token with this `owner`: it is
+    /// theirs, or it belongs to a faction whose channel they have been granted.
+    /// Additive over direct ownership, so a viewer with no faction grant behaves
+    /// exactly as before. The DM (no viewer) is omniscient by other paths, so
+    /// this stays false for them.
+    pub fn commands(&self, owner: Option<&str>) -> bool {
+        let Some(viewer) = self.viewer.as_deref() else {
+            return false;
+        };
+        let Some(owner) = owner else {
+            return false;
+        };
+        owner == viewer || self.world.faction_controller(owner) == Some(viewer)
+    }
+
     pub fn token_visible(&self, token: &Token) -> bool {
         if !self.fog_active() {
             return true;
         }
-        token.owner.as_deref() == self.viewer.as_deref() || self.visible.contains(&token.at)
+        self.commands(token.owner.as_deref()) || self.visible.contains(&token.at)
     }
 
     /// Recompute the visible set from the viewer's tokens and fold it into
@@ -1734,7 +1749,7 @@ impl UiState {
             .map
             .tokens
             .iter()
-            .filter(|t| t.owner.as_deref() == self.viewer.as_deref())
+            .filter(|t| self.commands(t.owner.as_deref()))
             .map(|t| {
                 let (_, sight) = self
                     .map
@@ -2887,6 +2902,24 @@ mod tests {
         ui.faction_moves.iter_mut().for_each(|m| m.struck = true);
         ui.commit_downtime();
         assert!(!ui.downtime_commit_request, "nothing kept, nothing to commit");
+    }
+
+    #[test]
+    fn a_viewer_commands_a_faction_only_once_granted_its_channel() {
+        let mut ui = UiState::new(demo_map());
+        ui.viewer = Some("B".to_owned());
+
+        // Ungranted, a faction's token is not B's to command.
+        assert!(!ui.commands(Some("tide")));
+        // Grant B the Tide Court's channel (as the replicated world would carry).
+        ui.world.faction_control.insert("tide".to_owned(), "B".to_owned());
+        assert!(ui.commands(Some("tide")), "the grant extends command to the faction");
+
+        // Direct ownership is unchanged, and a stranger's token stays off-limits.
+        assert!(ui.commands(Some("B")));
+        assert!(!ui.commands(Some("A")));
+        assert!(!ui.commands(Some("ash")), "an unrelated faction is not B's");
+        assert!(!ui.commands(None), "a DM token is nobody's to a player");
     }
 
     #[test]

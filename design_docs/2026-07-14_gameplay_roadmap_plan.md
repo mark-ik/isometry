@@ -23,10 +23,9 @@ displacement, conditions, allegiance) grows one type at a time.
 4. **C4: Generators + command grammar** — **landed 2026-07-15**, below.
 5. **C5: Multi-character parties + recruitment** — **landed 2026-07-15**, below.
 6. **C6: Dialogue** — **landed 2026-07-15**, below.
-7. **C7: Factions as participants** — worldbuilding rung 7. **Foundation (the
-   downtime tick + commit path) landed 2026-07-17**, below; the played-faction
-   channel and the richer slices build on it now that the moot/murm rebase has
-   cleared.
+7. **C7: Factions as participants** — worldbuilding rung 7. **LANDED
+   2026-07-17/18** (all four slices: downtime tick + UI, time-coupling, radiant
+   quests, played-faction channel), below.
 8. **C8: World map (pointcrawl)** — stays deferred per next-horizons' trigger;
    transition points cover the prepared-locale 80%.
 9. **C9: Campaign pack options** — the PF2e skeleton **landed 2026-07-17**,
@@ -285,11 +284,11 @@ disambiguated per grant, matching the replay-safe Fact/History effects; and a
 session storylet outcome reused the campaign-commit channel, mislabelling itself
 "committed campaign draft" — the shared outcome text is now neutral.
 
-## C7: Factions as participants (FOUNDATION landed 2026-07-17)
+## C7: Factions as participants (LANDED 2026-07-17/18)
 
-**The world acts on itself between scenes.** Rung 7 of the worldbuilding plan.
-The foundation -- the downtime tick and its commit path -- landed once the
-moot/murm rebase cleared; the three richer parts (below) build on it.
+**The world acts on itself between scenes, and a faction can be played.** Rung 7
+of the worldbuilding plan. The foundation -- the downtime tick and its commit
+path -- landed once the moot/murm rebase cleared; all four slices followed.
 
 - **A faction move is a bundle of world events.** A tick draws one move per
   committed faction from the world's own state and a host entropy tape; each
@@ -313,19 +312,46 @@ moot/murm rebase cleared; the three richer parts (below) build on it.
   than mutates -- the design leans into the append-only world instead of
   fighting it.
 
-Verified: `one_move_per_faction_and_the_tick_is_replayable`,
-`a_faction_turn_reaches_the_storylet_graph`, `a_raid_is_a_rumor_with_no_world_change`
-(campaign), and `a_faction_turn_commits_and_every_peer_lives_in_the_changed_world`
-(net, both peers hold the same history and change). The done-when is met at the
-mechanism layer; the genet preview/edit table is the app-wiring, next.
+The four slices, all landed:
 
-**Still to build (each its own slice):** the genet preview/edit UI; time-coupling
-(the tick proportional to banked world time, rendered as a "meanwhile"
-interstitial); radiant quests (a faction's resource deficit spawns a storylet
-with the faction cast as patron); and the played-faction channel (a faction as
-an owner name a player or the table controls, the per-channel permission the
-moot/murm rebase unblocked). Faction *sheets* (resources/people driving which
-verb a faction can afford) come with the radiant-quest slice.
+1. **The downtime UI** (`downtime.rs`): a DM-only "Downtime" button rolls a tick;
+   the surface shows the batch a move at a time (through Cambium's catalog
+   `summary_body` -- isometry's first catalog composition), and the DM cycles,
+   strikes, rerolls, and commits the keepers. Solo runs a local `HostSession`; in
+   a live session (the DM hosts as `net_mode Remote`) it routes through a
+   `BridgeCommand::FactionTurn`.
+2. **Time-coupling.** Each faction earns a baseline move plus one per
+   `BANK_PER_MOVE` of banked world time on its sheet (capped), and the commit
+   empties the bank -- a long scene makes a busy downtime, and the same time
+   cannot be spent twice.
+3. **Radiant quests.** A faction whose sheet `want_`s something it does not
+   `have` gets a storylet with that faction cast as patron (`patron:<id>` tag);
+   fill the deficit and it stops generating.
+4. **The played-faction channel.** A faction is an owner name like any other, and
+   a `WorldEvent::FactionControlSet` grant lets a player command that faction's
+   tokens -- the per-channel permission. Enforced authoritatively (`peer_owns`)
+   and mirrored in the local UI (`UiState::commands` extends fog and reach), so a
+   granted player plays the faction end to end and a stranger cannot.
+
+Faction *sheets* arrived as `CampaignWorld.faction_sheets` -- integer resources
+for banking and demand (not full `SheetData`; promoting them for system-Lua
+reading is the "abilities are projections" refinement).
+
+Verified across `one_move_per_faction_and_the_tick_is_replayable`,
+`a_faction_turn_reaches_the_storylet_graph`, `banked_time_makes_a_proportional_tick`,
+`a_faction_wants_what_it_lacks_and_that_becomes_a_patron_quest` (campaign);
+`a_faction_turn_commits_and_every_peer_lives_in_the_changed_world`,
+`banked_time_makes_a_bigger_tick_and_the_commit_empties_the_bank`,
+`a_granted_player_plays_a_faction_and_a_stranger_may_not` (net); and
+`the_downtime_surface_is_dm_only_and_commits_only_the_kept`,
+`a_viewer_commands_a_faction_only_once_granted_its_channel` (views).
+
+**Follow-ups, noted:** a dedicated "meanwhile" interstitial (the committed moves
+render only in the downtime surface + history for now, not a between-scenes
+narration card); a DM UI to grant faction channels (the grant is a plain
+`FactionControlSet` event today); and letting a granted player run *their*
+faction's downtime tick (the tick is host-only). A headed genet-probe pass over
+the downtime surface is the runtime-verification lane not yet exercised.
 
 ## C9a: The PF2e skeleton (LANDED 2026-07-17)
 

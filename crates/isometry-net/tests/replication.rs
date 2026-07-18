@@ -1374,6 +1374,78 @@ fn a_faction_turn_commits_and_every_peer_lives_in_the_changed_world() {
 }
 
 #[test]
+fn a_granted_player_plays_a_faction_and_a_stranger_may_not() {
+    let mut snap = snapshot();
+    // The goblin (token 2) is the Tide Court's furniture, not any player's.
+    snap.map.tokens[1].owner = Some("tide".to_owned());
+    snap.world.factions.insert(
+        "tide".to_owned(),
+        WorldFaction {
+            id: "tide".into(),
+            name: "Tide Court".into(),
+            tags: vec!["river".into()],
+            claims: vec![],
+        },
+    );
+    let mut sim = Sim::new(HostSession::new(snap));
+    sim.connect(PeerId(10));
+    sim.client_hello(PeerId(10), "B");
+
+    // Ungranted, B cannot even emote the faction's token: it is not B's, and no
+    // channel has been handed over.
+    sim.client_intent(
+        PeerId(10),
+        GameEvent::Emoted {
+            token: TokenId(2),
+            beat: "cheer".to_owned(),
+        },
+    );
+    assert!(
+        sim.host.state().last_beats.is_empty(),
+        "a stranger cannot command a faction's token"
+    );
+
+    // The DM grants B the Tide Court's channel. Now B plays the faction: a
+    // faction is an owner name, and the grant is the per-channel permission.
+    sim.host_event(GameEvent::World(WorldEvent::FactionControlSet {
+        faction: "tide".to_owned(),
+        player: Some("B".to_owned()),
+    }));
+    sim.client_intent(
+        PeerId(10),
+        GameEvent::Emoted {
+            token: TokenId(2),
+            beat: "cheer".to_owned(),
+        },
+    );
+    assert_eq!(
+        sim.host.state().last_beats,
+        &[Beat::new(TokenId(2), "cheer")],
+        "a granted player commands the faction's token as its own"
+    );
+
+    // Revoke, and the faction returns to the DM: B is a stranger again, so a
+    // fresh emote is refused and the last beat is still the granted one.
+    sim.host_event(GameEvent::World(WorldEvent::FactionControlSet {
+        faction: "tide".to_owned(),
+        player: None,
+    }));
+    sim.client_intent(
+        PeerId(10),
+        GameEvent::Emoted {
+            token: TokenId(2),
+            beat: "taunt".to_owned(),
+        },
+    );
+    assert_eq!(
+        sim.host.state().last_beats,
+        &[Beat::new(TokenId(2), "cheer")],
+        "after revoke the channel is the DM's again, so the taunt never played"
+    );
+    assert_converged(&sim);
+}
+
+#[test]
 fn banked_time_makes_a_bigger_tick_and_the_commit_empties_the_bank() {
     let mut snap = snapshot();
     snap.world.factions.insert(

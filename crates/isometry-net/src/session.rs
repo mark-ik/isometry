@@ -1041,17 +1041,20 @@ impl HostSession {
         }
     }
 
-    /// Whether the peer's announced player name owns `token`. A DM-controlled
-    /// token (`owner: None`) belongs to nobody, so no client owns it.
+    /// Whether the peer's announced player name may command `token`: either it
+    /// owns the token directly, or the token is owned by a faction whose channel
+    /// the player has been granted. A DM-controlled token (`owner: None`)
+    /// belongs to nobody, so no client owns it.
     fn peer_owns(&self, peer: PeerId, token: TokenId) -> bool {
-        let Some(name) = self.peer_names.get(&peer) else {
+        let Some(name) = self.peer_names.get(&peer).map(String::as_str) else {
             return false;
         };
-        self.state
-            .map
-            .token(token)
-            .and_then(|t| t.owner.as_deref())
-            .is_some_and(|owner| owner == name)
+        let Some(owner) = self.state.map.token(token).and_then(|t| t.owner.as_deref()) else {
+            return false;
+        };
+        // A faction is an owner name like any other; playing it means holding its
+        // channel, so the grant extends command to the faction's tokens.
+        owner == name || self.state.world.faction_controller(owner) == Some(name)
     }
 
     /// The DM whispers to the player named `to`. Returns a directed
