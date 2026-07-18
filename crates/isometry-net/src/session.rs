@@ -138,8 +138,8 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
             for token in &res.defeated {
                 state.map.set_defeated(*token, true);
             }
-            for (token, name, on) in &res.conditions {
-                state.map.set_condition(*token, name, *on);
+            for (token, name, value) in &res.conditions {
+                state.map.set_condition(*token, name, *value);
             }
             for (token, mobility) in &res.mobility {
                 state.map.set_mobility(*token, *mobility);
@@ -176,11 +176,11 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
         GameEvent::ConditionSet {
             token,
             condition,
-            on,
+            value,
             mobility,
         } => {
             require_token(state, *token)?;
-            state.map.set_condition(*token, condition, *on);
+            state.map.set_condition(*token, condition, *value);
             state.map.set_mobility(*token, *mobility);
             sync_active_map(state);
             Ok(())

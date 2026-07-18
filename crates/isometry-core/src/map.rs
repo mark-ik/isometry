@@ -74,13 +74,17 @@ pub struct MapDocument {
     /// and let the view show it as fallen. `serde(default)` so older saves load.
     #[serde(default)]
     pub defeated: BTreeSet<TokenId>,
-    /// Named conditions on tokens (`prone`, `blinded`, ...). Opaque to the
-    /// substrate: a system plugin decides what a name means and when it applies;
-    /// the substrate stores it for display, for the rules' own reading, and for
-    /// pack CSS (`cond-<name>` on the board). The *mechanical* projection of a
-    /// condition arrives separately as [`Self::mobility`] numbers.
+    /// Named conditions on tokens, each carrying a magnitude: `frightened 2`,
+    /// `clumsy 1`, or a plain on/off `prone` stored as 1. Opaque to the
+    /// substrate: a system plugin decides what a name means, what its number
+    /// means, and when it applies; the substrate stores it for display, for the
+    /// rules' own reading (injected as an integer the script reads with
+    /// `c.frightened`), and for pack CSS (`cond-<name>` on the board). A value
+    /// of zero is not stored -- absent and cleared are the same state. The
+    /// *mechanical* projection of a condition (a slowed creature's move budget)
+    /// still arrives separately as [`Self::mobility`] numbers.
     #[serde(default)]
-    pub conditions: BTreeMap<TokenId, BTreeSet<String>>,
+    pub conditions: BTreeMap<TokenId, BTreeMap<String, i64>>,
     /// The system's current mechanical ruling per token: `(move budget, sight
     /// radius)` in tiles. Host-computed by the rules whenever conditions change,
     /// then replicated, because clients hold no rules engine and fog and reach
@@ -118,22 +122,36 @@ impl MapDocument {
         }
     }
 
-    /// Whether `id` currently has the named condition.
+    /// Whether `id` currently has the named condition at any magnitude.
     pub fn has_condition(&self, id: TokenId, name: &str) -> bool {
         self.conditions
             .get(&id)
-            .is_some_and(|set| set.contains(name))
+            .is_some_and(|c| c.contains_key(name))
     }
 
-    /// Apply or clear one named condition. The substrate has no opinion about
-    /// the name; the caller (the rules, via a replicated event) supplies the
-    /// mechanical consequences separately through [`Self::set_mobility`].
-    pub fn set_condition(&mut self, id: TokenId, name: &str, on: bool) {
-        if on {
-            self.conditions.entry(id).or_default().insert(name.to_owned());
-        } else if let Some(set) = self.conditions.get_mut(&id) {
-            set.remove(name);
-            if set.is_empty() {
+    /// The magnitude of `id`'s named condition, zero when absent. `frightened 2`
+    /// reads 2; a plain on/off condition reads 1; nothing reads 0.
+    pub fn condition_value(&self, id: TokenId, name: &str) -> i64 {
+        self.conditions
+            .get(&id)
+            .and_then(|c| c.get(name))
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Set one named condition to `value`, or clear it when `value <= 0`. On/off
+    /// callers pass 1. The substrate has no opinion about the name or the number;
+    /// the caller (the rules, via a replicated event) supplies the mechanical
+    /// consequences separately through [`Self::set_mobility`].
+    pub fn set_condition(&mut self, id: TokenId, name: &str, value: i64) {
+        if value > 0 {
+            self.conditions
+                .entry(id)
+                .or_default()
+                .insert(name.to_owned(), value);
+        } else if let Some(c) = self.conditions.get_mut(&id) {
+            c.remove(name);
+            if c.is_empty() {
                 self.conditions.remove(&id);
             }
         }
@@ -288,6 +306,29 @@ mod tests {
         m.clear_turn_counters(a);
         assert_eq!(m.turn_counter(a, "strikes"), 0);
         assert!(m.turn_counters.get(&a).is_none());
+    }
+
+    #[test]
+    fn conditions_carry_a_magnitude() {
+        let mut m = MapDocument::new("t", 4, 4);
+        let a = TokenId(1);
+        assert_eq!(m.condition_value(a, "frightened"), 0, "absent reads zero");
+        assert!(!m.has_condition(a, "frightened"));
+
+        // On/off and graded share one storage: prone is magnitude 1, frightened
+        // is 2, and both answer has_condition.
+        m.set_condition(a, "prone", 1);
+        m.set_condition(a, "frightened", 2);
+        assert!(m.has_condition(a, "prone"));
+        assert_eq!(m.condition_value(a, "frightened"), 2);
+        assert_eq!(m.condition_value(a, "prone"), 1);
+
+        // Setting to zero clears -- absent and cleared are one state, so a
+        // token with no conditions stores nothing.
+        m.set_condition(a, "prone", 0);
+        assert!(!m.has_condition(a, "prone"));
+        m.set_condition(a, "frightened", 0);
+        assert!(m.conditions.get(&a).is_none());
     }
 
     #[test]

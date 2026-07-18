@@ -459,7 +459,7 @@ fn walking_through_a_door_crosses_maps_and_the_board_follows_the_party() {
     sim.host_event(GameEvent::ConditionSet {
         token: TokenId(1),
         condition: "prone".to_owned(),
-        on: true,
+        value: 1,
         mobility: Some((2, 6)),
     });
 
@@ -646,7 +646,7 @@ fn a_condition_and_its_numbers_replicate_and_standing_up_restores_them() {
     if let GameEvent::ActionResolved(res) = &mut trip {
         res.action_key = "trip".to_owned();
         res.deltas.clear();
-        res.conditions = vec![(TokenId(2), "prone".to_owned(), true)];
+        res.conditions = vec![(TokenId(2), "prone".to_owned(), 1)];
         res.mobility = vec![(TokenId(2), Some((2, 6)))];
     }
     sim.host_event(trip);
@@ -669,7 +669,7 @@ fn a_condition_and_its_numbers_replicate_and_standing_up_restores_them() {
     sim.host_event(GameEvent::ConditionSet {
         token: TokenId(2),
         condition: "prone".to_owned(),
-        on: false,
+        value: 0,
         mobility: None,
     });
     assert_eq!(check(sim.host.state()), (false, (5, 6)));
@@ -683,7 +683,7 @@ fn a_condition_and_its_numbers_replicate_and_standing_up_restores_them() {
         GameEvent::ConditionSet {
             token: TokenId(2),
             condition: "blinded".to_owned(),
-            on: true,
+            value: 1,
             mobility: Some((5, 0)),
         },
     );
@@ -790,6 +790,36 @@ fn a_resolution_addressing_an_unsheeted_token_is_refused_whole() {
         sim.host.seq(),
         seq,
         "a half-appliable resolution entered the log"
+    );
+    assert_converged(&sim);
+}
+
+#[test]
+fn a_graded_condition_replicates_at_its_magnitude() {
+    let mut sim = Sim::new(HostSession::new(snapshot()));
+    sim.connect(PeerId(10));
+    sim.host_event(GameEvent::SheetSet {
+        token: TokenId(2),
+        sheet: sheet("Goblin", 7, 15),
+    });
+
+    // A Demoralize critical: frightened 2, no damage. The magnitude is truth,
+    // so every peer must hold the same number -- "frightened 1" and
+    // "frightened 2" are different states and only one of them is real here.
+    let mut fear = attack_hit(0);
+    if let GameEvent::ActionResolved(res) = &mut fear {
+        res.action_key = "demoralize".to_owned();
+        res.deltas.clear();
+        res.conditions = vec![(TokenId(2), "frightened".to_owned(), 2)];
+    }
+    sim.host_event(fear);
+
+    let value = |s: &GameSnapshot| s.map.condition_value(TokenId(2), "frightened");
+    assert_eq!(value(sim.host.state()), 2);
+    assert_eq!(
+        value(sim.clients[&PeerId(10)].state().unwrap()),
+        2,
+        "the magnitude is game truth, so the client holds 2, not merely 'frightened'"
     );
     assert_converged(&sim);
 }

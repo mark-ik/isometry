@@ -1042,13 +1042,13 @@ impl App {
                 let event = GameEvent::ConditionSet {
                     token,
                     condition: name.clone(),
-                    on: false,
+                    value: 0,
                     mobility,
                 };
                 if ui.net_mode == NetMode::Remote {
                     ui.net_outbox.push(event);
                 } else {
-                    ui.map.set_condition(token, &name, false);
+                    ui.map.set_condition(token, &name, 0);
                     ui.map.set_mobility(token, mobility);
                     ui.recompute_fog();
                     ui.recompute_reach();
@@ -1417,8 +1417,8 @@ impl App {
                     for token in &res.defeated {
                         ui.map.set_defeated(*token, true);
                     }
-                    for (token, name, on) in &res.conditions {
-                        ui.map.set_condition(*token, name, *on);
+                    for (token, name, value) in &res.conditions {
+                        ui.map.set_condition(*token, name, *value);
                     }
                     for (token, mobility) in &res.mobility {
                         ui.map.set_mobility(*token, *mobility);

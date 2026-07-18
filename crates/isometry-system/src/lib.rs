@@ -139,6 +139,13 @@ pub struct TargetSpec {
     /// is system vocabulary; the substrate stores it blind and the mechanical
     /// numbers travel alongside as recomputed mobility.
     pub condition_on_hit: Option<String>,
+    /// Lua `f(c, t, degree) -> magnitude` for a condition that has one:
+    /// PF2e's Demoralize inflicts `frightened 2` on a critical success and
+    /// `frightened 1` on a success, so the number rides the degree ladder.
+    /// `None` means the plain on/off condition of `condition_on_hit`, stored as
+    /// magnitude 1. Opt-in, like the degree and damage-multiplier hooks: a
+    /// system that never needed graded conditions writes nothing.
+    pub condition_value_func: Option<String>,
     /// Whether a hit wins the target over to the actor's side (`convince`). Like
     /// a push, the rules only say *that* it happened; the host rules the rest,
     /// because allegiance lives on the token's owner (which the system never
@@ -203,8 +210,9 @@ pub struct Resolution {
     /// token can stop a shove short, and that is the substrate's ruling. The host
     /// walks it with [`isometry_core::push_path`].
     pub push: Option<((i32, i32), u32)>,
-    /// Conditions this action applied: `(token, name, on)`.
-    pub conditions: Vec<(TokenId, String, bool)>,
+    /// Conditions this action applied: `(token, name, magnitude)`. A magnitude
+    /// of 0 clears the condition; on/off conditions apply as 1.
+    pub conditions: Vec<(TokenId, String, i64)>,
     /// The recomputed `(move budget, sight radius)` for each token whose
     /// conditions changed; `None` clears back to sheet base.
     pub mobility: Vec<(TokenId, Option<(u32, u32)>)>,
@@ -225,11 +233,15 @@ pub struct Resolution {
 /// rather than guarded here.
 pub fn sheet_with_conditions<'a>(
     sheet: &SheetData,
-    conditions: impl IntoIterator<Item = &'a String>,
+    conditions: impl IntoIterator<Item = (&'a String, &'a i64)>,
 ) -> SheetData {
     let mut out = sheet.clone();
-    for name in conditions {
-        out.fields.insert(name.clone(), FieldValue::Bool(true));
+    for (name, value) in conditions {
+        // The magnitude, injected as an integer, so `frightened 2` reads
+        // `c.frightened == 2` and a plain on/off `prone` reads 1. Only present
+        // conditions arrive here (zero is never stored), so `if c.frightened`
+        // stays a clean truthy/nil test -- no truthy Int(0) to trip a script.
+        out.fields.insert(name.clone(), FieldValue::Int(*value));
     }
     out
 }
@@ -1618,6 +1630,7 @@ impl System {
             push_func: spec.push_func.clone(),
             push_beat: spec.push_beat.clone(),
             condition_on_hit: spec.condition_on_hit.clone(),
+            condition_value_func: spec.condition_value_func.clone(),
             recruit_on_hit: spec.recruit_on_hit,
             afford_func: spec.afford_func.clone(),
             turn_effect: spec.turn_effect.clone(),
@@ -1787,17 +1800,33 @@ impl System {
         let mut conditions = Vec::new();
         let mut mobility = Vec::new();
         if hit && defeated.is_empty() {
-            if let Some(name) = spec.condition_on_hit.as_ref() {
-                let already = matches!(
-                    target_sheet.fields.get(name),
-                    Some(FieldValue::Bool(true))
-                );
-                if !already {
-                    conditions.push((target, name.clone(), true));
-                    // The projection, computed against the sheet as it will be:
-                    // with the new condition set.
+            if let Some(name) = spec.condition_on_hit.clone() {
+                // The magnitude: a value func riding the degree ladder (PF2e's
+                // Demoralize -> frightened 2 on a crit, 1 on a plain success), or
+                // a plain 1 for an on/off condition. The substrate stores
+                // whatever number the rules pick; nothing here knows "frightened"
+                // from "prone", or that 2 is worse than 1.
+                let value = match spec.condition_value_func.as_ref() {
+                    Some(f) => self
+                        .call_int_ctx(f, actor_sheet, Some(target_sheet), Some(degree))
+                        .unwrap_or(0),
+                    None => 1,
+                };
+                // Applying on a hit can only *worsen* a condition, never lift it:
+                // re-tripping the prone is noise, and a weaker fear must not undo
+                // a stronger one already in force. Clearing is a separate path
+                // (standing up). The current magnitude is one field read, because
+                // the caller passed the target sheet already carrying it.
+                let current = match target_sheet.fields.get(&name) {
+                    Some(FieldValue::Int(n)) => *n,
+                    _ => 0,
+                };
+                if value > current {
+                    conditions.push((target, name.clone(), value));
+                    // The mobility projection, computed against the sheet as it
+                    // will be: carrying the condition at its new magnitude.
                     let conditioned =
-                        sheet_with_conditions(target_sheet, std::iter::once(name));
+                        sheet_with_conditions(target_sheet, std::iter::once((&name, &value)));
                     mobility.push((target, self.mobility_for(&conditioned, true)));
                 }
             }
@@ -1980,6 +2009,7 @@ pub fn srd_5e() -> System {
                 push_func: None,
                 push_beat: "shoved".to_owned(),
                 condition_on_hit: None,
+                condition_value_func: None,
                 recruit_on_hit: false,
                 afford_func: None,
                 turn_effect: Vec::new(),
@@ -2009,6 +2039,7 @@ pub fn srd_5e() -> System {
                 push_func: Some("a_shove_push".to_owned()),
                 push_beat: "shoved".to_owned(),
                 condition_on_hit: None,
+                condition_value_func: None,
                 recruit_on_hit: false,
                 afford_func: None,
                 turn_effect: Vec::new(),
@@ -2038,6 +2069,7 @@ pub fn srd_5e() -> System {
                 push_func: None,
                 push_beat: "shoved".to_owned(),
                 condition_on_hit: Some("prone".to_owned()),
+                condition_value_func: None,
                 recruit_on_hit: false,
                 afford_func: None,
                 turn_effect: Vec::new(),
@@ -2070,6 +2102,7 @@ pub fn srd_5e() -> System {
                 push_func: None,
                 push_beat: "shoved".to_owned(),
                 condition_on_hit: None,
+                condition_value_func: None,
                 recruit_on_hit: true,
                 afford_func: None,
                 turn_effect: Vec::new(),
@@ -2790,7 +2823,7 @@ end"#,
         assert!(r.hit);
         // No damage: prone IS the consequence.
         assert!(r.deltas.iter().all(|d| d.add == 0));
-        assert_eq!(r.conditions, vec![(GOBLIN, "prone".to_owned(), true)]);
+        assert_eq!(r.conditions, vec![(GOBLIN, "prone".to_owned(), 1)]);
         // The projection travels with the change: base speed 5 halves to 2,
         // sight untouched. Rules ran once, on the resolver.
         assert_eq!(r.mobility, vec![(GOBLIN, Some((2, 6)))]);
@@ -2801,7 +2834,7 @@ end"#,
         let (mut sys, knight, goblin) = duel(1, 50);
         // The caller passes the target sheet with its condition booleans on it,
         // which is how the resolver can tell "apply" from "already there".
-        let prone = sheet_with_conditions(&goblin, std::iter::once(&"prone".to_owned()));
+        let prone = sheet_with_conditions(&goblin, std::iter::once((&"prone".to_owned(), &1i64)));
         let r = sys
             .resolve_action("trip", KNIGHT, &knight, (4, 4), GOBLIN, &prone, (5, 4), &mut Rng::new(3))
             .expect("resolves");
@@ -2816,10 +2849,10 @@ end"#,
         // condition does to the numbers.
         let mut sys = srd_5e();
         let sheet = sys.default_sheet();
-        let blinded = sheet_with_conditions(&sheet, std::iter::once(&"blinded".to_owned()));
+        let blinded = sheet_with_conditions(&sheet, std::iter::once((&"blinded".to_owned(), &1i64)));
         assert_eq!(sys.mobility_for(&blinded, true), Some((5, 0)), "dark, not slow");
         let immobilized =
-            sheet_with_conditions(&sheet, std::iter::once(&"immobilized".to_owned()));
+            sheet_with_conditions(&sheet, std::iter::once((&"immobilized".to_owned(), &1i64)));
         assert_eq!(sys.mobility_for(&immobilized, true), Some((0, 6)), "slow, not dark");
         // No conditions: no override at all; the sheet's base numbers stand.
         assert_eq!(sys.mobility_for(&sheet, false), None);
@@ -2952,6 +2985,78 @@ end"#,
         assert_eq!(c, p * 2, "a critical doubles dice and modifiers together");
         // And the log says why, rather than silently reporting a bigger number.
         assert!(crit.damage.unwrap().expr.contains("200%"));
+    }
+
+    #[test]
+    fn pf2e_demoralize_frightens_by_degree() {
+        let mut sys = pf2e_srd();
+        let mut bully = sys.default_sheet();
+        bully.set_text("name", "Bully");
+        bully.set_int("cha", 30); // +10, trained (+3) at level 1 => 1d20+13
+        let mut foe = sys.default_sheet();
+        foe.set_text("name", "Foe");
+        foe.set_int("hp_current", 200); // no HP change can mask the point
+        foe.set_int("hp_max", 200);
+
+        // Will 1: 1d20+13 always beats it by 10, so it always critically
+        // succeeds -- and a critical Demoralize inflicts frightened *2*. The
+        // magnitude is a number off the degree ladder, not a name and not a
+        // constant, and the action deals no damage: fear is the whole effect.
+        foe.set_int("will", 1);
+        let crit = sys
+            .resolve_action("demoralize", KNIGHT, &bully, (4, 4), GOBLIN, &foe, (5, 4), &mut Rng::new(4))
+            .expect("resolves");
+        assert_eq!(crit.degree, 2);
+        assert_eq!(crit.conditions, vec![(GOBLIN, "frightened".to_owned(), 2)]);
+        assert!(crit.deltas.iter().all(|d| d.add == 0), "Demoralize deals no damage");
+
+        // Will 14: 1d20+13 still always beats it, but only a natural-ish high
+        // roll beats it by 10, so a plain success is reachable -- and a plain
+        // success frightens by only 1. Same ladder, a different rung, a
+        // different number.
+        foe.set_int("will", 14);
+        let mut saw_one = false;
+        for seed in 1..60u64 {
+            let r = sys
+                .resolve_action("demoralize", KNIGHT, &bully, (4, 4), GOBLIN, &foe, (5, 4), &mut Rng::new(seed))
+                .expect("resolves");
+            if r.degree == 1 {
+                assert_eq!(r.conditions, vec![(GOBLIN, "frightened".to_owned(), 1)]);
+                saw_one = true;
+                break;
+            }
+        }
+        assert!(saw_one, "a plain success frightens by 1, not 2");
+    }
+
+    #[test]
+    fn a_frightened_striker_swings_at_a_penalty() {
+        // The read side of the same magnitude. Frightened N is a status penalty
+        // to everything, so a frightened Strike is at -N -- and the resolver
+        // learns N by reading the injected condition, exactly as it reads any
+        // other field. Same seed both times, so the only difference is the fear.
+        let mut sys = pf2e_srd();
+        let mut fighter = sys.default_sheet();
+        fighter.set_text("name", "Fighter");
+        fighter.set_int("str", 10); // +0, so the bonus is proficiency alone
+        let mut foe = sys.default_sheet();
+        foe.set_int("ac", 13);
+        foe.set_int("hp_current", 200);
+        foe.set_int("hp_max", 200);
+
+        let plain = sys
+            .resolve_action("strike", KNIGHT, &fighter, (4, 4), GOBLIN, &foe, (5, 4), &mut Rng::new(7))
+            .expect("resolves");
+        let afraid_sheet =
+            sheet_with_conditions(&fighter, std::iter::once((&"frightened".to_owned(), &2i64)));
+        let afraid = sys
+            .resolve_action("strike", KNIGHT, &afraid_sheet, (4, 4), GOBLIN, &foe, (5, 4), &mut Rng::new(7))
+            .expect("resolves");
+        assert_eq!(
+            plain.attack.total - afraid.attack.total,
+            2,
+            "frightened 2 is a -2 status penalty to the Strike"
+        );
     }
 
     /// The action economy and the multiple-attack penalty, both proven against

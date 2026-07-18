@@ -59,6 +59,14 @@ pub fn pf2e_srd() -> System {
             label: "Attack rank".to_owned(),
             default: FieldValue::Int(2),
         },
+        // A second proficiency, so Demoralize scales on its own skill rather than
+        // borrowing the sword's. The skeleton keeps two ranks; a full port would
+        // carry one per skill.
+        FieldDef {
+            key: "rank_intimidation".to_owned(),
+            label: "Intimidation rank".to_owned(),
+            default: FieldValue::Int(2),
+        },
         FieldDef {
             key: "ac".to_owned(),
             label: "AC".to_owned(),
@@ -139,6 +147,7 @@ pub fn pf2e_srd() -> System {
             push_func: None,
             push_beat: "shoved".to_owned(),
             condition_on_hit: None,
+            condition_value_func: None,
             recruit_on_hit: false,
             // The action economy and the multiple-attack penalty, both riding
             // the substrate's one per-turn counter primitive: a Strike costs an
@@ -149,6 +158,42 @@ pub fn pf2e_srd() -> System {
                 ("actions_spent".to_owned(), 1),
                 ("strikes".to_owned(), 1),
             ],
+        }),
+    },
+    // Demoralize: the reason conditions had to carry a number. It deals no
+    // damage; it frightens. Roll Intimidation against the target's Will DC on
+    // the four-rung ladder, and the *degree* sets the magnitude -- a critical
+    // success inflicts frightened 2, a plain success frightened 1. That value is
+    // not baked anywhere: `p_frighten_value` reads the degree the resolver
+    // already computed and returns the number, and the substrate stores it
+    // blind. Frightened then reads back into the Strike bonus, so the loop
+    // closes -- a rule sets a magnitude and another rule spends it. Costs one
+    // action, like everything in the economy; a 30-ft (6-tile) reach.
+    ActionDef {
+        key: "demoralize".to_owned(),
+        label: "Demoralize".to_owned(),
+        base: "1d20".to_owned(),
+        func: "p_intimidate".to_owned(),
+        target: Some(TargetSpec {
+            range: 6,
+            hit_func: "p_demoralize_degree".to_owned(),
+            damage: "0".to_owned(),
+            damage_func: "p_zero".to_owned(),
+            damage_mult_func: None,
+            damage_field: "hp_current".to_owned(),
+            actor_beat: "demoralize".to_owned(),
+            hit_beat: "cower".to_owned(),
+            miss_beat: "steady".to_owned(),
+            fall_beat: "fall".to_owned(),
+            stagger_func: None,
+            stagger_beat: "staggered".to_owned(),
+            push_func: None,
+            push_beat: "shoved".to_owned(),
+            condition_on_hit: Some("frightened".to_owned()),
+            condition_value_func: Some("p_frighten_value".to_owned()),
+            recruit_on_hit: false,
+            afford_func: Some("p_afford_strike".to_owned()),
+            turn_effect: vec![("actions_spent".to_owned(), 1)],
         }),
     }];
 
@@ -179,9 +224,19 @@ pub fn pf2e_srd() -> System {
         function p_strike(c)
             local map = c.turn_strikes or 0
             if map > 2 then map = 2 end
-            return ab_mod(c.str) + prof(c.level, c.rank_attack) - 5 * map
+            -- Frightened is a status penalty to everything the creature does, so
+            -- a frightened striker swings at -N. This is the *read* side of the
+            -- magnitude Demoralize writes; nothing here knows Demoralize exists,
+            -- only that `c.frightened` is a number the substrate handed over.
+            return ab_mod(c.str) + prof(c.level, c.rank_attack) - 5 * map - (c.frightened or 0)
         end
         function p_strike_dmg(c) return ab_mod(c.str) end
+        -- Intimidation: the same level + rank shape as the attack, on its own
+        -- proficiency, plus Charisma rather than Strength.
+        function p_intimidate(c)
+            return ab_mod(c.cha) + prof(c.level, c.rank_intimidation)
+        end
+        function p_zero(c) return 0 end
 
         -- Can you afford a Strike? Only if you have an action left this turn.
         -- `actions_per_turn` is the sheet's (3 by default); `turn_actions_spent`
@@ -198,13 +253,14 @@ pub fn pf2e_srd() -> System {
         -- boolean. Beat the DC by 10: critical success. Miss it by 10: critical
         -- failure. Then the natural die shifts the result one rung either way,
         -- which is why the ABI passes it alongside the total: a 20 promotes a
-        -- success to a critical, a 1 demotes a failure to a fumble.
-        function p_strike_degree(c, t, roll, die)
-            local ac = t.ac or 16
+        -- success to a critical, a 1 demotes a failure to a fumble. One ladder,
+        -- shared by every PF2e check -- a Strike beats AC, a Demoralize beats
+        -- Will, and only the DC differs.
+        function degree_vs(dc, roll, die)
             local d
-            if roll >= ac + 10 then d = 2
-            elseif roll >= ac then d = 1
-            elseif roll <= ac - 10 then d = -1
+            if roll >= dc + 10 then d = 2
+            elseif roll >= dc then d = 1
+            elseif roll <= dc - 10 then d = -1
             else d = 0 end
             if die == 20 then d = d + 1
             elseif die == 1 then d = d - 1 end
@@ -212,10 +268,26 @@ pub fn pf2e_srd() -> System {
             if d < -1 then d = -1 end
             return d
         end
+        function p_strike_degree(c, t, roll, die)
+            return degree_vs(t.ac or 16, roll, die)
+        end
+        function p_demoralize_degree(c, t, roll, die)
+            return degree_vs(t.will or 14, roll, die)
+        end
 
         -- A critical Strike doubles dice and modifiers together.
         function p_crit_mult(c, t, degree)
             if degree >= 2 then return 200 else return 100 end
+        end
+
+        -- The fear a Demoralize instills, straight off the degree ladder: a
+        -- critical success frightens by 2, a plain success by 1, and anything
+        -- less does nothing. This is the whole point of graded conditions --
+        -- the magnitude is a return value, not a name, and not a Rust constant.
+        function p_frighten_value(c, t, degree)
+            if degree >= 2 then return 2
+            elseif degree >= 1 then return 1
+            else return 0 end
         end
 
         function s_speed(c)

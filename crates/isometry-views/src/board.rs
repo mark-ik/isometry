@@ -229,11 +229,16 @@ fn token_el(ui: &UiState, token: &Token) -> UiChild {
         wrapper.push_str(" beat-down");
     }
     // Conditions render as classes, like beats and equipment layers, so a pack
-    // can style `cond-prone` the way it styles a swing.
+    // can style `cond-prone` the way it styles a swing. A graded condition also
+    // emits `cond-frightened-2`, so a pack can show magnitude without the board
+    // knowing what the number means.
     if let Some(conditions) = ui.map.conditions.get(&id) {
-        for name in conditions {
+        for (name, value) in conditions {
             wrapper.push_str(" cond-");
             wrapper.push_str(name);
+            if *value > 1 {
+                wrapper.push_str(&format!(" cond-{name}-{value}"));
+            }
         }
     }
     // A corpse is not a target, so it does not offer itself as one.
@@ -309,9 +314,15 @@ fn condition_items(ui: &UiState, id: isometry_core::TokenId) -> Vec<UiChild> {
         .get(&id)
         .map(|set| {
             set.iter()
-                .map(|name| {
+                .map(|(name, value)| {
                     let name = name.clone();
-                    let label = format!("Clear: {name}");
+                    // Show the magnitude for a graded condition, so "Clear:
+                    // frightened 2" reads true; a plain on/off stays bare.
+                    let label = if *value > 1 {
+                        format!("Clear: {name} {value}")
+                    } else {
+                        format!("Clear: {name}")
+                    };
                     Box::new(clickable(
                         el("div", text(label)).attr("class", "menu-item"),
                         move |ui: &mut UiState, _| {

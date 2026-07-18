@@ -339,9 +339,30 @@ save-for-half (a fireball) could not be expressed either**, and now can, as 50.
   `per_turn_counters_replicate_and_reset_when_the_turn_comes_round` (net, both
   peers converge on the same ledger and the same reset) and
   `ending_a_turn_refreshes_the_incoming_token_per_turn_counters` (views, solo).
-- **Conditions have no values.** PF2e's `frightened 2` / `clumsy 1` are
-  magnitudes; C1's conditions are opaque on/off names. Encoding the value in
-  the name (`frightened-2`) works but is a lie the substrate would have to keep.
+- ~~**Conditions have no values.**~~ **Fixed 2026-07-17.** Conditions went from
+  a set of names to a `BTreeMap<name, i64>` -- a magnitude per condition, with
+  plain on/off stored as 1 and zero meaning absent (the exact shape
+  `turn_counters` already had). The number injects into the character table as
+  an integer, so a script reads `c.frightened` as 2, not as a `frightened-2`
+  name it would have to parse -- the lie the old encoding required is gone. The
+  magnitude rides `ActionResolved`/`ConditionSet` and every peer stores the same
+  integer, blind to what it means. It is opt-in: a `condition_value_func` on the
+  target spec rides the degree ladder for a graded condition, and its absence
+  means plain magnitude 1, so every existing on/off action is unchanged.
+  Applying on a hit can only *worsen* a condition (a weaker fear never undoes a
+  stronger one); the DM's manual `ConditionSet` still sets or clears any value.
+  Proven by the PF2e vehicle that needed it -- **Demoralize**, the second
+  action, ties three of these C9 generalizations together at once: it targets
+  Will (a save, not AC), reads the degree ladder, and turns the degree into a
+  magnitude (`frightened 2` on a critical success, `1` on a success). The loop
+  closes because a *different* rule reads it back: a frightened striker swings at
+  `-N`, folded into `p_strike` from `c.frightened`. So a rule writes a magnitude
+  and another rule spends it, and neither number is baked in Rust. Verified:
+  `pf2e_demoralize_frightens_by_degree` and `a_frightened_striker_swings_at_a_penalty`
+  (system), `conditions_carry_a_magnitude` (core), and
+  `a_graded_condition_replicates_at_its_magnitude` (net, both peers hold the same
+  number). The board also emits a `cond-frightened-2` class so a pack can show
+  magnitude without the view knowing what it means.
 - ~~**No raw die.**~~ **Fixed 2026-07-17.** `call_int_ctx2` passes the natural
   die beside the total (`f(c, t, roll, die)`), and Lua discards arguments a
   function does not declare, so every existing script was unaffected. Both

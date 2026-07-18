@@ -133,10 +133,13 @@ pub struct ActionResolved {
     /// next player's options all change because of it.
     #[serde(default)]
     pub displaced: Vec<(TokenId, TileCoord)>,
-    /// Conditions this action applied or cleared: `(token, name, on)`. Truth,
-    /// like the deltas: `prone` changes what the victim can do next turn.
+    /// Conditions this action applied or cleared: `(token, name, magnitude)`.
+    /// Truth, like the deltas: `prone` (magnitude 1) changes what the victim can
+    /// do next turn, and `frightened 2` is a worse penalty than `frightened 1`.
+    /// A magnitude of 0 clears the condition. The substrate stores the number
+    /// blind; only the rules know what it means.
     #[serde(default)]
-    pub conditions: Vec<(TokenId, String, bool)>,
+    pub conditions: Vec<(TokenId, String, i64)>,
     /// The system's recomputed `(move budget, sight radius)` for every token
     /// whose conditions changed; `None` clears back to sheet base. Rules run
     /// once on the resolver, and clients (who hold no rules engine but compute
@@ -234,7 +237,8 @@ pub enum GameEvent {
     ConditionSet {
         token: TokenId,
         condition: String,
-        on: bool,
+        /// The magnitude to set, or 0 to clear (standing up from prone).
+        value: i64,
         mobility: Option<(u32, u32)>,
     },
     /// One token walks through a transition point: it leaves the active map and
