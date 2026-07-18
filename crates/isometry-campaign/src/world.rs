@@ -4,6 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
+use isometry_core::{Overmap, OvermapEdge, OvermapNode};
+
 use crate::{ItemProposal, LocalMapProposal, MapScale, SecretFact, WorldFact};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,6 +43,11 @@ pub struct CampaignWorld {
     /// `faction_sheets` because both are the mutable per-faction layer.
     #[serde(default)]
     pub faction_control: BTreeMap<String, String>,
+    /// Where each traveling party sits on the overmap: party owner -> place id.
+    /// A split party (C3) keeps separate positions; a single party has one entry.
+    /// Session play-state, like [`Self::faction_control`], not authored content.
+    #[serde(default)]
+    pub party_node: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,6 +89,13 @@ pub struct WorldRoute {
     pub to: String,
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Travel weight for the overmap: the abstract cost of taking this route.
+    /// A road and a mountain pass between the same two places can differ, which
+    /// is the whole point of a pointcrawl (the swamp shortcut versus the safe
+    /// road). Zero (the unauthored default) reads as 1 when projected, so an
+    /// unweighted route is still traversable at unit cost.
+    #[serde(default)]
+    pub weight: u32,
 }
 
 /// A named rule of the generated setting. `parameters` is pack vocabulary;
@@ -259,6 +273,14 @@ impl CampaignWorld {
                 };
                 Ok(())
             }
+            WorldEvent::PartyMoved { party, node } => {
+                // The substrate records where the party is; whether the step was
+                // legal (an edge exists, the pace afforded it) is the travel
+                // resolver's business (E2), and the host offers only reachable
+                // nodes. E0 is "no rules attached".
+                self.party_node.insert(party.clone(), node.clone());
+                Ok(())
+            }
         }
     }
 
@@ -270,6 +292,42 @@ impl CampaignWorld {
     /// The player who plays `faction`, if its channel has been granted to one.
     pub fn faction_controller(&self, faction: &str) -> Option<&str> {
         self.faction_control.get(faction).map(String::as_str)
+    }
+
+    /// Project the world's geography into a travelable overmap: a node per place,
+    /// an edge per route. The pointcrawl the party explores is not a second
+    /// authored graph; it is this *view* of the places and routes the campaign
+    /// already has, so the geography stays single-sourced. Node positions are not
+    /// set here (a rendering layout sets them later); pathfinding needs only the
+    /// routes' weights, and an unweighted route costs 1.
+    pub fn overmap(&self) -> Overmap {
+        let mut overmap = Overmap::new(String::new());
+        overmap.nodes = self
+            .places
+            .values()
+            .map(|place| OvermapNode {
+                id: place.id.clone(),
+                name: place.name.clone(),
+                at: (0, 0),
+                site: place.map.clone(),
+            })
+            .collect();
+        overmap.edges = self
+            .routes
+            .values()
+            .map(|route| OvermapEdge {
+                from: route.from.clone(),
+                to: route.to.clone(),
+                weight: route.weight.max(1),
+                directed: false,
+            })
+            .collect();
+        overmap
+    }
+
+    /// Which overmap node a party (keyed by its owner) currently sits on.
+    pub fn party_at(&self, party: &str) -> Option<&str> {
+        self.party_node.get(party).map(String::as_str)
     }
 }
 
@@ -313,6 +371,13 @@ pub enum WorldEvent {
     FactionControlSet {
         faction: String,
         player: Option<String>,
+    },
+    /// Move a party (keyed by its owner) to an overmap node (a place id). The
+    /// substrate records the position; adjacency and travel cost are the
+    /// resolver's and the host's, not this event's.
+    PartyMoved {
+        party: String,
+        node: String,
     },
 }
 
@@ -510,5 +575,77 @@ mod tests {
             draft.validate(),
             Err(WorldError::DuplicateMap("same".into()))
         );
+    }
+
+    fn place(id: &str, name: &str) -> WorldPlace {
+        WorldPlace {
+            id: id.into(),
+            name: name.into(),
+            tags: vec![],
+            map: None,
+        }
+    }
+
+    fn route(id: &str, from: &str, to: &str, weight: u32) -> WorldRoute {
+        WorldRoute {
+            id: id.into(),
+            from: from.into(),
+            to: to.into(),
+            tags: vec![],
+            weight,
+        }
+    }
+
+    #[test]
+    fn the_overmap_projects_from_places_and_routes() {
+        let mut world = CampaignWorld::default();
+        for (id, name) in [("village", "Village"), ("forest", "Forest"), ("ruins", "Ruins")] {
+            world.places.insert(id.into(), place(id, name));
+        }
+        // The forest opens into a tactical map; the node carries it as its site.
+        world.places.get_mut("forest").unwrap().map = Some("forest-map".into());
+        world.routes.insert("r1".into(), route("r1", "village", "forest", 2));
+        world.routes.insert("r2".into(), route("r2", "forest", "ruins", 3));
+        // An unweighted route (weight 0) still costs 1 once projected.
+        world.routes.insert("r3".into(), route("r3", "village", "ruins", 0));
+
+        let overmap = world.overmap();
+        assert_eq!(overmap.nodes.len(), 3, "a node per place");
+        assert_eq!(
+            overmap.node("forest").and_then(|n| n.site.as_deref()),
+            Some("forest-map"),
+            "a place's tactical map becomes the node's site"
+        );
+        // The direct village->ruins route projects to cost 1 (weight 0 -> 1),
+        // cheaper than through the forest (5). Pathfinding runs on the projection.
+        let (path, cost) = overmap.route("village", "ruins").expect("the ruins are reachable");
+        assert_eq!(path, vec!["village", "ruins"]);
+        assert_eq!(cost, 1, "an unweighted route projects to unit cost");
+    }
+
+    #[test]
+    fn a_party_sits_on_an_overmap_node_and_travels() {
+        let mut world = CampaignWorld::default();
+        world.places.insert("village".into(), place("village", "Village"));
+        world.places.insert("forest".into(), place("forest", "Forest"));
+        world.routes.insert("r1".into(), route("r1", "village", "forest", 2));
+
+        assert_eq!(world.party_at("A"), None, "the party starts off the map");
+        world
+            .apply(&WorldEvent::PartyMoved {
+                party: "A".into(),
+                node: "village".into(),
+            })
+            .unwrap();
+        assert_eq!(world.party_at("A"), Some("village"));
+        // The projected overmap says the forest is reachable, so travel there.
+        assert!(world.overmap().route("village", "forest").is_some());
+        world
+            .apply(&WorldEvent::PartyMoved {
+                party: "A".into(),
+                node: "forest".into(),
+            })
+            .unwrap();
+        assert_eq!(world.party_at("A"), Some("forest"), "the party travelled the edge");
     }
 }

@@ -11,7 +11,7 @@ use isometry_campaign::{
     Inventory, ItemId, ItemInstance, ItemModifier, ItemModifierKind, ItemProposal,
     LocalMapProposal, MapCellProposal, MapPoint, MapScale, MapTransition, RevealCondition,
     RoleSlot, SecretFact, SpawnZone, StoryletEffect, StoryletProposal, StoryletRequirements,
-    WorldCharacter, WorldEvent, WorldFact, WorldFaction, WorldLaw,
+    WorldCharacter, WorldEvent, WorldFact, WorldFaction, WorldLaw, WorldPlace, WorldRoute,
 };
 use isometry_core::{
     Beat, Facing, MapDocument, RollRecord, SessionEvent, SheetData, SheetDelta, Token, TokenId,
@@ -1370,6 +1370,63 @@ fn a_faction_turn_commits_and_every_peer_lives_in_the_changed_world() {
     assert_eq!(meanwhile(sim.host.state()), 1);
     assert_eq!(meanwhile(sim.clients[&PeerId(10)].state().unwrap()), 1);
     assert_eq!(sim.host.seq() as usize, logged, "every move event entered the log");
+    assert_converged(&sim);
+}
+
+#[test]
+fn a_party_travels_the_overmap_and_every_peer_agrees() {
+    let mut snap = snapshot();
+    // A tiny overmap projected from two places joined by a route.
+    snap.world.places.insert(
+        "village".into(),
+        WorldPlace {
+            id: "village".into(),
+            name: "Village".into(),
+            tags: vec![],
+            map: None,
+        },
+    );
+    snap.world.places.insert(
+        "forest".into(),
+        WorldPlace {
+            id: "forest".into(),
+            name: "Forest".into(),
+            tags: vec![],
+            map: None,
+        },
+    );
+    snap.world.routes.insert(
+        "r1".into(),
+        WorldRoute {
+            id: "r1".into(),
+            from: "village".into(),
+            to: "forest".into(),
+            tags: vec![],
+            weight: 2,
+        },
+    );
+    let mut sim = Sim::new(HostSession::new(snap));
+    sim.connect(PeerId(10));
+
+    // The party sets out, then travels the edge to the forest.
+    sim.host_event(GameEvent::World(WorldEvent::PartyMoved {
+        party: "A".into(),
+        node: "village".into(),
+    }));
+    sim.host_event(GameEvent::World(WorldEvent::PartyMoved {
+        party: "A".into(),
+        node: "forest".into(),
+    }));
+
+    // Where the party stands on the overmap is shared truth: every peer agrees,
+    // the way they agree on which tactical map is active.
+    let at = |s: &GameSnapshot| s.world.party_at("A").map(str::to_owned);
+    assert_eq!(at(sim.host.state()).as_deref(), Some("forest"));
+    assert_eq!(
+        at(sim.clients[&PeerId(10)].state().unwrap()).as_deref(),
+        Some("forest"),
+        "the client holds the same overmap position"
+    );
     assert_converged(&sim);
 }
 

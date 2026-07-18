@@ -196,10 +196,13 @@ Unchanged doctrine, stated for this lane so it does not drift:
 Gated behind the wilderness trigger. Listed so the shape is visible; not
 scheduled.
 
-- **E0: The graph board.** Consume the tile-geometry seam's graph geometry so the
-  active board can be a pointcrawl. *Done when* a party token sits on a node and
-  paths along weighted edges using the existing reach machinery, with no rules
-  attached.
+- **E0: The graph board. LANDED 2026-07-18** (substrate + session; rendering
+  next). The `Overmap` primitive (a fresh weighted Dijkstra, not the grid BFS),
+  projected from `CampaignWorld`'s existing places + routes, with the party's
+  position as replicated session state and a `PartyMoved` event. *Done when* a
+  party sits on a node and paths along weighted edges, no rules attached: met.
+  Remaining for a playable E0 is only the overmap *rendering* (drawing the graph,
+  clicking a node to travel), which is app UI, not substrate.
 - **E1: Pace and tick.** A party-level pace setting; traversing an edge advances
   the map clock by a system-computed amount. *Done when* the same edge costs
   different ticks at different paces, replicated, and the split-party clocks (C3)
@@ -266,3 +269,15 @@ resolver, E3-E5 are Lua-heavy and lean on primitives already shipped.
      authored geography single-sourced.
   Remaining E0: the projection + the party's position on the overmap + moving it,
   which is the session/app wiring the done-condition names.
+- **2026-07-18:** **E0 complete** (substrate + session). `WorldRoute` gained a
+  `weight`; `CampaignWorld::overmap()` projects places + routes into an `Overmap`
+  (the geography stays single-sourced, no second authored graph); the party's
+  position is `CampaignWorld.party_node` (owner -> node, beside `faction_control`)
+  set by a replicated `WorldEvent::PartyMoved`. A place's tactical `map` becomes
+  the node's `site`, so entering a site reuses C2's transition. Verified:
+  `the_overmap_projects_from_places_and_routes`,
+  `a_party_sits_on_an_overmap_node_and_travels` (campaign), and
+  `a_party_travels_the_overmap_and_every_peer_agrees` (net). E0's done-condition
+  is met; only the overmap *rendering* (app UI) remains before it is playable on
+  screen. Next: E1 (pace and tick) or the overmap render, then E2 (the travel
+  resolver).
