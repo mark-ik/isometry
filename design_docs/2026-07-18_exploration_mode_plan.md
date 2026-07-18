@@ -165,6 +165,52 @@ party along edges". If a specific rule turns out to need an explicit flag to be
 expressible, add it then, the way the afford gate added turn counters only once
 the economy needed them.
 
+## The known map (discovery)
+
+Mark's idea (2026-07-18), and exploration's other half. E1-E2 are about *getting*
+there (cost, time, hazards); this is about *knowing* it is there at all. The
+party does not start with the whole overmap: nodes, edges, and even parts of a
+region map are hidden until discovered, and discovery has many triggers -- word
+of mouth, a local guide, a skill check, or reading a map (which an unskilled
+character may fail to read).
+
+It composes from three primitives Isometry already has, no new machinery in
+kind:
+
+1. **Fog, at overmap scale.** The tactical fog (`token_visible` plus the
+   `visible` / `explored` sets) is per-viewer visibility with explored *memory*.
+   The overmap gets the same: a per-party *known* set of nodes and edges. What
+   you have not discovered you cannot see or route to, and once known a node
+   stays known. The explored-memory model already exists; this is it at graph
+   scale.
+2. **Host-private-until-revealed, from the secrets system.** The campaign store
+   already holds host-private facts a `RevealCondition` publishes (`Identify`,
+   `Manual`, ...). An undiscovered node is exactly that: host-private until a
+   reveal fires. Word of mouth is a manual/rumor reveal; a local guide is an
+   NPC-triggered reveal; a bought or looted map is an item-borne reveal. The
+   reveal machinery is built; it publishes an overmap node instead of a fact.
+3. **Skill-check reveals, from the resolver.** "A dumb character cannot read a
+   map" is the detail worth keeping: the reveal is *gated by a check*. Reading a
+   map (Intelligence) or spotting a landmark (Survival) is a resolution the
+   system judges; on success it reveals nodes, on failure it does not, and a
+   low-skilled character genuinely fails. This is `resolve_action`'s pattern
+   pointed at discovery rather than damage.
+
+So discovery is fog (a per-party known set) + secrets (host-private nodes a
+condition reveals) + a skill-check resolution (one reveal trigger). Region maps
+get the same seeding: a guide's directions or a scouted map pre-fill a tactical
+map's `explored` set before the party arrives, so they walk in already knowing
+the wing the guide described.
+
+Keep the literacy detail as a rule, not a footnote: a map's reveal is not
+automatic on possession, it is a check to *read* it, so an illiterate or
+unskilled party holds a map it cannot use until someone who can reads it. That
+makes "who can read the map" a party-composition question, which is exactly the
+texture exploration mode is for. Open: whether "known" is per-party (shared among
+a party's members) or per-token (a scout knows a route the rest do not until
+told); leaning per-party, with a Scout activity (E3) as the way one member's
+knowledge becomes the party's.
+
 ## The substrate/system split for travel
 
 Unchanged doctrine, stated for this lane so it does not drift:
@@ -203,10 +249,16 @@ scheduled.
   party sits on a node and paths along weighted edges, no rules attached: met.
   Remaining for a playable E0 is only the overmap *rendering* (drawing the graph,
   clicking a node to travel), which is app UI, not substrate.
-- **E1: Pace and tick.** A party-level pace setting; traversing an edge advances
-  the map clock by a system-computed amount. *Done when* the same edge costs
-  different ticks at different paces, replicated, and the split-party clocks (C3)
-  stay coherent.
+- **E1: Pace and tick. Cost primitive LANDED 2026-07-18.** A party-level pace
+  (`party_pace`, a percent of normal time, replicated via `PartyPaceSet`) and
+  `CampaignWorld::travel_cost(party, from, to)`, the shortest route's weight
+  scaled by pace (50 fast / 100 normal / 200 slow), at least 1. *The same edge
+  costs different ticks at different paces:* met and tested. What remains,
+  deliberately pushed to E2, is *applying* that cost to a clock when the party
+  actually travels: `TimeAdvanced` bumps the active *tactical map's* clock, and
+  overmap travel is between maps, so which clock advances (a party clock? the
+  destination site's, C3-reconciled?) is a resolver decision, not a bare
+  primitive's.
 - **E2: The travel resolver.** `resolve_travel` mirroring `resolve_action`; the
   system rules arrive / lost / time; peers apply. *Done when* a navigation
   failure lands the party on a different node or adds ticks, decided once and
@@ -222,9 +274,19 @@ scheduled.
   the existing `EncounterAnchor` / transition machinery. *Done when* traveling can
   drop the party into a prepared or generated encounter, and returning resumes the
   graph.
+- **E6: The known map (discovery).** Mark's idea, 2026-07-18. Nodes and edges are
+  hidden until discovered; a per-party *known* set gates what the overmap shows
+  and where it will route. Reveals come by word of mouth (a rumor/fact), a local
+  guide (an NPC), a skill check (a resolution), or a map read (an item reveal
+  gated by a literacy/skill check, so a low-skilled party cannot read it).
+  *Done when* a party sees and routes to only its discovered nodes, a skill check
+  reveals more, and an unskilled character fails to read a map a skilled one
+  reads. Region-map seeding (pre-filling a tactical map's explored set from
+  intel) is the same primitive at tile scale. See "The known map" below.
 
 Order matters: E0-E1 are the board and tempo (mostly reuse), E2 is the one new
-resolver, E3-E5 are Lua-heavy and lean on primitives already shipped.
+resolver, E3-E5 are Lua-heavy and lean on primitives already shipped, and E6 is
+composition again (fog + secrets + a check).
 
 ## Open forks
 
@@ -281,3 +343,14 @@ resolver, E3-E5 are Lua-heavy and lean on primitives already shipped.
   is met; only the overmap *rendering* (app UI) remains before it is playable on
   screen. Next: E1 (pace and tick) or the overmap render, then E2 (the travel
   resolver).
+- **2026-07-18:** **E1 cost primitive landed.** `party_pace` (percent of normal,
+  replicated via `PartyPaceSet`) and `CampaignWorld::travel_cost`: the same edge
+  costs different ticks at different paces (fast halves, slow doubles), tested by
+  `pace_scales_the_travel_cost`. Applying the cost to a clock on travel is pushed
+  to E2, because which clock advances during between-maps overmap travel is a
+  resolver decision (the active-map clock model does not fit as-is).
+- **2026-07-18:** **discovery added as E6.** Mark's idea: the overmap and region
+  maps hidden by default, exposed by word of mouth, guides, skill checks, or
+  reading a map (an unskilled character may fail to read it). Scoped as fog (a
+  per-party known set) + the secrets/reveal system (host-private nodes) + a
+  skill-check resolution. All existing primitives; see "The known map".

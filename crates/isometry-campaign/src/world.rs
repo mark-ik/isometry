@@ -48,6 +48,12 @@ pub struct CampaignWorld {
     /// Session play-state, like [`Self::faction_control`], not authored content.
     #[serde(default)]
     pub party_node: BTreeMap<String, String>,
+    /// Each party's travel pace, as a percent of normal time: 100 is normal, 50
+    /// is fast (half the time), 200 is slow (double). Absent reads as 100. The
+    /// number is all the substrate keeps; what a pace *trades* (fast loses
+    /// passive Perception, slow lets you forage) is system business.
+    #[serde(default)]
+    pub party_pace: BTreeMap<String, i64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -281,6 +287,10 @@ impl CampaignWorld {
                 self.party_node.insert(party.clone(), node.clone());
                 Ok(())
             }
+            WorldEvent::PartyPaceSet { party, pace } => {
+                self.party_pace.insert(party.clone(), *pace);
+                Ok(())
+            }
         }
     }
 
@@ -328,6 +338,23 @@ impl CampaignWorld {
     /// Which overmap node a party (keyed by its owner) currently sits on.
     pub fn party_at(&self, party: &str) -> Option<&str> {
         self.party_node.get(party).map(String::as_str)
+    }
+
+    /// A party's travel pace as a percent of normal (100 when unset).
+    pub fn pace(&self, party: &str) -> i64 {
+        self.party_pace.get(party).copied().unwrap_or(100)
+    }
+
+    /// The travel time, in ticks, for `party` to reach `to` from `from` at its
+    /// current pace: the shortest route's total weight scaled by the pace percent
+    /// (100 normal, 50 fast/half, 200 slow/double), at least 1. `None` when `to`
+    /// is unreachable. The same edge costs different ticks at different paces,
+    /// which is the point; what a pace trades for the time is the system's, not
+    /// this function's.
+    pub fn travel_cost(&self, party: &str, from: &str, to: &str) -> Option<u64> {
+        let (_, weight) = self.overmap().route(from, to)?;
+        let pct = self.pace(party).max(1) as u64;
+        Some(((weight as u64 * pct) / 100).max(1))
     }
 }
 
@@ -378,6 +405,11 @@ pub enum WorldEvent {
     PartyMoved {
         party: String,
         node: String,
+    },
+    /// Set a party's travel pace, as a percent of normal time (100/50/200).
+    PartyPaceSet {
+        party: String,
+        pace: i64,
     },
 }
 
@@ -647,5 +679,31 @@ mod tests {
             })
             .unwrap();
         assert_eq!(world.party_at("A"), Some("forest"), "the party travelled the edge");
+    }
+
+    #[test]
+    fn pace_scales_the_travel_cost() {
+        let mut world = CampaignWorld::default();
+        world.places.insert("village".into(), place("village", "Village"));
+        world.places.insert("forest".into(), place("forest", "Forest"));
+        world.routes.insert("r1".into(), route("r1", "village", "forest", 4));
+
+        // Default pace is normal (100%): the cost is the route's weight.
+        assert_eq!(world.pace("A"), 100);
+        assert_eq!(world.travel_cost("A", "village", "forest"), Some(4));
+
+        // Fast (50%) halves the time; slow (200%) doubles it. Same edge, same
+        // party, different ticks.
+        world
+            .apply(&WorldEvent::PartyPaceSet { party: "A".into(), pace: 50 })
+            .unwrap();
+        assert_eq!(world.travel_cost("A", "village", "forest"), Some(2), "fast is half the time");
+        world
+            .apply(&WorldEvent::PartyPaceSet { party: "A".into(), pace: 200 })
+            .unwrap();
+        assert_eq!(world.travel_cost("A", "village", "forest"), Some(8), "slow is double");
+
+        // A cost never rounds to zero, and an unreachable destination has none.
+        assert_eq!(world.travel_cost("A", "village", "atlantis"), None);
     }
 }
