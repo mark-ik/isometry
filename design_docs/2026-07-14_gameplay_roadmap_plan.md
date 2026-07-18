@@ -23,8 +23,10 @@ displacement, conditions, allegiance) grows one type at a time.
 4. **C4: Generators + command grammar** — **landed 2026-07-15**, below.
 5. **C5: Multi-character parties + recruitment** — **landed 2026-07-15**, below.
 6. **C6: Dialogue** — **landed 2026-07-15**, below.
-7. **C7: Factions as participants** — worldbuilding rung 7; a faction player is
-   an owner name over a faction-turn channel. Waits on the moot/murm rebase.
+7. **C7: Factions as participants** — worldbuilding rung 7. **Foundation (the
+   downtime tick + commit path) landed 2026-07-17**, below; the played-faction
+   channel and the richer slices build on it now that the moot/murm rebase has
+   cleared.
 8. **C8: World map (pointcrawl)** — stays deferred per next-horizons' trigger;
    transition points cover the prepared-locale 80%.
 9. **C9: Campaign pack options** — the PF2e skeleton **landed 2026-07-17**,
@@ -282,6 +284,48 @@ collided and hard-failed the whole commit on a second play — the id is now
 disambiguated per grant, matching the replay-safe Fact/History effects; and a
 session storylet outcome reused the campaign-commit channel, mislabelling itself
 "committed campaign draft" — the shared outcome text is now neutral.
+
+## C7: Factions as participants (FOUNDATION landed 2026-07-17)
+
+**The world acts on itself between scenes.** Rung 7 of the worldbuilding plan.
+The foundation -- the downtime tick and its commit path -- landed once the
+moot/murm rebase cleared; the three richer parts (below) build on it.
+
+- **A faction move is a bundle of world events.** A tick draws one move per
+  committed faction from the world's own state and a host entropy tape; each
+  move is a `History` line (the "meanwhile") plus, for the verbs that reshape
+  the setting, the change itself. It commits through the *same*
+  `CampaignWorld::apply` path a DM edit does, so a faction acting on the world
+  is never a special case: same ordered log, same convergence hash, same
+  replication to every peer. No faction-turn-specific apply exists anywhere.
+- **The tick is a pure function**, like `resolve_storylet`: same world, tick,
+  and seed always yield the same batch, which the DM previews, edits, and
+  commits (`HostSession::commit_faction_turn`, staged on a clone so one bad move
+  cannot half-apply). The SWN verb set (expand/scheme/raid/court/fracture) is
+  the substrate's default table; a pack can supply richer moves the way a system
+  layers over the builtin rules, without the commit machinery changing.
+- **It reaches the storylet graph.** A court move recruits a castable character,
+  a fracture splits off a tagged splinter faction, a scheme seeds a storylet --
+  so a tick changes which stories are playable, not just the history log. A raid
+  is the pure-narrative beat (`change: None`), proof the story and the
+  mechanical change are separable for the DM.
+- **Committed factions are immutable** (`insert_same`), so a move *adds* rather
+  than mutates -- the design leans into the append-only world instead of
+  fighting it.
+
+Verified: `one_move_per_faction_and_the_tick_is_replayable`,
+`a_faction_turn_reaches_the_storylet_graph`, `a_raid_is_a_rumor_with_no_world_change`
+(campaign), and `a_faction_turn_commits_and_every_peer_lives_in_the_changed_world`
+(net, both peers hold the same history and change). The done-when is met at the
+mechanism layer; the genet preview/edit table is the app-wiring, next.
+
+**Still to build (each its own slice):** the genet preview/edit UI; time-coupling
+(the tick proportional to banked world time, rendered as a "meanwhile"
+interstitial); radiant quests (a faction's resource deficit spawns a storylet
+with the faction cast as patron); and the played-faction channel (a faction as
+an owner name a player or the table controls, the per-channel permission the
+moot/murm rebase unblocked). Faction *sheets* (resources/people driving which
+verb a faction can afford) come with the radiant-quest slice.
 
 ## C9a: The PF2e skeleton (LANDED 2026-07-17)
 

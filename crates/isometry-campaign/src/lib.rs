@@ -11,6 +11,7 @@
 
 mod fact;
 mod collaboration;
+mod faction;
 mod generator;
 mod item;
 mod map;
@@ -20,6 +21,7 @@ mod world;
 
 pub use fact::{RevealCondition, SecretFact, Visibility, WorldFact};
 pub use collaboration::{CampaignProposal, CampaignProposalError, CampaignProposalMode};
+pub use faction::{FactionMove, FactionVerb};
 pub use generator::{
     CastRoleRequest, EntropyTape, GenValue, GenValueError, GenerationRecord, GenerationRecordError,
     GeneratorFixture, GeneratorRequest, ItemProposal, MapPatchProposal, NpcProposal,

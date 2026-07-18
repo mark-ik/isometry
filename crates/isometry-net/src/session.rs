@@ -8,8 +8,8 @@ use std::collections::HashMap;
 
 use codicil::Codicil;
 use isometry_campaign::{
-    CampaignStore, GenerationRecord, GenerationRecordError, InventoryError, ItemId, ItemInstance,
-    ItemModifierReveal, MapScale, StoryletEffect, WorldError, WorldEvent, WorldFact,
+    CampaignStore, FactionMove, GenerationRecord, GenerationRecordError, InventoryError, ItemId,
+    ItemInstance, ItemModifierReveal, MapScale, StoryletEffect, WorldError, WorldEvent, WorldFact,
 };
 use isometry_core::{apply, EventError, TileCoord, TokenId};
 
@@ -723,6 +723,29 @@ impl HostSession {
         for event in &events {
             apply_game(&mut preview, event)
                 .map_err(|error| format!("storylet effect rejected: {error:?}"))?;
+        }
+        let mut out = Vec::new();
+        for event in events {
+            out.extend(self.try_commit(event)?);
+        }
+        Ok(out)
+    }
+
+    /// Commit a downtime faction tick: a batch of moves the DM has previewed
+    /// and edited. Each move flattens to ordinary world events (its history line
+    /// and its change), which commit through the same path a DM edit does, so
+    /// the whole batch lands in the ordered log and replicates to every peer.
+    /// Staged on a clone first, so one rejected move cannot half-apply the tick.
+    pub fn commit_faction_turn(&mut self, moves: Vec<FactionMove>) -> Result<Vec<Outbound>, String> {
+        let events: Vec<GameEvent> = moves
+            .into_iter()
+            .flat_map(FactionMove::into_events)
+            .map(GameEvent::World)
+            .collect();
+        let mut preview = self.state.clone();
+        for event in &events {
+            apply_game(&mut preview, event)
+                .map_err(|error| format!("faction move rejected: {error:?}"))?;
         }
         let mut out = Vec::new();
         for event in events {

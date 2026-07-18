@@ -1334,6 +1334,46 @@ fn generated_map_stores_activates_edits_and_replicates_as_result_data() {
 }
 
 #[test]
+fn a_faction_turn_commits_and_every_peer_lives_in_the_changed_world() {
+    let mut snap = snapshot();
+    snap.world.factions.insert(
+        "tide".to_owned(),
+        WorldFaction {
+            id: "tide".into(),
+            name: "Tide Court".into(),
+            tags: vec!["river".into()],
+            claims: vec![],
+        },
+    );
+    let mut sim = Sim::new(HostSession::new(snap));
+    sim.connect(PeerId(10));
+
+    // The DM rolls a downtime tick from the host's own world and tape, then
+    // commits the batch. (A real DM edits it first; here we commit as rolled.)
+    let mut tape = EntropyTape::from_seed(7);
+    let moves = sim.host.state().world.faction_turn(4, &mut tape);
+    assert_eq!(moves.len(), 1, "one move for the one faction");
+    let logged: usize = moves.iter().map(|m| m.clone().into_events().len()).sum();
+    sim.host_faction_turn(moves).expect("the tick commits");
+
+    // Every peer holds the faction-turn history at the tick, identically: a
+    // faction acting on the world is ordinary replicated truth, not a host-only
+    // record. And the whole batch (each move's history plus its change) reached
+    // the ordered log.
+    let meanwhile = |s: &GameSnapshot| {
+        s.world
+            .history
+            .iter()
+            .filter(|h| h.kind == "faction-turn" && h.time == 4)
+            .count()
+    };
+    assert_eq!(meanwhile(sim.host.state()), 1);
+    assert_eq!(meanwhile(sim.clients[&PeerId(10)].state().unwrap()), 1);
+    assert_eq!(sim.host.seq() as usize, logged, "every move event entered the log");
+    assert_converged(&sim);
+}
+
+#[test]
 fn storylet_matches_private_fact_casts_existing_role_and_commits_effects() {
     let mut host = HostSession::new(snapshot());
     host.campaign_mut().insert_secret(SecretFact {
