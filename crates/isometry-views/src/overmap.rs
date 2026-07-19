@@ -31,10 +31,16 @@ pub fn overmap_overlay(ui: &UiState) -> Option<UiChild> {
     let overmap = ui.world.overmap_for(party);
     let here = ui.world.party_at(party).map(str::to_owned);
 
-    let actions: Vec<UiChild> = vec![Box::new(clickable(
-        el::<_, UiState, ()>("span", text("close")).attr("class", "btn btn-mini"),
-        |ui: &mut UiState, _| ui.close_overmap(),
-    ))];
+    let actions: Vec<UiChild> = vec![
+        Box::new(clickable(
+            el::<_, UiState, ()>("span", text("study map")).attr("class", "btn btn-mini"),
+            |ui: &mut UiState, _| ui.request_map_read(),
+        )),
+        Box::new(clickable(
+            el::<_, UiState, ()>("span", text("close")).attr("class", "btn btn-mini"),
+            |ui: &mut UiState, _| ui.close_overmap(),
+        )),
+    ];
 
     let mut body: Vec<UiChild> = Vec::new();
     if overmap.nodes.is_empty() {

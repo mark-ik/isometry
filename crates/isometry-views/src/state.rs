@@ -487,6 +487,10 @@ pub struct UiState {
     /// One-shot: the exploration stance the party's navigator took (empty clears);
     /// the host sets it on the lead token, and the travel rule reads it.
     pub overmap_stance_request: Option<String>,
+    /// One-shot: the party asked to study its maps. The host rolls the reader's
+    /// literacy and, on a pass, reveals the places just beyond the known ones -- a
+    /// dull-witted party learns nothing.
+    pub overmap_read_request: bool,
     /// Host-fed competing-binding projection and one-shot resolution request.
     /// The view never reads Moot stores or signs campaign operations.
     pub governance_conflict: Option<GovernanceConflict>,
@@ -606,6 +610,7 @@ impl UiState {
             overmap_travel_request: None,
             overmap_pace_request: None,
             overmap_stance_request: None,
+            overmap_read_request: false,
             generator_open: false,
             generator_preview: None,
             generator_choices: Vec::new(),
@@ -835,6 +840,13 @@ impl UiState {
     /// it on the lead token, and the travel rule reads it.
     pub fn request_stance(&mut self, stance: &str) {
         self.overmap_stance_request = Some(stance.to_owned());
+    }
+
+    /// Study the party's maps. Arms a one-shot the host resolves: a literacy
+    /// check that, on a pass, reveals the places just beyond the known ones. A
+    /// party that cannot read a map learns nothing.
+    pub fn request_map_read(&mut self) {
+        self.overmap_read_request = true;
     }
 
     pub fn open_generator(&mut self) {
@@ -2968,6 +2980,8 @@ mod tests {
         assert_eq!(ui.overmap_pace_request, Some(50));
         ui.request_stance("scout");
         assert_eq!(ui.overmap_stance_request.as_deref(), Some("scout"));
+        ui.request_map_read();
+        assert!(ui.overmap_read_request, "studying the map arms a read");
         ui.close_overmap();
         assert!(!ui.overmap_open);
     }

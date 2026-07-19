@@ -673,6 +673,7 @@ impl App {
         self.pump_faction_turn();
         self.pump_overmap();
         self.pump_overmap_orders();
+        self.pump_overmap_read();
         self.pump_net();
     }
 
@@ -1955,6 +1956,87 @@ impl App {
             if let Some(token) = nav {
                 self.emit_host_event(GameEvent::StanceSet { token, stance });
             }
+        }
+    }
+
+    /// Study the party's maps (E6). Roll the lead token's literacy; on a pass,
+    /// reveal the places just beyond the known frontier, so a lettered party sees
+    /// further than it has walked and a dull-witted one learns nothing.
+    fn pump_overmap_read(&mut self) {
+        let (read_req, world, remote) = match self.runner.as_ref() {
+            Some(r) => {
+                let s = r.state();
+                (
+                    s.overmap_read_request,
+                    s.world.clone(),
+                    s.net_mode == NetMode::Remote,
+                )
+            }
+            None => return,
+        };
+        if !read_req {
+            return;
+        }
+        if let Some(runner) = self.runner.as_mut() {
+            runner.update(|ui| ui.overmap_read_request = false);
+        }
+        if remote && !self.net_is_host {
+            return;
+        }
+        let party = self
+            .runner
+            .as_ref()
+            .and_then(|r| r.state().viewer.clone())
+            .unwrap_or_else(|| "dm".to_owned());
+        let reader = self.runner.as_ref().and_then(|r| {
+            let s = r.state();
+            s.map
+                .tokens
+                .iter()
+                .find(|t| t.owner.as_deref() == Some(party.as_str()))
+                .and_then(|t| s.map.sheet(t.id).cloned())
+        });
+        // Roll the read in a scope so the system borrow ends before emitting.
+        let can_read = {
+            let Some(system) = self.system.as_mut() else {
+                return;
+            };
+            let reader = reader.unwrap_or_else(|| system.default_sheet());
+            system.read_map(&reader, &mut self.action_rng)
+        };
+        if !can_read {
+            if let Some(runner) = self.runner.as_mut() {
+                runner.update(|ui| ui.status = "you cannot make sense of the map".to_owned());
+            }
+            return;
+        }
+        // The frontier: places one route beyond the ones the party knows.
+        let known: std::collections::BTreeSet<String> =
+            world.party_known.get(&party).cloned().unwrap_or_default();
+        let full = world.overmap();
+        let mut frontier: Vec<String> = Vec::new();
+        for node in &known {
+            for (neighbour, _) in full.neighbours(node) {
+                if !known.contains(neighbour) && !frontier.iter().any(|f| f == neighbour) {
+                    frontier.push(neighbour.to_owned());
+                }
+            }
+        }
+        if frontier.is_empty() {
+            if let Some(runner) = self.runner.as_mut() {
+                runner.update(|ui| ui.status = "the map shows nothing you do not know".to_owned());
+            }
+            return;
+        }
+        let count = frontier.len();
+        for node in frontier {
+            self.emit_host_event(GameEvent::World(WorldEvent::NodeRevealed {
+                party: party.clone(),
+                node,
+            }));
+        }
+        if let Some(runner) = self.runner.as_mut() {
+            runner.update(|ui| ui.status = format!("read the map: {count} place(s) revealed"));
         }
     }
 
