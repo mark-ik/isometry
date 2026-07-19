@@ -291,6 +291,7 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
             lost: _,
             exhaustion,
             encounter,
+            forage,
         } => {
             // The party arrives: its overmap position is world state, and
             // arriving discovers the place and what is one step on.
@@ -320,6 +321,10 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
                         state.map.set_condition(id, "exhaustion", *exhaustion);
                     }
                 }
+            }
+            // Food the party gathered on the road joins its stores.
+            if *forage != 0 {
+                state.world.add_party_resource(party, "food", *forage);
             }
             // A peril on the road drops the party onto the destination's tactical
             // map to fight, rather than arriving in peace: the same map switch a

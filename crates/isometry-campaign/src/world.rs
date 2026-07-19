@@ -60,6 +60,11 @@ pub struct CampaignWorld {
     /// overmap scale, with explored memory: once known, a place stays known.
     #[serde(default)]
     pub party_known: BTreeMap<String, BTreeSet<String>>,
+    /// A party's named stores: party owner -> resource -> amount. Food gathered
+    /// by foraging on the road lives here; the substrate keeps the count and the
+    /// system decides what a store is worth and when it runs out.
+    #[serde(default)]
+    pub party_resources: BTreeMap<String, BTreeMap<String, i64>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -368,6 +373,29 @@ impl CampaignWorld {
         let (_, weight) = self.overmap().route(from, to)?;
         let pct = self.pace(party).max(1) as u64;
         Some(((weight as u64 * pct) / 100).max(1))
+    }
+
+    /// A party's store of a named resource (0 when it has none).
+    pub fn party_resource(&self, party: &str, key: &str) -> i64 {
+        self.party_resources
+            .get(party)
+            .and_then(|store| store.get(key))
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Add to a party's store of a named resource (a negative delta spends it).
+    /// A store that reaches zero is dropped, so an untouched party keeps nothing.
+    pub fn add_party_resource(&mut self, party: &str, key: &str, delta: i64) {
+        let store = self.party_resources.entry(party.to_owned()).or_default();
+        let amount = store.entry(key.to_owned()).or_insert(0);
+        *amount += delta;
+        if *amount <= 0 {
+            store.remove(key);
+        }
+        if store.is_empty() {
+            self.party_resources.remove(party);
+        }
     }
 
     /// Whether `party` has discovered `node`.

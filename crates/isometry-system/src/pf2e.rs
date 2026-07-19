@@ -336,12 +336,12 @@ pub fn pf2e_srd() -> System {
             else return 0 end
         end
 
-        -- The perils of a long road: a journey of 15+ ticks runs into something,
-        -- and the party is dropped onto the map to fight rather than arriving in
-        -- peace. A short hop is safe. (A roll-based chance is the richer version;
-        -- this keeps the peril legible and the length meaningful.)
-        function p_road_peril(c, t, ticks)
-            if ticks >= 15 then return 1 else return 0 end
+        -- The perils of a long road, as a chance: a d20 plus the trip's length
+        -- against 25, so a 15-tick road runs into something about half the time
+        -- and a short hop almost never does. On a peril the party is dropped onto
+        -- the map to fight rather than arriving in peace.
+        function p_road_peril(c, t, roll, ticks)
+            if roll + ticks >= 25 then return 1 else return 0 end
         end
 
         -- Reading a map is an Intelligence check (DC 15): a lettered scholar
@@ -349,6 +349,15 @@ pub fn pf2e_srd() -> System {
         -- learns nothing. This is why who can read the map is a party question.
         function p_read_map(c, t, roll)
             if roll + ab_mod(c.int) >= 15 then return 1 else return 0 end
+        end
+
+        -- Foraging on the road: only if the navigator took the Forage stance, and
+        -- then a Wisdom (Survival) check against DC 12 gathers two days of food.
+        -- A poor forager searches and finds nothing. Slow travel (which lets you
+        -- forage) is a system pace choice; this is what the foraging itself yields.
+        function p_forage(c, t, roll)
+            if c.stance ~= "forage" then return 0 end
+            if roll + ab_mod(c.wis) >= 12 then return 2 else return 0 end
         end
     "#;
     System::load("pf2e-srd", "Pathfinder 2e (skeleton)", fields, derived, actions, script)
@@ -359,4 +368,5 @@ pub fn pf2e_srd() -> System {
         .with_toll("p_march_toll")
         .with_encounters("p_road_peril")
         .with_map_reading("p_read_map")
+        .with_foraging("p_forage")
 }

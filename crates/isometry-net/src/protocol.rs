@@ -286,6 +286,10 @@ pub enum GameEvent {
         /// the destination's tactical map to fight, rather than arriving in peace.
         #[serde(default)]
         encounter: bool,
+        /// Food the party foraged on the road, added to its stores. Zero if
+        /// nobody foraged.
+        #[serde(default)]
+        forage: i64,
     },
 }
 

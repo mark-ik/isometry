@@ -251,6 +251,10 @@ pub struct TravelResolution {
     /// the destination's tactical map to fight rather than arriving in peace. The
     /// system's `encounter_func` decides; the substrate only obeys.
     pub encounter: bool,
+    /// Food the party foraged on the road (a Forage stance and a good roll), for
+    /// the host to add to the party's stores. Zero when nobody foraged or the
+    /// roll came up empty. What "food" is and what it is worth is the system's.
+    pub forage: i64,
 }
 
 /// Copy `sheet` with each active condition added as a boolean field, so Lua
@@ -317,13 +321,18 @@ pub struct System {
     /// of `ticks` leaves the party (a graded condition the host applies to every
     /// member). `None` means travel never tires (a system with no attrition).
     pub toll_func: Option<String>,
-    /// Lua `f(c, t, ticks) -> 1|0` for overmap travel: did the road throw an
-    /// encounter? `None` means a safe road (a system with no wandering perils).
+    /// Lua `f(c, t, roll, ticks) -> 1|0` for overmap travel: did the road throw
+    /// an encounter? A fresh d20 makes it a chance the trip's length shifts.
+    /// `None` means a safe road (a system with no wandering perils).
     pub encounter_func: Option<String>,
     /// Lua `f(c, t, roll) -> 1|0`: can this reader make sense of a map? The
     /// literacy/skill check behind "a dumb character cannot read a map" -- a low
     /// enough reader fails and learns nothing. `None` means anyone can read one.
     pub map_read_func: Option<String>,
+    /// Lua `f(c, t, roll) -> food` for overmap travel: what the navigator forages
+    /// on the road (reading its own `c.stance`, so it yields only when Foraging).
+    /// `None` means travel gathers no food.
+    pub forage_func: Option<String>,
     lua: Lua,
 }
 
@@ -1399,6 +1408,7 @@ impl System {
             toll_func: None,
             encounter_func: None,
             map_read_func: None,
+            forage_func: None,
             lua,
         })
     }
@@ -1446,6 +1456,13 @@ impl System {
     /// anyone can read a map simply never calls this.
     pub fn with_map_reading(mut self, func: impl Into<String>) -> Self {
         self.map_read_func = Some(func.into());
+        self
+    }
+
+    /// Declare the foraging rule: a Lua `f(c, t, roll) -> food`. A system where
+    /// travel gathers no food simply never calls this.
+    pub fn with_foraging(mut self, func: impl Into<String>) -> Self {
+        self.forage_func = Some(func.into());
         self
     }
 
@@ -1497,16 +1514,28 @@ impl System {
                 .max(0),
             None => 0,
         };
-        // Did the road throw a peril? The check reads the actual time too, so a
-        // longer (or lost) trip is more dangerous, and a safe-road system that
-        // declares no rule never rolls one.
+        // Did the road throw a peril? A fresh d20 makes it a *chance*, and the
+        // check reads the time too, so a longer (or lost) trip is more dangerous.
+        // A safe-road system that declares no rule never rolls one.
         let encounter = match self.encounter_func.clone() {
             Some(func) => {
-                self.call_int_ctx(&func, navigator, None, Some(ticks as i64))
+                let (peril_roll, _) = roll("1d20", rng).unwrap_or((0, vec![0]));
+                self.call_int_ctx2(&func, navigator, None, Some(peril_roll as i64), Some(ticks as i64))
                     .unwrap_or(0)
                     != 0
             }
             None => false,
+        };
+        // What the party foraged on the road. The rule reads the navigator's own
+        // stance, so it yields only when Foraging; a fresh d20 is the check.
+        let forage = match self.forage_func.clone() {
+            Some(func) => {
+                let (forage_roll, _) = roll("1d20", rng).unwrap_or((0, vec![0]));
+                self.call_int_ctx(&func, navigator, None, Some(forage_roll as i64))
+                    .unwrap_or(0)
+                    .max(0)
+            }
+            None => 0,
         };
         TravelResolution {
             roll: RollRecord {
@@ -1519,6 +1548,7 @@ impl System {
             lost: nav_pct > 100,
             exhaustion,
             encounter,
+            forage,
         }
     }
 
@@ -3285,18 +3315,34 @@ end"#,
     }
 
     #[test]
-    fn a_long_road_throws_an_encounter() {
+    fn a_long_road_throws_encounters_by_chance() {
         let mut sys = pf2e_srd();
         let mut scout = sys.default_sheet();
         scout.set_int("wis", 100); // never lost, so ticks == base
+        // A 30-tick road always runs into something (d20 + 30 clears 25 on any
+        // roll); a 1-tick hop never does (it would need a 24 on a d20).
         assert!(
-            sys.resolve_travel(&scout, 15, 100, &mut Rng::new(1)).encounter,
-            "a long road (15+ ticks) throws a peril"
+            sys.resolve_travel(&scout, 30, 100, &mut Rng::new(1)).encounter,
+            "a very long road always has perils"
         );
         assert!(
-            !sys.resolve_travel(&scout, 5, 100, &mut Rng::new(1)).encounter,
+            !sys.resolve_travel(&scout, 1, 100, &mut Rng::new(1)).encounter,
             "a short hop is safe"
         );
+        // A middling road (15 ticks) is a chance, not a certainty: over seeds,
+        // both a safe passage and a peril occur.
+        let (mut safe, mut peril) = (false, false);
+        for seed in 0..60u64 {
+            if sys.resolve_travel(&scout, 15, 100, &mut Rng::new(seed)).encounter {
+                peril = true;
+            } else {
+                safe = true;
+            }
+            if safe && peril {
+                break;
+            }
+        }
+        assert!(safe && peril, "a middling road throws perils by chance, not always");
 
         // 5e declares no encounter rule, so its roads are safe.
         let mut plain = srd_5e();
@@ -3332,6 +3378,33 @@ end"#,
         let mut plain = srd_5e();
         let sheet = plain.default_sheet();
         assert!(plain.read_map(&sheet, &mut Rng::new(1)), "no rule means anyone reads it");
+    }
+
+    #[test]
+    fn foraging_yields_food_only_when_you_forage() {
+        let mut sys = pf2e_srd();
+        // A capable forager (WIS 40) who took the Forage stance gathers food.
+        let mut forager = sys.default_sheet();
+        forager.set_int("wis", 40);
+        forager.set_text("stance", "forage");
+        assert_eq!(
+            sys.resolve_travel(&forager, 4, 100, &mut Rng::new(1)).forage,
+            2,
+            "foraging on the road gathers food"
+        );
+        // The same navigator just walking (no stance) gathers nothing.
+        let mut walker = sys.default_sheet();
+        walker.set_int("wis", 40);
+        assert_eq!(
+            sys.resolve_travel(&walker, 4, 100, &mut Rng::new(1)).forage,
+            0,
+            "you gather food only if you forage"
+        );
+
+        // 5e declares no foraging rule.
+        let mut plain = srd_5e();
+        let sheet = plain.default_sheet();
+        assert_eq!(plain.resolve_travel(&sheet, 4, 100, &mut Rng::new(1)).forage, 0);
     }
 
     #[test]

@@ -1501,11 +1501,13 @@ fn a_resolved_travel_moves_the_party_and_ticks_the_clock_on_every_peer() {
         lost: true,
         exhaustion: 2,
         encounter: false,
+        forage: 3,
     });
 
     let at = |s: &GameSnapshot| s.world.party_at("A").map(str::to_owned);
     let clock = |s: &GameSnapshot| s.clocks.get("forest-map").copied().unwrap_or(0);
     let tired = |s: &GameSnapshot| s.map.condition_value(TokenId(1), "exhaustion");
+    let food = |s: &GameSnapshot| s.world.party_resource("A", "food");
     assert_eq!(at(sim.host.state()).as_deref(), Some("forest"), "the party arrived");
     assert_eq!(clock(sim.host.state()), 5, "arriving advanced the destination's clock");
     assert_eq!(tired(sim.host.state()), 2, "the march exhausted the party member");
@@ -1522,6 +1524,12 @@ fn a_resolved_travel_moves_the_party_and_ticks_the_clock_on_every_peer() {
         tired(sim.clients[&PeerId(10)].state().unwrap()),
         2,
         "and the same exhaustion -- attrition is replicated truth"
+    );
+    assert_eq!(food(sim.host.state()), 3, "the foraged food joined the party's stores");
+    assert_eq!(
+        food(sim.clients[&PeerId(10)].state().unwrap()),
+        3,
+        "and the client holds the same stores"
     );
     assert_eq!(sim.host.state().roll_log.len(), 1, "the navigation roll reached the log");
     assert_converged(&sim);
@@ -1578,6 +1586,7 @@ fn an_encounter_on_the_road_drops_the_party_onto_the_map() {
         lost: false,
         exhaustion: 0,
         encounter: true,
+        forage: 0,
     });
 
     let active = |s: &GameSnapshot| s.active_map.clone();
@@ -1627,6 +1636,7 @@ fn a_client_cannot_pronounce_its_own_travel() {
             lost: false,
             exhaustion: 0,
             encounter: false,
+            forage: 0,
         },
     );
     assert_eq!(sim.host.seq(), seq, "a forged travel verdict entered the log");
