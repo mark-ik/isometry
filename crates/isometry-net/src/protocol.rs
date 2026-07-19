@@ -230,6 +230,12 @@ pub enum GameEvent {
     /// Unlike an action, a player may throw this for themselves, since the worst
     /// a liar can do is wave.
     Emoted { token: TokenId, beat: String },
+    /// A token takes (or, with an empty name, drops) an exploration stance while
+    /// the party travels: `scout`, `search`, `avoid-notice`. Like an emote, a
+    /// player may set it on its own token -- there is no verdict to forge, only a
+    /// declaration of what you are doing on the road -- and the travel resolver
+    /// reads it.
+    StanceSet { token: TokenId, stance: String },
     /// Apply or clear one named condition outside an action (the DM's ruling, or
     /// standing up from prone), carrying the system's recomputed mobility for
     /// that token. Host-committed: what a condition *means* is the rules', so

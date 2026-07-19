@@ -316,7 +316,14 @@ pub fn pf2e_srd() -> System {
         -- exhaustion, a wandering encounter -- is later rungs; here it is time.
         function p_navigate(c, t, roll, weight)
             local dc = 12 + weight
-            if roll + ab_mod(c.wis) >= dc then return 100 else return 150 end
+            -- The navigator's exploration stance colours the check: Scouting
+            -- ahead helps you find the way (+3), Searching every thicket slows
+            -- and distracts you (-2). The stance is the substrate's `c.stance`
+            -- string; what each one does is entirely here.
+            local bonus = ab_mod(c.wis)
+            if c.stance == "scout" then bonus = bonus + 3
+            elseif c.stance == "search" then bonus = bonus - 2 end
+            if roll + bonus >= dc then return 100 else return 150 end
         end
     "#;
     System::load("pf2e-srd", "Pathfinder 2e (skeleton)", fields, derived, actions, script)

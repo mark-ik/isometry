@@ -102,6 +102,13 @@ pub struct MapDocument {
     /// none of them baked in. Absent counters read as zero.
     #[serde(default)]
     pub turn_counters: BTreeMap<TokenId, BTreeMap<String, i64>>,
+    /// Each token's exploration stance while the party travels the overmap:
+    /// `scout`, `search`, `avoid-notice`, whatever the system names. One at a
+    /// time (unlike conditions, a set), opaque to the substrate, injected into
+    /// the character table as `c.stance` so a travel rule reads it. Absent means
+    /// no stance (just walking). The substrate never knows what Scouting does.
+    #[serde(default)]
+    pub stances: BTreeMap<TokenId, String>,
 }
 
 impl MapDocument {
@@ -119,6 +126,7 @@ impl MapDocument {
             conditions: BTreeMap::new(),
             mobility: BTreeMap::new(),
             turn_counters: BTreeMap::new(),
+            stances: BTreeMap::new(),
         }
     }
 
@@ -198,6 +206,21 @@ impl MapDocument {
     /// any of them mean.
     pub fn clear_turn_counters(&mut self, id: TokenId) {
         self.turn_counters.remove(&id);
+    }
+
+    /// A token's exploration stance, if it holds one.
+    pub fn stance(&self, id: TokenId) -> Option<&str> {
+        self.stances.get(&id).map(String::as_str)
+    }
+
+    /// Set (or, with an empty name, clear) a token's exploration stance. One at a
+    /// time: setting a new stance replaces the old.
+    pub fn set_stance(&mut self, id: TokenId, stance: &str) {
+        if stance.is_empty() {
+            self.stances.remove(&id);
+        } else {
+            self.stances.insert(id, stance.to_owned());
+        }
     }
 
     /// The effective `(move budget, sight radius)` for `id`: the system's
@@ -329,6 +352,21 @@ mod tests {
         assert!(!m.has_condition(a, "prone"));
         m.set_condition(a, "frightened", 0);
         assert!(m.conditions.get(&a).is_none());
+    }
+
+    #[test]
+    fn stance_is_single_valued_and_clears() {
+        let mut m = MapDocument::new("t", 4, 4);
+        let a = TokenId(1);
+        assert_eq!(m.stance(a), None, "no stance by default");
+        m.set_stance(a, "scout");
+        assert_eq!(m.stance(a), Some("scout"));
+        // One at a time: a new stance replaces the old, not adds to it.
+        m.set_stance(a, "search");
+        assert_eq!(m.stance(a), Some("search"));
+        // An empty name clears it.
+        m.set_stance(a, "");
+        assert_eq!(m.stance(a), None);
     }
 
     #[test]

@@ -1811,18 +1811,32 @@ impl App {
                 let pace = world.pace(&party);
                 // The navigator: a token of the party leads the way, else a bare
                 // sheet (a party with no statted member just travels at base).
-                let nav = self.runner.as_ref().and_then(|r| {
-                    let s = r.state();
-                    s.map
-                        .tokens
-                        .iter()
-                        .find(|t| t.owner.as_deref() == Some(party.as_str()))
-                        .and_then(|t| s.map.sheet(t.id).cloned())
-                });
+                // The party's navigator (its first token) leads the way, carrying
+                // its sheet and its exploration stance (E3), so Scouting or
+                // Searching colours the trip. A partyless-of-tokens party travels
+                // on a bare sheet at base.
+                let (nav_sheet, stance) = match self.runner.as_ref() {
+                    Some(r) => {
+                        let s = r.state();
+                        let tok = s
+                            .map
+                            .tokens
+                            .iter()
+                            .find(|t| t.owner.as_deref() == Some(party.as_str()));
+                        (
+                            tok.and_then(|t| s.map.sheet(t.id).cloned()),
+                            tok.and_then(|t| s.map.stance(t.id).map(str::to_owned)),
+                        )
+                    }
+                    None => (None, None),
+                };
                 let Some(system) = self.system.as_mut() else {
                     return;
                 };
-                let nav = nav.unwrap_or_else(|| system.default_sheet());
+                let mut nav = nav_sheet.unwrap_or_else(|| system.default_sheet());
+                if let Some(stance) = stance {
+                    nav.set_text("stance", stance);
+                }
                 let res = system.resolve_travel(&nav, weight as u32, pace, &mut self.action_rng);
                 let (ticks, lost) = (res.ticks, res.lost);
                 if let Some(runner) = self.runner.as_mut() {

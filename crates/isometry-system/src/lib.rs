@@ -3150,6 +3150,36 @@ end"#,
     }
 
     #[test]
+    fn the_navigator_stance_changes_the_travel_outcome() {
+        // A borderline navigator (WIS 10, +0) on a weight-4 route (DC 16): the
+        // exploration stance is what tips it. Scouting ahead (+3) finds the way
+        // on a roll where Searching every thicket (-2) loses it. Find a roll in
+        // that flip zone over a fixed seed range.
+        let mut sys = pf2e_srd();
+        let mut flipped = false;
+        for seed in 0..64u64 {
+            let mut scout = sys.default_sheet();
+            scout.set_int("wis", 10);
+            scout.set_text("stance", "scout");
+            let scout_lost = sys.resolve_travel(&scout, 4, 100, &mut Rng::new(seed)).lost;
+
+            let mut searcher = sys.default_sheet();
+            searcher.set_int("wis", 10);
+            searcher.set_text("stance", "search");
+            let search_lost = sys.resolve_travel(&searcher, 4, 100, &mut Rng::new(seed)).lost;
+
+            if !scout_lost && search_lost {
+                flipped = true;
+                break;
+            }
+        }
+        assert!(
+            flipped,
+            "on some roll, Scouting finds the way where Searching loses it"
+        );
+    }
+
+    #[test]
     fn pace_feeds_the_travel_base_and_no_nav_rule_never_loses_the_way() {
         // Pace scales the base the system rules against; a keen navigator travels
         // it smoothly, so the ticks track the pace-scaled base directly.

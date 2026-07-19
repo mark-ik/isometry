@@ -281,10 +281,14 @@ scheduled.
   the party rolls its way there, time passes, everyone converges. The richer
   "lost lands you on the *wrong* node" outcome is deferred; E2 does lost = more
   time.
-- **E3: Exploration activities.** A per-token stance slot the system reads (Scout,
-  Search, Avoid Notice). *Done when* choosing Scout versus Search changes a travel
-  outcome (initiative on the next encounter, or find-versus-speed), entirely in
-  Lua.
+- **E3: Exploration activities. LANDED 2026-07-18.** A per-token stance
+  (`MapDocument.stances`, one at a time, set by a `StanceSet` a player may issue
+  on its own tokens like an emote), injected into the sheet as `c.stance` and read
+  by the travel rule. PF2e's `p_navigate` reads it: Scouting ahead (+3) finds the
+  way where Searching every thicket (-2) loses it, so choosing the stance changes
+  the outcome, entirely in Lua. The host injects the party navigator's stance in
+  `pump_overmap`. A stance-picker button is the remaining UI polish; the mechanism
+  is settable, replicated, and tested.
 - **E4: Attrition.** Forced march accrues exhaustion (graded condition, reused);
   foraging adjusts a party resource. *Done when* a long march sets exhaustion N
   and a forage roll changes food, both system-ruled, both replicated.

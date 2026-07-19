@@ -174,6 +174,12 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
             play_beats(state, vec![isometry_core::Beat::new(*token, beat.clone())]);
             Ok(())
         }
+        GameEvent::StanceSet { token, stance } => {
+            require_token(state, *token)?;
+            state.map.set_stance(*token, stance);
+            sync_active_map(state);
+            Ok(())
+        }
         GameEvent::ConditionSet {
             token,
             condition,
@@ -1039,6 +1045,16 @@ impl HostSession {
                 Recipient::One(from),
                 NetMessage::Rejected {
                     reason: "you can only emote your own tokens".to_owned(),
+                },
+            )],
+            // A stance is a declaration, not a verdict, so a player sets it on its
+            // own tokens (and only its own), exactly like an emote.
+            NetMessage::Intent {
+                event: GameEvent::StanceSet { token, .. },
+            } if !self.peer_owns(from, token) => vec![(
+                Recipient::One(from),
+                NetMessage::Rejected {
+                    reason: "you can only set the stance of your own tokens".to_owned(),
                 },
             )],
             // A player asking to act. Two things are checkable without any rules
