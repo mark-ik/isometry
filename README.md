@@ -21,3 +21,5 @@ netrender). Status: bootstrap; see
 
 Docs live in [design_docs/](design_docs/), indexed by
 [design_docs/DOC_README.md](design_docs/DOC_README.md).
+
+License: dual MIT OR Apache-2.0, at your option.
