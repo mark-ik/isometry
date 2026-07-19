@@ -13,6 +13,7 @@ mod demo;
 mod downtime;
 mod generator;
 mod governance;
+mod overmap;
 mod panel;
 mod sheet;
 mod state;

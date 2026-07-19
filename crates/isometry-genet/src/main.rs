@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 use codicil::Codicil;
 use isometry_campaign::{
     CampaignStore, EntropyTape, FactionMove, GenValue, GeneratorRequest, ItemId, ItemInstance,
-    MapScale, WorldFact,
+    MapScale, WorldEvent, WorldFact,
 };
 use isometry_core::{Facing, FieldValue, MapDocument, Rng, SessionEvent, SheetData, TileCoord, Token, TokenId};
 use isometry_net::{
@@ -667,6 +667,7 @@ impl App {
         self.pump_generators();
         self.pump_storylets();
         self.pump_faction_turn();
+        self.pump_overmap();
         self.pump_net();
     }
 
@@ -1748,6 +1749,119 @@ impl App {
                         runner.update(|ui| ui.status = format!("downtime failed: {error}"));
                     }
                 }
+            }
+        }
+        if let Some(window) = self.window.as_ref() {
+            window.request_redraw();
+        }
+    }
+
+    /// The overmap surface (C8). When the table clicks a place to travel to,
+    /// resolve the trip and move the party. Host-adjudicated, like an action:
+    /// the authority rolls the navigation (`resolve_travel`), spends the time,
+    /// and emits a `TravelResolved` verdict every peer applies. If the party is
+    /// not on the overmap yet, the first click simply places it there.
+    fn pump_overmap(&mut self) {
+        let (request, world, remote) = match self.runner.as_ref() {
+            Some(r) => {
+                let s = r.state();
+                (
+                    s.overmap_travel_request.clone(),
+                    s.world.clone(),
+                    s.net_mode == NetMode::Remote,
+                )
+            }
+            None => return,
+        };
+        let Some(to) = request else {
+            return;
+        };
+        if let Some(runner) = self.runner.as_mut() {
+            runner.update(|ui| ui.overmap_travel_request = None);
+        }
+        // Only the authority resolves travel. A joined client's click is a look,
+        // not a verdict; routing its request as an ask is a later refinement.
+        if remote && !self.net_is_host {
+            if let Some(runner) = self.runner.as_mut() {
+                runner.update(|ui| ui.status = "the DM guides the party".to_owned());
+            }
+            return;
+        }
+        let party = self
+            .runner
+            .as_ref()
+            .and_then(|r| r.state().viewer.clone())
+            .unwrap_or_else(|| "dm".to_owned());
+        let from = world.party_at(&party).map(str::to_owned);
+
+        let event = match from {
+            // Not on the overmap yet: the first click places the party.
+            None => GameEvent::World(WorldEvent::PartyMoved {
+                party: party.clone(),
+                node: to.clone(),
+            }),
+            Some(here) if here == to => return,
+            Some(here) => {
+                let Some((_, weight)) = world.overmap().route(&here, &to) else {
+                    if let Some(runner) = self.runner.as_mut() {
+                        runner.update(|ui| ui.status = format!("no route to {to}"));
+                    }
+                    return;
+                };
+                let pace = world.pace(&party);
+                // The navigator: a token of the party leads the way, else a bare
+                // sheet (a party with no statted member just travels at base).
+                let nav = self.runner.as_ref().and_then(|r| {
+                    let s = r.state();
+                    s.map
+                        .tokens
+                        .iter()
+                        .find(|t| t.owner.as_deref() == Some(party.as_str()))
+                        .and_then(|t| s.map.sheet(t.id).cloned())
+                });
+                let Some(system) = self.system.as_mut() else {
+                    return;
+                };
+                let nav = nav.unwrap_or_else(|| system.default_sheet());
+                let res = system.resolve_travel(&nav, weight as u32, pace, &mut self.action_rng);
+                let (ticks, lost) = (res.ticks, res.lost);
+                if let Some(runner) = self.runner.as_mut() {
+                    runner.update(|ui| {
+                        ui.status = if lost {
+                            format!("lost the way to {to} ({ticks})")
+                        } else {
+                            format!("travelled to {to} ({ticks})")
+                        };
+                    });
+                }
+                GameEvent::TravelResolved {
+                    party: party.clone(),
+                    to: to.clone(),
+                    ticks,
+                    roll: res.roll,
+                    lost,
+                }
+            }
+        };
+
+        if remote {
+            if let Some(net) = self.net.as_mut() {
+                net.submit(event);
+            }
+        } else {
+            let snapshot = match self.runner.as_ref() {
+                Some(r) => self.snapshot_of(r.state()),
+                None => return,
+            };
+            let mut host =
+                HostSession::with_history(snapshot, self.campaign.clone(), self.history.clone());
+            let _ = host.local_event(event);
+            self.campaign = host.campaign().clone();
+            self.history = host.history().clone();
+            self.journal = host.state().journal.clone();
+            let snapshot = host.state().clone();
+            if let Some(runner) = self.runner.as_mut() {
+                runner.update(|ui| ui.apply_snapshot(snapshot));
             }
         }
         if let Some(window) = self.window.as_ref() {

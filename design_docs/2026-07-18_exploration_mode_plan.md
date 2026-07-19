@@ -247,8 +247,10 @@ scheduled.
   projected from `CampaignWorld`'s existing places + routes, with the party's
   position as replicated session state and a `PartyMoved` event. *Done when* a
   party sits on a node and paths along weighted edges, no rules attached: met.
-  Remaining for a playable E0 is only the overmap *rendering* (drawing the graph,
-  clicking a node to travel), which is app UI, not substrate.
+  **The overmap render LANDED 2026-07-18** (`views/overmap.rs`): the projected
+  graph drawn through Cambium's catalog `graph_canvas_swatch` (sites and
+  waypoints as nodes, routes as edges, the party's node highlighted), an
+  "Overmap" panel button, and click-a-node-to-travel. E0 is playable on screen.
 - **E1: Pace and tick. Cost primitive LANDED 2026-07-18.** A party-level pace
   (`party_pace`, a percent of normal time, replicated via `PartyPaceSet`) and
   `CampaignWorld::travel_cost(party, from, to)`, the shortest route's weight
@@ -272,9 +274,13 @@ scheduled.
   overmap), and logs the navigation roll; host-committed, and a client is refused
   ("travel is adjudicated by the host") exactly like `ActionResolved`. What is
   left is only the host *orchestration* (pick the navigator, read the edge weight,
-  call `resolve_travel`, emit the verdict), which pairs with the render's
-  click-to-travel and lands with it. The richer "lost lands you on the *wrong*
-  node" outcome is deferred; E2 does lost = more time.
+  call `resolve_travel`, emit the verdict). **That LANDED 2026-07-18** with the
+  render: `pump_overmap` reads the party's navigator and the edge weight, rolls
+  `resolve_travel`, and emits `TravelResolved` (solo via a local `HostSession`,
+  in-session via the host bridge). **E2 is complete end to end** -- click a place,
+  the party rolls its way there, time passes, everyone converges. The richer
+  "lost lands you on the *wrong* node" outcome is deferred; E2 does lost = more
+  time.
 - **E3: Exploration activities.** A per-token stance slot the system reads (Scout,
   Search, Avoid Notice). *Done when* choosing Scout versus Search changes a travel
   outcome (initiative on the next encounter, or find-versus-speed), entirely in
@@ -374,3 +380,15 @@ composition again (fog + secrets + a check).
   gives E1's deferred clock-application its home: the resolver produces `ticks`,
   and the net/host wiring (a `TravelResolved` event applying them and moving the
   party) is the remaining increment.
+- **2026-07-18:** **travel wired + the overmap rendered. E0-E2 are playable.**
+  `GameEvent::TravelResolved` (verdict: move the party, advance the destination
+  clock, log the roll; host-only, client refused) plus `views/overmap.rs` (the
+  projected graph via Cambium's `graph_canvas_swatch`, an "Overmap" button,
+  click-to-travel) plus `pump_overmap` (roll `resolve_travel`, emit the verdict,
+  solo or in-session). Click a place, the party navigates its way there, time
+  passes, every peer converges. Verified:
+  `a_resolved_travel_moves_the_party_and_ticks_the_clock_on_every_peer`,
+  `a_client_cannot_pronounce_its_own_travel` (net),
+  `the_overmap_surface_opens_and_arms_a_travel_request` (views). The rendered
+  canvas itself is not unit-tested (paint); genet-probe is its headed lane, not
+  yet run. Next: E3 activities, E4 attrition, E5 encounters, E6 discovery.

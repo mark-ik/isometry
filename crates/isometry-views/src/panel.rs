@@ -372,6 +372,7 @@ pub fn side_panel(ui: &UiState) -> UiChild {
                     action_button("Generate", ui.can_edit_inventory, |ui| ui.open_generator()),
                     action_button("Story", ui.can_edit_inventory, |ui| ui.open_storylets()),
                     action_button("Downtime", ui.can_edit_inventory, |ui| ui.open_downtime()),
+                    action_button("Overmap", true, |ui| ui.open_overmap()),
                     action_button("Resolve", ui.governance_conflict.is_some(), |ui| {
                         ui.open_governance_conflict()
                     }),

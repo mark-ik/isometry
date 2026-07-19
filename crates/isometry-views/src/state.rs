@@ -473,6 +473,14 @@ pub struct UiState {
     pub downtime_roll_request: bool,
     /// One-shot: the DM committed the kept moves; the host drains and commits.
     pub downtime_commit_request: bool,
+    /// The overmap surface (C8 exploration): the party's pointcrawl. Drawn from
+    /// `self.world` (projected places + routes); the party's current node comes
+    /// from `world.party_node`. Clicking a node arms a travel to it, which the
+    /// host adjudicates.
+    pub overmap_open: bool,
+    /// One-shot: the node the local party asked to travel to; the host resolves
+    /// the trip (roll, time, whether they get lost) and moves the party.
+    pub overmap_travel_request: Option<String>,
     /// Host-fed competing-binding projection and one-shot resolution request.
     /// The view never reads Moot stores or signs campaign operations.
     pub governance_conflict: Option<GovernanceConflict>,
@@ -588,6 +596,8 @@ impl UiState {
             downtime_selected: 0,
             downtime_roll_request: false,
             downtime_commit_request: false,
+            overmap_open: false,
+            overmap_travel_request: None,
             generator_open: false,
             generator_preview: None,
             generator_choices: Vec::new(),
@@ -787,6 +797,24 @@ impl UiState {
         }
         self.downtime_commit_request = true;
         self.status = format!("committing {kept} downtime move(s)");
+    }
+
+    /// Open the overmap: the party's pointcrawl of known places and routes.
+    /// Anyone at the table may look at where the party is; travelling is gated
+    /// downstream (the host adjudicates, and only a controller's request lands).
+    pub fn open_overmap(&mut self) {
+        self.overmap_open = true;
+    }
+
+    pub fn close_overmap(&mut self) {
+        self.overmap_open = false;
+    }
+
+    /// Ask to travel to `node`. Arms a one-shot the host drains: it rolls the
+    /// navigation, spends the time, and moves the party, or refuses if there is
+    /// no route. The view never decides the outcome.
+    pub fn request_travel(&mut self, node: String) {
+        self.overmap_travel_request = Some(node);
     }
 
     pub fn open_generator(&mut self) {
@@ -2902,6 +2930,21 @@ mod tests {
         ui.faction_moves.iter_mut().for_each(|m| m.struck = true);
         ui.commit_downtime();
         assert!(!ui.downtime_commit_request, "nothing kept, nothing to commit");
+    }
+
+    #[test]
+    fn the_overmap_surface_opens_and_arms_a_travel_request() {
+        let mut ui = UiState::new(demo_map());
+        assert!(!ui.overmap_open);
+        // Anyone may look at the overmap (unlike the DM-only downtime surface).
+        ui.open_overmap();
+        assert!(ui.overmap_open);
+        // Clicking a place arms a one-shot the host resolves; the view decides
+        // nothing about the trip.
+        ui.request_travel("forest".to_owned());
+        assert_eq!(ui.overmap_travel_request.as_deref(), Some("forest"));
+        ui.close_overmap();
+        assert!(!ui.overmap_open);
     }
 
     #[test]
