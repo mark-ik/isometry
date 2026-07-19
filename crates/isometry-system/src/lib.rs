@@ -320,6 +320,10 @@ pub struct System {
     /// Lua `f(c, t, ticks) -> 1|0` for overmap travel: did the road throw an
     /// encounter? `None` means a safe road (a system with no wandering perils).
     pub encounter_func: Option<String>,
+    /// Lua `f(c, t, roll) -> 1|0`: can this reader make sense of a map? The
+    /// literacy/skill check behind "a dumb character cannot read a map" -- a low
+    /// enough reader fails and learns nothing. `None` means anyone can read one.
+    pub map_read_func: Option<String>,
     lua: Lua,
 }
 
@@ -1394,6 +1398,7 @@ impl System {
             nav_func: None,
             toll_func: None,
             encounter_func: None,
+            map_read_func: None,
             lua,
         })
     }
@@ -1435,6 +1440,27 @@ impl System {
     pub fn with_encounters(mut self, func: impl Into<String>) -> Self {
         self.encounter_func = Some(func.into());
         self
+    }
+
+    /// Declare the map-reading rule: a Lua `f(c, t, roll) -> 1|0`. A system where
+    /// anyone can read a map simply never calls this.
+    pub fn with_map_reading(mut self, func: impl Into<String>) -> Self {
+        self.map_read_func = Some(func.into());
+        self
+    }
+
+    /// Can `reader` make sense of a map? Rolls the reader's literacy/skill check;
+    /// on a pass the host reveals what the map shows, on a failure it learns
+    /// nothing -- an unskilled party holds a map it cannot use. With no
+    /// `map_read_func`, any reader succeeds.
+    pub fn read_map(&mut self, reader: &SheetData, rng: &mut Rng) -> bool {
+        let Some(func) = self.map_read_func.clone() else {
+            return true;
+        };
+        let (raw, _) = roll("1d20", rng).unwrap_or((0, vec![0]));
+        self.call_int_ctx(&func, reader, None, Some(raw as i64))
+            .unwrap_or(0)
+            != 0
     }
 
     /// Resolve one leg of overmap travel: roll the party's navigator against the
@@ -3276,6 +3302,36 @@ end"#,
         let mut plain = srd_5e();
         let sheet = plain.default_sheet();
         assert!(!plain.resolve_travel(&sheet, 30, 100, &mut Rng::new(1)).encounter);
+    }
+
+    #[test]
+    fn a_dull_reader_cannot_read_a_map() {
+        let mut sys = pf2e_srd();
+        // A scholar (INT 40, +15) reads any map: roll + 15 clears DC 15 always.
+        let mut scholar = sys.default_sheet();
+        scholar.set_int("int", 40);
+        assert!(
+            sys.read_map(&scholar, &mut Rng::new(1)),
+            "a lettered reader makes sense of it"
+        );
+        // A brute (INT 1, -5) cannot: only a natural 20 would clear the DC, so
+        // over a fixed seed range it fails to read the map -- and holds a map it
+        // cannot use.
+        let mut brute = sys.default_sheet();
+        brute.set_int("int", 1);
+        let mut failed = false;
+        for seed in 0..64u64 {
+            if !sys.read_map(&brute, &mut Rng::new(seed)) {
+                failed = true;
+                break;
+            }
+        }
+        assert!(failed, "a dull-witted reader fails to read a map");
+
+        // 5e declares no reading rule, so anyone can read a map.
+        let mut plain = srd_5e();
+        let sheet = plain.default_sheet();
+        assert!(plain.read_map(&sheet, &mut Rng::new(1)), "no rule means anyone reads it");
     }
 
     #[test]

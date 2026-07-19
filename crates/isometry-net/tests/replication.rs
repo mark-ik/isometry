@@ -1374,6 +1374,41 @@ fn a_faction_turn_commits_and_every_peer_lives_in_the_changed_world() {
 }
 
 #[test]
+fn discovery_replicates_as_the_party_travels() {
+    let mut snap = snapshot();
+    snap.world.places.insert(
+        "village".into(),
+        WorldPlace { id: "village".into(), name: "Village".into(), tags: vec![], map: None },
+    );
+    snap.world.places.insert(
+        "forest".into(),
+        WorldPlace { id: "forest".into(), name: "Forest".into(), tags: vec![], map: None },
+    );
+    snap.world.routes.insert(
+        "r".into(),
+        WorldRoute { id: "r".into(), from: "village".into(), to: "forest".into(), tags: vec![], weight: 2 },
+    );
+    let mut sim = Sim::new(HostSession::new(snap));
+    sim.connect(PeerId(10));
+
+    // Nobody knows the map yet.
+    assert!(!sim.host.state().world.knows("A", "village"));
+    // The party sets out; arriving discovers the village and the forest one step
+    // on -- and the party's map is shared truth, so the client learns it too.
+    sim.host_event(GameEvent::World(WorldEvent::PartyMoved {
+        party: "A".into(),
+        node: "village".into(),
+    }));
+    let knows = |s: &GameSnapshot, node: &str| s.world.knows("A", node);
+    assert!(knows(sim.host.state(), "village") && knows(sim.host.state(), "forest"));
+    assert!(
+        knows(sim.clients[&PeerId(10)].state().unwrap(), "forest"),
+        "the client shares the party's discovered map"
+    );
+    assert_converged(&sim);
+}
+
+#[test]
 fn a_party_travels_the_overmap_and_every_peer_agrees() {
     let mut snap = snapshot();
     // A tiny overmap projected from two places joined by a route.

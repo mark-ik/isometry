@@ -26,9 +26,11 @@ pub fn overmap_overlay(ui: &UiState) -> Option<UiChild> {
     if !ui.overmap_open {
         return None;
     }
-    let overmap = ui.world.overmap();
     // Whose party? The viewer's; the DM (no viewer) watches the "dm" party.
     let party = ui.viewer.as_deref().unwrap_or("dm");
+    // Only what the party has discovered: the overmap as it knows it (E6). The
+    // unfound map is not drawn and cannot be clicked to travel to.
+    let overmap = ui.world.overmap_for(party);
     let here = ui.world.party_at(party).map(str::to_owned);
 
     // Lay the nodes on a circle in normalized (0..1) space, which the swatch

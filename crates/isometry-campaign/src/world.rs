@@ -54,6 +54,12 @@ pub struct CampaignWorld {
     /// passive Perception, slow lets you forage) is system business.
     #[serde(default)]
     pub party_pace: BTreeMap<String, i64>,
+    /// The overmap a party has discovered: party owner -> the place ids it knows.
+    /// The rest of the map is hidden -- unseeable, unroutable -- until revealed by
+    /// travel, word of mouth, a guide, a skill check, or a map read. Fog at
+    /// overmap scale, with explored memory: once known, a place stays known.
+    #[serde(default)]
+    pub party_known: BTreeMap<String, BTreeSet<String>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -285,10 +291,17 @@ impl CampaignWorld {
                 // resolver's business (E2), and the host offers only reachable
                 // nodes. E0 is "no rules attached".
                 self.party_node.insert(party.clone(), node.clone());
+                // Arriving discovers where you are and what is one step away.
+                self.discover_around(party, node);
                 Ok(())
             }
             WorldEvent::PartyPaceSet { party, pace } => {
                 self.party_pace.insert(party.clone(), *pace);
+                Ok(())
+            }
+            WorldEvent::NodeRevealed { party, node } => {
+                // A place learned some other way: a rumour, a guide, a map read.
+                self.reveal(party, node);
                 Ok(())
             }
         }
@@ -356,6 +369,62 @@ impl CampaignWorld {
         let pct = self.pace(party).max(1) as u64;
         Some(((weight as u64 * pct) / 100).max(1))
     }
+
+    /// Whether `party` has discovered `node`.
+    pub fn knows(&self, party: &str, node: &str) -> bool {
+        self.party_known
+            .get(party)
+            .is_some_and(|known| known.contains(node))
+    }
+
+    /// Reveal a place to a party. Idempotent; once known, always known. The
+    /// substrate does not care *how* it was found -- travel, a rumour, a guide, a
+    /// map read -- only that it now is.
+    pub fn reveal(&mut self, party: &str, node: &str) {
+        self.party_known
+            .entry(party.to_owned())
+            .or_default()
+            .insert(node.to_owned());
+    }
+
+    /// Reveal a place and everywhere one route from it to a party: arriving
+    /// somewhere, you learn it and see where you could go next. This is how
+    /// travel discovers the map, a step at a time, without a guide or a check.
+    pub fn discover_around(&mut self, party: &str, node: &str) {
+        self.reveal(party, node);
+        let neighbours: Vec<String> = self
+            .overmap()
+            .neighbours(node)
+            .into_iter()
+            .map(|(id, _)| id.to_owned())
+            .collect();
+        for neighbour in neighbours {
+            self.reveal(party, &neighbour);
+        }
+    }
+
+    /// The overmap as `party` knows it: only the places it has discovered and the
+    /// routes between two known places. What it has not found it cannot see or
+    /// plot a course to, so pathfinding on this view refuses to route through the
+    /// dark. A party that knows nothing gets an empty map.
+    pub fn overmap_for(&self, party: &str) -> Overmap {
+        let full = self.overmap();
+        let Some(known) = self.party_known.get(party) else {
+            return Overmap::new(full.name);
+        };
+        let mut out = Overmap::new(full.name);
+        out.nodes = full
+            .nodes
+            .into_iter()
+            .filter(|node| known.contains(&node.id))
+            .collect();
+        out.edges = full
+            .edges
+            .into_iter()
+            .filter(|edge| known.contains(&edge.from) && known.contains(&edge.to))
+            .collect();
+        out
+    }
 }
 
 fn insert_same<T: Clone + PartialEq>(
@@ -410,6 +479,12 @@ pub enum WorldEvent {
     PartyPaceSet {
         party: String,
         pace: i64,
+    },
+    /// Reveal an overmap place to a party (a rumour, a guide's directions, a map
+    /// read the reader passed). The DM commits it; travel discovers on its own.
+    NodeRevealed {
+        party: String,
+        node: String,
     },
 }
 
@@ -705,5 +780,46 @@ mod tests {
 
         // A cost never rounds to zero, and an unreachable destination has none.
         assert_eq!(world.travel_cost("A", "village", "atlantis"), None);
+    }
+
+    #[test]
+    fn a_party_discovers_the_overmap_as_it_travels() {
+        let mut world = CampaignWorld::default();
+        for id in ["village", "forest", "ruins", "island"] {
+            world.places.insert(id.into(), place(id, id));
+        }
+        world.routes.insert("r1".into(), route("r1", "village", "forest", 2));
+        world.routes.insert("r2".into(), route("r2", "forest", "ruins", 2));
+        // The island has no route to it.
+
+        // A party that knows nothing sees an empty overmap.
+        assert!(world.overmap_for("A").nodes.is_empty(), "the unfound map is dark");
+        assert!(!world.knows("A", "village"));
+
+        // Arriving at the village discovers it and its neighbour (the forest),
+        // but not what is two steps on (the ruins).
+        world
+            .apply(&WorldEvent::PartyMoved { party: "A".into(), node: "village".into() })
+            .unwrap();
+        assert!(world.knows("A", "village"));
+        assert!(world.knows("A", "forest"), "and one step on");
+        assert!(!world.knows("A", "ruins"), "but not two steps on");
+        // The known overmap shows only what has been found, and refuses to route
+        // through the dark.
+        let known = world.overmap_for("A");
+        assert_eq!(known.nodes.len(), 2);
+        assert!(known.route("village", "ruins").is_none(), "cannot plot a course into the unknown");
+
+        // Travel on to the forest, and the ruins come into view.
+        world
+            .apply(&WorldEvent::PartyMoved { party: "A".into(), node: "forest".into() })
+            .unwrap();
+        assert!(world.knows("A", "ruins"), "arriving at the forest reveals the ruins");
+
+        // A rumour reveals the island directly, though no road leads there.
+        world
+            .apply(&WorldEvent::NodeRevealed { party: "A".into(), node: "island".into() })
+            .unwrap();
+        assert!(world.knows("A", "island"), "word of mouth reaches the unreachable");
     }
 }

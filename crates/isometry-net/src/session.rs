@@ -292,8 +292,10 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
             exhaustion,
             encounter,
         } => {
-            // The party arrives: its overmap position is world state.
+            // The party arrives: its overmap position is world state, and
+            // arriving discovers the place and what is one step on.
             state.world.party_node.insert(party.clone(), to.clone());
+            state.world.discover_around(party, to);
             // Arriving advances the destination site's clock by the travel time,
             // so a place reached later is later there -- the C3 clock, reached
             // across the overmap instead of through a door. A bare waypoint (no

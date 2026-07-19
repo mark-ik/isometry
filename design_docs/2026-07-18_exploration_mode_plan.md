@@ -306,15 +306,19 @@ scheduled.
   Returning is leaving that map; the overmap resumes. PF2e throws a peril on a
   15+ tick road; 5e's roads are safe. A roll-based chance (rather than the
   length threshold) is the richer refinement.
-- **E6: The known map (discovery).** Mark's idea, 2026-07-18. Nodes and edges are
-  hidden until discovered; a per-party *known* set gates what the overmap shows
-  and where it will route. Reveals come by word of mouth (a rumor/fact), a local
-  guide (an NPC), a skill check (a resolution), or a map read (an item reveal
-  gated by a literacy/skill check, so a low-skilled party cannot read it).
-  *Done when* a party sees and routes to only its discovered nodes, a skill check
-  reveals more, and an unskilled character fails to read a map a skilled one
-  reads. Region-map seeding (pre-filling a tactical map's explored set from
-  intel) is the same primitive at tile scale. See "The known map" below.
+- **E6: The known map (discovery). LANDED 2026-07-18.** Mark's idea. A per-party
+  `party_known` set gates the overmap: `overmap_for(party)` filters to found
+  places and the routes between them, so a party sees and routes to only what it
+  has discovered (`route` refuses to plot through the dark). Travel discovers on
+  its own -- arriving reveals the place and everywhere one step on
+  (`discover_around`) -- and a `NodeRevealed` event reveals a place any other way
+  (a rumor, a guide, a map). The map read is skill-gated: `System::read_map` is an
+  Intelligence check (PF2e DC 15), so a lettered scholar reads a map and a
+  dull-witted brute holds it upside down and learns nothing -- "who can read the
+  map" is a party-composition question, exactly as intended. 5e declares no
+  reading rule, so anyone reads. Region-map seeding (pre-filling a tactical map's
+  explored set from intel) is the same primitive at tile scale, noted. See "The
+  known map" below.
 
 Order matters: E0-E1 are the board and tempo (mostly reuse), E2 is the one new
 resolver, E3-E5 are Lua-heavy and lean on primitives already shipped, and E6 is
@@ -406,3 +410,18 @@ composition again (fog + secrets + a check).
   `the_overmap_surface_opens_and_arms_a_travel_request` (views). The rendered
   canvas itself is not unit-tested (paint); genet-probe is its headed lane, not
   yet run. Next: E3 activities, E4 attrition, E5 encounters, E6 discovery.
+- **2026-07-18:** **E3-E6 all landed**, each riding a primitive already shipped,
+  so the mode has its texture. E3 stances (`c.stance`; Scout finds the way where
+  Search loses it). E4 exhaustion (a `toll_func`; a long march tires the party,
+  the graded-conditions reuse). E5 encounters (an `encounter_func`; a long road
+  drops the party onto the destination map to fight, C2's transition reused). E6
+  discovery (`party_known` + `overmap_for` filtering + `discover_around` on
+  travel + a skill-gated `read_map`; you see and route only what you have found,
+  and a dull reader cannot read a map). Verified by
+  `the_navigator_stance_changes_the_travel_outcome`,
+  `a_long_march_tolls_the_party_exhaustion`, `a_long_road_throws_an_encounter`,
+  `a_dull_reader_cannot_read_a_map` (system),
+  `a_party_discovers_the_overmap_as_it_travels` (campaign), and the travel/
+  discovery replication tests (net). Remaining polish, none of it substrate:
+  foraging (E4's other half), stance/pace picker buttons, a roll-based encounter
+  chance, and the read-a-map-item-then-reveal wiring.

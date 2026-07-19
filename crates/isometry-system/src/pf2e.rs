@@ -343,6 +343,13 @@ pub fn pf2e_srd() -> System {
         function p_road_peril(c, t, ticks)
             if ticks >= 15 then return 1 else return 0 end
         end
+
+        -- Reading a map is an Intelligence check (DC 15): a lettered scholar
+        -- makes sense of it, a dull-witted brawler holds it upside down and
+        -- learns nothing. This is why who can read the map is a party question.
+        function p_read_map(c, t, roll)
+            if roll + ab_mod(c.int) >= 15 then return 1 else return 0 end
+        end
     "#;
     System::load("pf2e-srd", "Pathfinder 2e (skeleton)", fields, derived, actions, script)
         .expect("builtin pf2e skeleton loads")
@@ -351,4 +358,5 @@ pub fn pf2e_srd() -> System {
         .with_nav("p_navigate")
         .with_toll("p_march_toll")
         .with_encounters("p_road_peril")
+        .with_map_reading("p_read_map")
 }
