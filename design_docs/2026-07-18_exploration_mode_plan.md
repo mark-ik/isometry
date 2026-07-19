@@ -427,6 +427,15 @@ composition again (fog + secrets + a check).
   `a_long_march_tolls_the_party_exhaustion`, `a_long_road_throws_an_encounter`,
   `a_dull_reader_cannot_read_a_map` (system),
   `a_party_discovers_the_overmap_as_it_travels` (campaign), and the travel/
-  discovery replication tests (net). Remaining polish, none of it substrate:
-  foraging (E4's other half), stance/pace picker buttons, a roll-based encounter
-  chance, and the read-a-map-item-then-reveal wiring.
+  discovery replication tests (net).
+- **2026-07-18: polish landed.** Foraging (a `forage_func` reading the Forage
+  stance; food joins `CampaignWorld.party_resources`), roll-based encounters (a
+  fresh d20 in the peril check, danger scaling with length rather than a
+  threshold), pace + stance picker buttons in the overmap surface (arming
+  `PartyPaceSet`/`StanceSet` through `emit_host_event`), and a "study map" action
+  (rolls `read_map`, reveals the frontier one route beyond the known on a pass).
+  **Remaining, and larger than polish:** the item-borne map read (a map you carry
+  and read, versus the surface "study map" that exists now), and wiring sprigging
+  paint leaves into the app's render pipeline so the overmap can adopt Cambium's
+  `graph_canvas_swatch` with painted edges (the element render works meanwhile).
+  Neither is substrate.
