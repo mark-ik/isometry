@@ -159,6 +159,10 @@ struct App {
     /// open the surface, play the ready one, and confirm its fact commits.
     storylet_selftest: bool,
     storylet_fired: bool,
+    /// `ISOMETRY_OVERMAP_SELFTEST`: seed a small overmap, place the party, and
+    /// open the overmap surface for a capture (C8).
+    overmap_selftest: bool,
+    overmap_fired: bool,
     /// `ISOMETRY_COMBAT_SELFTEST`: drive a short adjudicated exchange on boot.
     combat_selftest: bool,
     /// Swings left to throw, when the last one landed, and whether the winner
@@ -2460,6 +2464,60 @@ impl App {
         }
     }
 
+    /// `ISOMETRY_OVERMAP_SELFTEST=1`: seed a small overmap (four places joined by
+    /// roads), stand the party at the village, reveal the map it would know, and
+    /// open the overmap surface. A focus-free proof the C8 render draws.
+    fn maybe_overmap_selftest(&mut self) {
+        if !self.overmap_selftest || self.overmap_fired {
+            return;
+        }
+        if !self.started.is_some_and(|t| t.elapsed() > Duration::from_secs(2)) {
+            return;
+        }
+        self.overmap_fired = true;
+
+        use isometry_campaign::{WorldPlace, WorldRoute};
+        if let Some(runner) = self.runner.as_mut() {
+            runner.update(|ui| {
+                let place = |id: &str, name: &str| WorldPlace {
+                    id: id.to_owned(),
+                    name: name.to_owned(),
+                    tags: Vec::new(),
+                    map: None,
+                };
+                for (id, name) in [
+                    ("village", "Village"),
+                    ("forest", "Deepwood"),
+                    ("ruins", "Old Ruins"),
+                    ("keep", "Grey Keep"),
+                ] {
+                    ui.world.places.insert(id.to_owned(), place(id, name));
+                }
+                let route = |id: &str, from: &str, to: &str, weight: u32| WorldRoute {
+                    id: id.to_owned(),
+                    from: from.to_owned(),
+                    to: to.to_owned(),
+                    tags: Vec::new(),
+                    weight,
+                };
+                ui.world.routes.insert("r1".to_owned(), route("r1", "village", "forest", 2));
+                ui.world.routes.insert("r2".to_owned(), route("r2", "forest", "ruins", 3));
+                ui.world.routes.insert("r3".to_owned(), route("r3", "village", "keep", 5));
+
+                let party = ui.viewer.clone().unwrap_or_else(|| "dm".to_owned());
+                ui.world.party_node.insert(party.clone(), "village".to_owned());
+                for node in ["village", "forest", "ruins", "keep"] {
+                    ui.world.reveal(&party, node);
+                }
+                ui.open_overmap();
+            });
+        }
+        eprintln!("[isometry] overmap selftest: seeded 4 places, party at the village, opened the overmap");
+        if let Some(window) = self.window.as_ref() {
+            window.request_redraw();
+        }
+    }
+
     fn maybe_convince_selftest(&mut self) {
         if !self.convince_selftest || self.convince_fired {
             return;
@@ -3008,6 +3066,7 @@ impl ApplicationHandler for App {
         self.maybe_cmd_selftest();
         self.maybe_convince_selftest();
         self.maybe_storylet_selftest();
+        self.maybe_overmap_selftest();
         if (self.travel_selftest && !self.travel_fired)
             || (self.cmd_selftest && !self.cmd_fired)
             || (self.convince_selftest && !self.convince_fired)
@@ -3417,6 +3476,8 @@ fn main() {
         convince_fired: false,
         storylet_selftest: std::env::var_os("ISOMETRY_STORYLET_SELFTEST").is_some(),
         storylet_fired: false,
+        overmap_selftest: std::env::var_os("ISOMETRY_OVERMAP_SELFTEST").is_some(),
+        overmap_fired: false,
         combat_selftest: std::env::var_os("ISOMETRY_COMBAT_SELFTEST").is_some(),
         combat_swings: 4,
         last_swing: None,

@@ -331,6 +331,11 @@ const COMPENDIUM_CSS: &str = r#"
 .compendium { position: absolute; left: 232px; top: 36px; width: 372px; background-color: #1b1e27; border: 1px solid #2c3347; border-radius: 4px; padding: 10px 10px 12px; z-index: 500; box-shadow: 0 8px 28px rgba(0,0,0,0.55); }
 .generator { position: absolute; left: 232px; top: 36px; width: 372px; background-color: #1b1e27; border: 1px solid #2c3347; border-radius: 4px; padding: 10px 10px 12px; z-index: 501; box-shadow: 0 8px 28px rgba(0,0,0,0.55); }
 .governance { position: absolute; left: 232px; top: 36px; width: 396px; background-color: #1b1e27; border: 1px solid #2c3347; border-radius: 4px; padding: 10px 10px 12px; z-index: 502; box-shadow: 0 8px 28px rgba(0,0,0,0.55); }
+.overmap { position: absolute; left: 232px; top: 36px; width: 480px; background-color: #1b1e27; border: 1px solid #2c3347; border-radius: 4px; padding: 10px 10px 12px; z-index: 503; box-shadow: 0 8px 28px rgba(0,0,0,0.55); }
+.overmap-canvas { margin: 8px 0; background-color: #12151d; border: 1px solid #2c3347; border-radius: 4px; }
+.overmap-node { color: #cfd3dd; font-size: 13px; cursor: pointer; white-space: nowrap; padding: 1px 4px; }
+.overmap-node:hover { color: #e8ebf2; }
+.overmap-here { color: #9fd48a; font-weight: bold; }
 .generator-proposal { color: #e8ebf2; font-size: 14px; font-weight: bold; margin: 10px 0; }
 .governance-row { padding: 8px; border-top: 1px solid #2c3347; cursor: pointer; }
 .governance-row-selected { background-color: #293243; box-shadow: inset 3px 0 0 #9fd48a; }
