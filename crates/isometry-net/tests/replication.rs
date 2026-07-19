@@ -1431,6 +1431,100 @@ fn a_party_travels_the_overmap_and_every_peer_agrees() {
 }
 
 #[test]
+fn a_resolved_travel_moves_the_party_and_ticks_the_clock_on_every_peer() {
+    let mut snap = snapshot();
+    snap.world.places.insert(
+        "village".into(),
+        WorldPlace { id: "village".into(), name: "Village".into(), tags: vec![], map: None },
+    );
+    // The forest is a site (a tactical map), so arriving there advances its clock.
+    snap.world.places.insert(
+        "forest".into(),
+        WorldPlace {
+            id: "forest".into(),
+            name: "Forest".into(),
+            tags: vec![],
+            map: Some("forest-map".into()),
+        },
+    );
+    snap.world.party_node.insert("A".into(), "village".into());
+    let mut sim = Sim::new(HostSession::new(snap));
+    sim.connect(PeerId(10));
+
+    // The host applies a travel verdict the system rolled: 5 ticks, lost the way.
+    sim.host_event(GameEvent::TravelResolved {
+        party: "A".into(),
+        to: "forest".into(),
+        ticks: 5,
+        roll: RollRecord {
+            by: "Scout".into(),
+            expr: "1d20".into(),
+            dice: vec![7],
+            total: 7,
+        },
+        lost: true,
+    });
+
+    let at = |s: &GameSnapshot| s.world.party_at("A").map(str::to_owned);
+    let clock = |s: &GameSnapshot| s.clocks.get("forest-map").copied().unwrap_or(0);
+    assert_eq!(at(sim.host.state()).as_deref(), Some("forest"), "the party arrived");
+    assert_eq!(clock(sim.host.state()), 5, "arriving advanced the destination's clock");
+    assert_eq!(
+        at(sim.clients[&PeerId(10)].state().unwrap()).as_deref(),
+        Some("forest")
+    );
+    assert_eq!(
+        clock(sim.clients[&PeerId(10)].state().unwrap()),
+        5,
+        "every peer holds the same arrival time"
+    );
+    assert_eq!(sim.host.state().roll_log.len(), 1, "the navigation roll reached the log");
+    assert_converged(&sim);
+}
+
+#[test]
+fn a_client_cannot_pronounce_its_own_travel() {
+    let mut snap = snapshot();
+    snap.world.places.insert(
+        "village".into(),
+        WorldPlace { id: "village".into(), name: "Village".into(), tags: vec![], map: None },
+    );
+    snap.world.places.insert(
+        "forest".into(),
+        WorldPlace { id: "forest".into(), name: "Forest".into(), tags: vec![], map: None },
+    );
+    snap.world.party_node.insert("A".into(), "village".into());
+    let mut sim = Sim::new(HostSession::new(snap));
+    sim.connect(PeerId(10));
+    let seq = sim.host.seq();
+
+    // Proposing a travel verdict is forging one; the host refuses, and the party
+    // stays put.
+    sim.client_intent(
+        PeerId(10),
+        GameEvent::TravelResolved {
+            party: "A".into(),
+            to: "forest".into(),
+            ticks: 1,
+            roll: RollRecord {
+                by: "?".into(),
+                expr: "1d20".into(),
+                dice: vec![20],
+                total: 20,
+            },
+            lost: false,
+        },
+    );
+    assert_eq!(sim.host.seq(), seq, "a forged travel verdict entered the log");
+    assert_eq!(
+        sim.host.state().world.party_at("A").as_deref(),
+        Some("village"),
+        "the party did not move"
+    );
+    assert_converged(&sim);
+}
+
+#[test]
 fn a_granted_player_plays_a_faction_and_a_stranger_may_not() {
     let mut snap = snapshot();
     // The goblin (token 2) is the Tide Court's furniture, not any player's.

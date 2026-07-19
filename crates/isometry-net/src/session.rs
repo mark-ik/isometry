@@ -277,6 +277,25 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
             *state.clocks.entry(active).or_insert(0) += ticks;
             Ok(())
         }
+        GameEvent::TravelResolved {
+            party,
+            to,
+            ticks,
+            roll,
+            lost: _,
+        } => {
+            // The party arrives: its overmap position is world state.
+            state.world.party_node.insert(party.clone(), to.clone());
+            // Arriving advances the destination site's clock by the travel time,
+            // so a place reached later is later there -- the C3 clock, reached
+            // across the overmap instead of through a door. A bare waypoint (no
+            // site) keeps no clock, so its leg is not banked anywhere yet.
+            if let Some(map) = state.world.places.get(to).and_then(|p| p.map.clone()) {
+                *state.clocks.entry(map).or_insert(0) += ticks;
+            }
+            push_roll(state, roll);
+            Ok(())
+        }
     }
 }
 
@@ -952,6 +971,16 @@ impl HostSession {
                 Recipient::One(from),
                 NetMessage::Rejected {
                     reason: "actions are adjudicated by the host".to_owned(),
+                },
+            )],
+            // Travel is a verdict too: a client cannot pronounce where its party
+            // arrived, how long it took, or whether it got lost.
+            NetMessage::Intent {
+                event: GameEvent::TravelResolved { .. },
+            } => vec![(
+                Recipient::One(from),
+                NetMessage::Rejected {
+                    reason: "travel is adjudicated by the host".to_owned(),
                 },
             )],
             // The DM keeps the clock: a player does not declare hours passing.

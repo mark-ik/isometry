@@ -260,6 +260,19 @@ pub enum GameEvent {
     /// Rounds tick the clock automatically; this is the downtime verb, for the
     /// stretches no turn order measures. Host-committed: the DM keeps the clock.
     TimeAdvanced { ticks: u64 },
+    /// One leg of overmap travel, resolved: the party reaches `to`, the trip took
+    /// `ticks` (advancing the destination site's clock, so it arrives later than
+    /// it left), and `roll`/`lost` record how the navigation went. A verdict like
+    /// `ActionResolved`: the system ruled it once (`resolve_travel`), and every
+    /// peer applies it without rerunning the Lua. Host-committed; a client cannot
+    /// pronounce its own travel any more than its own hit.
+    TravelResolved {
+        party: String,
+        to: String,
+        ticks: u64,
+        roll: RollRecord,
+        lost: bool,
+    },
 }
 
 /// One message on the wire. The host is the authority: clients send

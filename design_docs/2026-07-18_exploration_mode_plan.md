@@ -266,11 +266,15 @@ scheduled.
   loses the way and pays more (E1's cost is the base). PF2e navigates on Wisdom
   against a DC that rises with the route; 5e declares no rule and always finds
   its way. *A navigation failure adds ticks, decided by the system:* met and
-  tested. What remains is the net/host wiring (a `TravelResolved` event that
-  applies the ticks to a clock and moves the party, replicated, so a client
-  cannot forge its own travel verdict) -- the same system-proven-then-wired split
-  the action resolver and the turn counters took. The richer "lost lands you on
-  the *wrong* node" outcome is deferred; E2 does lost = more time.
+  tested. **Replication wiring LANDED 2026-07-18:** a `GameEvent::TravelResolved`
+  verdict moves the party (`party_node`), advances the destination site's clock by
+  the ticks (arriving later than you left, the C3 clock reached across the
+  overmap), and logs the navigation roll; host-committed, and a client is refused
+  ("travel is adjudicated by the host") exactly like `ActionResolved`. What is
+  left is only the host *orchestration* (pick the navigator, read the edge weight,
+  call `resolve_travel`, emit the verdict), which pairs with the render's
+  click-to-travel and lands with it. The richer "lost lands you on the *wrong*
+  node" outcome is deferred; E2 does lost = more time.
 - **E3: Exploration activities.** A per-token stance slot the system reads (Scout,
   Search, Avoid Notice). *Done when* choosing Scout versus Search changes a travel
   outcome (initiative on the next encounter, or find-versus-speed), entirely in
