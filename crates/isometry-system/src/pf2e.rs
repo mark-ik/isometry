@@ -335,6 +335,14 @@ pub fn pf2e_srd() -> System {
             elseif ticks >= 10 then return 1
             else return 0 end
         end
+
+        -- The perils of a long road: a journey of 15+ ticks runs into something,
+        -- and the party is dropped onto the map to fight rather than arriving in
+        -- peace. A short hop is safe. (A roll-based chance is the richer version;
+        -- this keeps the peril legible and the length meaningful.)
+        function p_road_peril(c, t, ticks)
+            if ticks >= 15 then return 1 else return 0 end
+        end
     "#;
     System::load("pf2e-srd", "Pathfinder 2e (skeleton)", fields, derived, actions, script)
         .expect("builtin pf2e skeleton loads")
@@ -342,4 +350,5 @@ pub fn pf2e_srd() -> System {
         .with_mobility("s_speed", "s_sight")
         .with_nav("p_navigate")
         .with_toll("p_march_toll")
+        .with_encounters("p_road_peril")
 }

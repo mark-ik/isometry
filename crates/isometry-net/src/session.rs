@@ -290,6 +290,7 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
             roll,
             lost: _,
             exhaustion,
+            encounter,
         } => {
             // The party arrives: its overmap position is world state.
             state.world.party_node.insert(party.clone(), to.clone());
@@ -315,6 +316,16 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
                 for id in members {
                     if state.map.condition_value(id, "exhaustion") < *exhaustion {
                         state.map.set_condition(id, "exhaustion", *exhaustion);
+                    }
+                }
+            }
+            // A peril on the road drops the party onto the destination's tactical
+            // map to fight, rather than arriving in peace: the same map switch a
+            // door makes (C2). A bare waypoint with no site is a safe arrival.
+            if *encounter {
+                if let Some(map) = state.world.places.get(to).and_then(|p| p.map.clone()) {
+                    if state.maps.contains_key(&map) {
+                        state.active_map = Some(map);
                     }
                 }
             }

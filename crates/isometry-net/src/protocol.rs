@@ -282,6 +282,10 @@ pub enum GameEvent {
         /// condition (worsening what they carry). Zero for a short trip.
         #[serde(default)]
         exhaustion: i64,
+        /// Whether the road threw an encounter: if so the party is dropped onto
+        /// the destination's tactical map to fight, rather than arriving in peace.
+        #[serde(default)]
+        encounter: bool,
     },
 }
 

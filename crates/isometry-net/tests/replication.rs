@@ -1465,6 +1465,7 @@ fn a_resolved_travel_moves_the_party_and_ticks_the_clock_on_every_peer() {
         },
         lost: true,
         exhaustion: 2,
+        encounter: false,
     });
 
     let at = |s: &GameSnapshot| s.world.party_at("A").map(str::to_owned);
@@ -1488,6 +1489,73 @@ fn a_resolved_travel_moves_the_party_and_ticks_the_clock_on_every_peer() {
         "and the same exhaustion -- attrition is replicated truth"
     );
     assert_eq!(sim.host.state().roll_log.len(), 1, "the navigation roll reached the log");
+    assert_converged(&sim);
+}
+
+#[test]
+fn an_encounter_on_the_road_drops_the_party_onto_the_map() {
+    // two_map_snapshot registers the "field" and "hut" tactical maps.
+    let mut snap = two_map_snapshot();
+    snap.world.places.insert(
+        "green".into(),
+        WorldPlace {
+            id: "green".into(),
+            name: "Green".into(),
+            tags: vec![],
+            map: Some("field".into()),
+        },
+    );
+    snap.world.places.insert(
+        "hollow".into(),
+        WorldPlace {
+            id: "hollow".into(),
+            name: "Hollow".into(),
+            tags: vec![],
+            map: Some("hut".into()),
+        },
+    );
+    snap.world.routes.insert(
+        "r".into(),
+        WorldRoute {
+            id: "r".into(),
+            from: "green".into(),
+            to: "hollow".into(),
+            tags: vec![],
+            weight: 3,
+        },
+    );
+    snap.world.party_node.insert("A".into(), "green".into());
+    let mut sim = Sim::new(HostSession::new(snap));
+    sim.connect(PeerId(10));
+
+    // The party travels to the hollow and the road throws a peril: it is dropped
+    // onto the hollow's map to fight rather than arriving in peace.
+    sim.host_event(GameEvent::TravelResolved {
+        party: "A".into(),
+        to: "hollow".into(),
+        ticks: 3,
+        roll: RollRecord {
+            by: "?".into(),
+            expr: "1d20".into(),
+            dice: vec![10],
+            total: 10,
+        },
+        lost: false,
+        exhaustion: 0,
+        encounter: true,
+    });
+
+    let active = |s: &GameSnapshot| s.active_map.clone();
+    assert_eq!(
+        active(sim.host.state()).as_deref(),
+        Some("hut"),
+        "the peril dropped the party onto the destination's map"
+    );
+    assert_eq!(
+        active(sim.clients[&PeerId(10)].state().unwrap()).as_deref(),
+        Some("hut"),
+        "on every peer -- an encounter is game truth"
+    );
     assert_converged(&sim);
 }
 
@@ -1523,6 +1591,7 @@ fn a_client_cannot_pronounce_its_own_travel() {
             },
             lost: false,
             exhaustion: 0,
+            encounter: false,
         },
     );
     assert_eq!(sim.host.seq(), seq, "a forged travel verdict entered the log");

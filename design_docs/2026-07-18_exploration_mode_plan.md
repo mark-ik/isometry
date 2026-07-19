@@ -298,10 +298,14 @@ scheduled.
   no toll and never tires; a lost trip is longer so it tires more, without the
   toll rule knowing it got lost. Foraging (a forage roll adjusting a party food
   resource, the `want`/`have` shape at party scale) is the remaining half of E4.
-- **E5: Encounter checks.** A per-tick roll that may inject a battle-map node via
-  the existing `EncounterAnchor` / transition machinery. *Done when* traveling can
-  drop the party into a prepared or generated encounter, and returning resumes the
-  graph.
+- **E5: Encounter checks. LANDED 2026-07-18.** A system `encounter_func`
+  (`f(c, t, ticks) -> 1|0`) rules whether the road threw a peril; `resolve_travel`
+  reads it, `TravelResolved` carries it, and on an encounter `apply_game` sets the
+  destination site's map active -- the party is dropped onto the tactical board to
+  fight rather than arriving in peace, the same map switch a door makes (C2).
+  Returning is leaving that map; the overmap resumes. PF2e throws a peril on a
+  15+ tick road; 5e's roads are safe. A roll-based chance (rather than the
+  length threshold) is the richer refinement.
 - **E6: The known map (discovery).** Mark's idea, 2026-07-18. Nodes and edges are
   hidden until discovered; a per-party *known* set gates what the overmap shows
   and where it will route. Reveals come by word of mouth (a rumor/fact), a local

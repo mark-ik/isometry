@@ -247,6 +247,10 @@ pub struct TravelResolution {
     /// they already carry. Zero for a trip short enough to shrug off. What counts
     /// as a long march is the system's `toll_func`, not the substrate's.
     pub exhaustion: i64,
+    /// Whether the road threw an encounter: if so, the host drops the party onto
+    /// the destination's tactical map to fight rather than arriving in peace. The
+    /// system's `encounter_func` decides; the substrate only obeys.
+    pub encounter: bool,
 }
 
 /// Copy `sheet` with each active condition added as a boolean field, so Lua
@@ -313,6 +317,9 @@ pub struct System {
     /// of `ticks` leaves the party (a graded condition the host applies to every
     /// member). `None` means travel never tires (a system with no attrition).
     pub toll_func: Option<String>,
+    /// Lua `f(c, t, ticks) -> 1|0` for overmap travel: did the road throw an
+    /// encounter? `None` means a safe road (a system with no wandering perils).
+    pub encounter_func: Option<String>,
     lua: Lua,
 }
 
@@ -1386,6 +1393,7 @@ impl System {
             sight_func: None,
             nav_func: None,
             toll_func: None,
+            encounter_func: None,
             lua,
         })
     }
@@ -1419,6 +1427,13 @@ impl System {
     /// system with no attrition simply never calls this.
     pub fn with_toll(mut self, func: impl Into<String>) -> Self {
         self.toll_func = Some(func.into());
+        self
+    }
+
+    /// Declare the wandering-encounter rule: a Lua `f(c, t, ticks) -> 1|0`. A
+    /// system with safe roads simply never calls this.
+    pub fn with_encounters(mut self, func: impl Into<String>) -> Self {
+        self.encounter_func = Some(func.into());
         self
     }
 
@@ -1456,6 +1471,17 @@ impl System {
                 .max(0),
             None => 0,
         };
+        // Did the road throw a peril? The check reads the actual time too, so a
+        // longer (or lost) trip is more dangerous, and a safe-road system that
+        // declares no rule never rolls one.
+        let encounter = match self.encounter_func.clone() {
+            Some(func) => {
+                self.call_int_ctx(&func, navigator, None, Some(ticks as i64))
+                    .unwrap_or(0)
+                    != 0
+            }
+            None => false,
+        };
         TravelResolution {
             roll: RollRecord {
                 by: navigator.text("name").unwrap_or("party").to_owned(),
@@ -1466,6 +1492,7 @@ impl System {
             ticks,
             lost: nav_pct > 100,
             exhaustion,
+            encounter,
         }
     }
 
@@ -3229,6 +3256,26 @@ end"#,
             0,
             "a system with no attrition never tires"
         );
+    }
+
+    #[test]
+    fn a_long_road_throws_an_encounter() {
+        let mut sys = pf2e_srd();
+        let mut scout = sys.default_sheet();
+        scout.set_int("wis", 100); // never lost, so ticks == base
+        assert!(
+            sys.resolve_travel(&scout, 15, 100, &mut Rng::new(1)).encounter,
+            "a long road (15+ ticks) throws a peril"
+        );
+        assert!(
+            !sys.resolve_travel(&scout, 5, 100, &mut Rng::new(1)).encounter,
+            "a short hop is safe"
+        );
+
+        // 5e declares no encounter rule, so its roads are safe.
+        let mut plain = srd_5e();
+        let sheet = plain.default_sheet();
+        assert!(!plain.resolve_travel(&sheet, 30, 100, &mut Rng::new(1)).encounter);
     }
 
     #[test]
