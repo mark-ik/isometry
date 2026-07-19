@@ -247,10 +247,15 @@ scheduled.
   projected from `CampaignWorld`'s existing places + routes, with the party's
   position as replicated session state and a `PartyMoved` event. *Done when* a
   party sits on a node and paths along weighted edges, no rules attached: met.
-  **The overmap render LANDED 2026-07-18** (`views/overmap.rs`): the projected
-  graph drawn through Cambium's catalog `graph_canvas_swatch` (sites and
-  waypoints as nodes, routes as edges, the party's node highlighted), an
-  "Overmap" panel button, and click-a-node-to-travel. E0 is playable on screen.
+  **The overmap render LANDED 2026-07-18** (`views/overmap.rs`), verified on
+  screen via `ISOMETRY_OVERMAP_SELFTEST` + a capture: discovered places drawn as
+  positioned, highlighted, clickable markers with the routes listed, an "Overmap"
+  panel button, and click-a-place-to-travel. It uses the plain element path, not
+  Cambium's `graph_canvas_swatch` -- that swatch is a retained sprigging paint
+  leaf whose paint-list integration is provider-side, and isometry's pipeline has
+  never painted one, so the canvas drew blank. Wiring sprigging paint leaves into
+  the app pipeline (for a real graph canvas with painted edges) is the follow-up
+  to adopt the swatch as intended. E0 is playable on screen.
 - **E1: Pace and tick. Cost primitive LANDED 2026-07-18.** A party-level pace
   (`party_pace`, a percent of normal time, replicated via `PartyPaceSet`) and
   `CampaignWorld::travel_cost(party, from, to)`, the shortest route's weight
