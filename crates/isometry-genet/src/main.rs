@@ -672,6 +672,7 @@ impl App {
         self.pump_storylets();
         self.pump_faction_turn();
         self.pump_overmap();
+        self.pump_overmap_orders();
         self.pump_net();
     }
 
@@ -1760,6 +1761,41 @@ impl App {
         }
     }
 
+    /// Commit one host-authored game event: solo through a local `HostSession`
+    /// (copying its campaign/history/journal back and mirroring the snapshot),
+    /// in a live session through the host bridge. Leaves `status` alone, which
+    /// `apply_snapshot` preserves, so a caller may set it before or after.
+    fn emit_host_event(&mut self, event: GameEvent) {
+        let remote = self
+            .runner
+            .as_ref()
+            .map(|r| r.state().net_mode == NetMode::Remote)
+            .unwrap_or(false);
+        if remote {
+            if let Some(net) = self.net.as_mut() {
+                net.submit(event);
+            }
+        } else {
+            let snapshot = match self.runner.as_ref() {
+                Some(r) => self.snapshot_of(r.state()),
+                None => return,
+            };
+            let mut host =
+                HostSession::with_history(snapshot, self.campaign.clone(), self.history.clone());
+            let _ = host.local_event(event);
+            self.campaign = host.campaign().clone();
+            self.history = host.history().clone();
+            self.journal = host.state().journal.clone();
+            let snapshot = host.state().clone();
+            if let Some(runner) = self.runner.as_mut() {
+                runner.update(|ui| ui.apply_snapshot(snapshot));
+            }
+        }
+        if let Some(window) = self.window.as_ref() {
+            window.request_redraw();
+        }
+    }
+
     /// The overmap surface (C8). When the table clicks a place to travel to,
     /// resolve the trip and move the party. Host-adjudicated, like an action:
     /// the authority rolls the navigation (`resolve_travel`), spends the time,
@@ -1866,28 +1902,59 @@ impl App {
             }
         };
 
-        if remote {
-            if let Some(net) = self.net.as_mut() {
-                net.submit(event);
+        self.emit_host_event(event);
+    }
+
+    /// Drain the overmap's pace and stance choices (E1/E3): host-recorded state,
+    /// not a travel resolution. A pace sets the party's marching speed; a stance
+    /// is set on the party's lead token, which the travel rule then reads.
+    fn pump_overmap_orders(&mut self) {
+        let (pace_req, stance_req, remote) = match self.runner.as_ref() {
+            Some(r) => {
+                let s = r.state();
+                (
+                    s.overmap_pace_request,
+                    s.overmap_stance_request.clone(),
+                    s.net_mode == NetMode::Remote,
+                )
             }
-        } else {
-            let snapshot = match self.runner.as_ref() {
-                Some(r) => self.snapshot_of(r.state()),
-                None => return,
-            };
-            let mut host =
-                HostSession::with_history(snapshot, self.campaign.clone(), self.history.clone());
-            let _ = host.local_event(event);
-            self.campaign = host.campaign().clone();
-            self.history = host.history().clone();
-            self.journal = host.state().journal.clone();
-            let snapshot = host.state().clone();
-            if let Some(runner) = self.runner.as_mut() {
-                runner.update(|ui| ui.apply_snapshot(snapshot));
-            }
+            None => return,
+        };
+        if pace_req.is_none() && stance_req.is_none() {
+            return;
         }
-        if let Some(window) = self.window.as_ref() {
-            window.request_redraw();
+        if let Some(runner) = self.runner.as_mut() {
+            runner.update(|ui| {
+                ui.overmap_pace_request = None;
+                ui.overmap_stance_request = None;
+            });
+        }
+        if remote && !self.net_is_host {
+            return;
+        }
+        let party = self
+            .runner
+            .as_ref()
+            .and_then(|r| r.state().viewer.clone())
+            .unwrap_or_else(|| "dm".to_owned());
+        if let Some(pace) = pace_req {
+            self.emit_host_event(GameEvent::World(WorldEvent::PartyPaceSet {
+                party: party.clone(),
+                pace,
+            }));
+        }
+        if let Some(stance) = stance_req {
+            let nav = self.runner.as_ref().and_then(|r| {
+                r.state()
+                    .map
+                    .tokens
+                    .iter()
+                    .find(|t| t.owner.as_deref() == Some(party.as_str()))
+                    .map(|t| t.id)
+            });
+            if let Some(token) = nav {
+                self.emit_host_event(GameEvent::StanceSet { token, stance });
+            }
         }
     }
 

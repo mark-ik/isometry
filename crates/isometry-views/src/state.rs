@@ -481,6 +481,12 @@ pub struct UiState {
     /// One-shot: the node the local party asked to travel to; the host resolves
     /// the trip (roll, time, whether they get lost) and moves the party.
     pub overmap_travel_request: Option<String>,
+    /// One-shot: the pace the party chose (a percent of normal time); the host
+    /// records it, and the next trip travels at it.
+    pub overmap_pace_request: Option<i64>,
+    /// One-shot: the exploration stance the party's navigator took (empty clears);
+    /// the host sets it on the lead token, and the travel rule reads it.
+    pub overmap_stance_request: Option<String>,
     /// Host-fed competing-binding projection and one-shot resolution request.
     /// The view never reads Moot stores or signs campaign operations.
     pub governance_conflict: Option<GovernanceConflict>,
@@ -598,6 +604,8 @@ impl UiState {
             downtime_commit_request: false,
             overmap_open: false,
             overmap_travel_request: None,
+            overmap_pace_request: None,
+            overmap_stance_request: None,
             generator_open: false,
             generator_preview: None,
             generator_choices: Vec::new(),
@@ -815,6 +823,18 @@ impl UiState {
     /// no route. The view never decides the outcome.
     pub fn request_travel(&mut self, node: String) {
         self.overmap_travel_request = Some(node);
+    }
+
+    /// Choose the party's travel pace (a percent of normal time). The host
+    /// records it; the next trip travels at it.
+    pub fn request_pace(&mut self, pace: i64) {
+        self.overmap_pace_request = Some(pace);
+    }
+
+    /// Choose the navigator's exploration stance (empty clears it). The host sets
+    /// it on the lead token, and the travel rule reads it.
+    pub fn request_stance(&mut self, stance: &str) {
+        self.overmap_stance_request = Some(stance.to_owned());
     }
 
     pub fn open_generator(&mut self) {
@@ -2943,6 +2963,11 @@ mod tests {
         // nothing about the trip.
         ui.request_travel("forest".to_owned());
         assert_eq!(ui.overmap_travel_request.as_deref(), Some("forest"));
+        // Choosing a pace and a stance arm their own one-shots for the host.
+        ui.request_pace(50);
+        assert_eq!(ui.overmap_pace_request, Some(50));
+        ui.request_stance("scout");
+        assert_eq!(ui.overmap_stance_request.as_deref(), Some("scout"));
         ui.close_overmap();
         assert!(!ui.overmap_open);
     }

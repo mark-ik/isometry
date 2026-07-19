@@ -336,6 +336,7 @@ const COMPENDIUM_CSS: &str = r#"
 .overmap-node { color: #cfd3dd; font-size: 13px; cursor: pointer; white-space: nowrap; padding: 1px 4px; }
 .overmap-node:hover { color: #e8ebf2; }
 .overmap-here { color: #9fd48a; font-weight: bold; }
+.overmap-controls { display: flex; gap: 6px; margin-top: 8px; }
 .generator-proposal { color: #e8ebf2; font-size: 14px; font-weight: bold; margin: 10px 0; }
 .governance-row { padding: 8px; border-top: 1px solid #2c3347; cursor: pointer; }
 .governance-row-selected { background-color: #293243; box-shadow: inset 3px 0 0 #9fd48a; }

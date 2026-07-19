@@ -106,6 +106,41 @@ pub fn overmap_overlay(ui: &UiState) -> Option<UiChild> {
         ));
     }
 
+    // Pace (E1) and stance (E3): the party's marching orders. The chosen pace is
+    // marked; a stance is set on the lead token by the host.
+    let pace = ui.world.pace(party);
+    let pace_row: Vec<UiChild> = [("Fast", 50i64), ("Normal", 100), ("Slow", 200)]
+        .into_iter()
+        .map(|(label, pct)| {
+            let class = if pace == pct { "btn btn-attack" } else { "btn" };
+            Box::new(clickable(
+                el::<_, UiState, ()>("span", text(label)).attr("class", class),
+                move |ui: &mut UiState, _| ui.request_pace(pct),
+            )) as UiChild
+        })
+        .collect();
+    body.push(Box::new(
+        el("div", pace_row).attr("class", "overmap-controls"),
+    ));
+
+    let stance_row: Vec<UiChild> = [
+        ("Scout", "scout"),
+        ("Search", "search"),
+        ("Forage", "forage"),
+        ("Walk", ""),
+    ]
+    .into_iter()
+    .map(|(label, stance)| {
+        Box::new(clickable(
+            el::<_, UiState, ()>("span", text(label)).attr("class", "btn"),
+            move |ui: &mut UiState, _| ui.request_stance(stance),
+        )) as UiChild
+    })
+    .collect();
+    body.push(Box::new(
+        el("div", stance_row).attr("class", "overmap-controls"),
+    ));
+
     let hint = match &here {
         Some(node) => format!("here: {} — click a place to travel", name_of(node)),
         None => "the party is not on the overmap yet".to_owned(),
