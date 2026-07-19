@@ -1838,7 +1838,7 @@ impl App {
                     nav.set_text("stance", stance);
                 }
                 let res = system.resolve_travel(&nav, weight as u32, pace, &mut self.action_rng);
-                let (ticks, lost) = (res.ticks, res.lost);
+                let (ticks, lost, exhaustion) = (res.ticks, res.lost, res.exhaustion);
                 if let Some(runner) = self.runner.as_mut() {
                     runner.update(|ui| {
                         ui.status = if lost {
@@ -1854,6 +1854,7 @@ impl App {
                     ticks,
                     roll: res.roll,
                     lost,
+                    exhaustion,
                 }
             }
         };

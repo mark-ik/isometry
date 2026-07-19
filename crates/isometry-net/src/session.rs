@@ -289,6 +289,7 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
             ticks,
             roll,
             lost: _,
+            exhaustion,
         } => {
             // The party arrives: its overmap position is world state.
             state.world.party_node.insert(party.clone(), to.clone());
@@ -299,7 +300,26 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
             if let Some(map) = state.world.places.get(to).and_then(|p| p.map.clone()) {
                 *state.clocks.entry(map).or_insert(0) += ticks;
             }
+            // The march's toll: every party member gains exhaustion, a graded
+            // condition, worsened to at least the level the march exacted (a
+            // short leg after a long one does not refresh you). The party is the
+            // tokens sharing its owner.
+            if *exhaustion > 0 {
+                let members: Vec<_> = state
+                    .map
+                    .tokens
+                    .iter()
+                    .filter(|t| t.owner.as_deref() == Some(party.as_str()))
+                    .map(|t| t.id)
+                    .collect();
+                for id in members {
+                    if state.map.condition_value(id, "exhaustion") < *exhaustion {
+                        state.map.set_condition(id, "exhaustion", *exhaustion);
+                    }
+                }
+            }
             push_roll(state, roll);
+            sync_active_map(state);
             Ok(())
         }
     }

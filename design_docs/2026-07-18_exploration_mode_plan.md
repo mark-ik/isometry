@@ -289,9 +289,15 @@ scheduled.
   the outcome, entirely in Lua. The host injects the party navigator's stance in
   `pump_overmap`. A stance-picker button is the remaining UI polish; the mechanism
   is settable, replicated, and tested.
-- **E4: Attrition.** Forced march accrues exhaustion (graded condition, reused);
-  foraging adjusts a party resource. *Done when* a long march sets exhaustion N
-  and a forage roll changes food, both system-ruled, both replicated.
+- **E4: Attrition. Exhaustion LANDED 2026-07-18** (the graded-conditions reuse
+  made good). A system `toll_func` (`f(c, t, ticks) -> exhaustion`) rules how
+  tired a march leaves the party; `resolve_travel` reads it, `TravelResolved`
+  carries it, and `apply_game` worsens every party member's `exhaustion`
+  condition to the tolled level (`condition_value` / `set_condition`, the same
+  primitive as `frightened 2`). PF2e tires the party at 10 and 20 ticks; 5e has
+  no toll and never tires; a lost trip is longer so it tires more, without the
+  toll rule knowing it got lost. Foraging (a forage roll adjusting a party food
+  resource, the `want`/`have` shape at party scale) is the remaining half of E4.
 - **E5: Encounter checks.** A per-tick roll that may inject a battle-map node via
   the existing `EncounterAnchor` / transition machinery. *Done when* traveling can
   drop the party into a prepared or generated encounter, and returning resumes the

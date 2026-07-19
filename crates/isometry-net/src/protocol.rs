@@ -278,6 +278,10 @@ pub enum GameEvent {
         ticks: u64,
         roll: RollRecord,
         lost: bool,
+        /// Exhaustion the march tolled, applied to every party member as a graded
+        /// condition (worsening what they carry). Zero for a short trip.
+        #[serde(default)]
+        exhaustion: i64,
     },
 }
 

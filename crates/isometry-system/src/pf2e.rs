@@ -325,10 +325,21 @@ pub fn pf2e_srd() -> System {
             elseif c.stance == "search" then bonus = bonus - 2 end
             if roll + bonus >= dc then return 100 else return 150 end
         end
+
+        -- The toll of a long march: travel of 20+ ticks leaves the party
+        -- frightened-2's sibling, exhausted 2; 10+ exhausted 1; a short hop
+        -- tires no one. A lost trip is longer, so it tires more, without this
+        -- rule knowing the party got lost -- it reads only the time.
+        function p_march_toll(c, t, ticks)
+            if ticks >= 20 then return 2
+            elseif ticks >= 10 then return 1
+            else return 0 end
+        end
     "#;
     System::load("pf2e-srd", "Pathfinder 2e (skeleton)", fields, derived, actions, script)
         .expect("builtin pf2e skeleton loads")
         .with_defeat("s_defeated")
         .with_mobility("s_speed", "s_sight")
         .with_nav("p_navigate")
+        .with_toll("p_march_toll")
 }

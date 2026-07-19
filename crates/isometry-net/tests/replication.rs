@@ -1451,7 +1451,8 @@ fn a_resolved_travel_moves_the_party_and_ticks_the_clock_on_every_peer() {
     let mut sim = Sim::new(HostSession::new(snap));
     sim.connect(PeerId(10));
 
-    // The host applies a travel verdict the system rolled: 5 ticks, lost the way.
+    // The host applies a travel verdict the system rolled: 5 ticks, lost the
+    // way, and the long leg tolled the party exhaustion 2 (token 1 is A's).
     sim.host_event(GameEvent::TravelResolved {
         party: "A".into(),
         to: "forest".into(),
@@ -1463,12 +1464,15 @@ fn a_resolved_travel_moves_the_party_and_ticks_the_clock_on_every_peer() {
             total: 7,
         },
         lost: true,
+        exhaustion: 2,
     });
 
     let at = |s: &GameSnapshot| s.world.party_at("A").map(str::to_owned);
     let clock = |s: &GameSnapshot| s.clocks.get("forest-map").copied().unwrap_or(0);
+    let tired = |s: &GameSnapshot| s.map.condition_value(TokenId(1), "exhaustion");
     assert_eq!(at(sim.host.state()).as_deref(), Some("forest"), "the party arrived");
     assert_eq!(clock(sim.host.state()), 5, "arriving advanced the destination's clock");
+    assert_eq!(tired(sim.host.state()), 2, "the march exhausted the party member");
     assert_eq!(
         at(sim.clients[&PeerId(10)].state().unwrap()).as_deref(),
         Some("forest")
@@ -1477,6 +1481,11 @@ fn a_resolved_travel_moves_the_party_and_ticks_the_clock_on_every_peer() {
         clock(sim.clients[&PeerId(10)].state().unwrap()),
         5,
         "every peer holds the same arrival time"
+    );
+    assert_eq!(
+        tired(sim.clients[&PeerId(10)].state().unwrap()),
+        2,
+        "and the same exhaustion -- attrition is replicated truth"
     );
     assert_eq!(sim.host.state().roll_log.len(), 1, "the navigation roll reached the log");
     assert_converged(&sim);
@@ -1513,6 +1522,7 @@ fn a_client_cannot_pronounce_its_own_travel() {
                 total: 20,
             },
             lost: false,
+            exhaustion: 0,
         },
     );
     assert_eq!(sim.host.seq(), seq, "a forged travel verdict entered the log");

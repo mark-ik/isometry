@@ -242,6 +242,11 @@ pub struct TravelResolution {
     /// Whether the party navigated poorly (took longer than the smooth cost).
     /// Legible for narration, and the reason the trip cost more.
     pub lost: bool,
+    /// The exhaustion the march tolled: a graded condition (the same primitive as
+    /// `frightened 2`) the host applies to every party member, worsening what
+    /// they already carry. Zero for a trip short enough to shrug off. What counts
+    /// as a long march is the system's `toll_func`, not the substrate's.
+    pub exhaustion: i64,
 }
 
 /// Copy `sheet` with each active condition added as a boolean field, so Lua
@@ -304,6 +309,10 @@ pub struct System {
     /// slot is nil (travel has no target); `roll` is a d20 and `weight` the
     /// route's difficulty, so the DC can rise with the road.
     pub nav_func: Option<String>,
+    /// Lua `f(c, t, ticks) -> exhaustion` for overmap travel: how tired a march
+    /// of `ticks` leaves the party (a graded condition the host applies to every
+    /// member). `None` means travel never tires (a system with no attrition).
+    pub toll_func: Option<String>,
     lua: Lua,
 }
 
@@ -1376,6 +1385,7 @@ impl System {
             speed_func: None,
             sight_func: None,
             nav_func: None,
+            toll_func: None,
             lua,
         })
     }
@@ -1405,6 +1415,13 @@ impl System {
         self
     }
 
+    /// Declare the march-toll rule: a Lua `f(c, t, ticks) -> exhaustion`. A
+    /// system with no attrition simply never calls this.
+    pub fn with_toll(mut self, func: impl Into<String>) -> Self {
+        self.toll_func = Some(func.into());
+        self
+    }
+
     /// Resolve one leg of overmap travel: roll the party's navigator against the
     /// route, and rule how long it takes. The base time is E1's cost (the route
     /// weight scaled by pace); the system's `nav_func` decides whether the party
@@ -1428,6 +1445,17 @@ impl System {
             None => 100,
         };
         let ticks = ((base * nav_pct.max(0) as u64) / 100).max(1);
+        // The toll of the march: how tired `ticks` of travel leaves the party.
+        // The system reads the *actual* time (lost trips are longer and tire
+        // more), so exhaustion follows navigation without the toll rule knowing
+        // it. Absent `toll_func`, travel never tires.
+        let exhaustion = match self.toll_func.clone() {
+            Some(func) => self
+                .call_int_ctx(&func, navigator, None, Some(ticks as i64))
+                .unwrap_or(0)
+                .max(0),
+            None => 0,
+        };
         TravelResolution {
             roll: RollRecord {
                 by: navigator.text("name").unwrap_or("party").to_owned(),
@@ -1437,6 +1465,7 @@ impl System {
             },
             ticks,
             lost: nav_pct > 100,
+            exhaustion,
         }
     }
 
@@ -3176,6 +3205,29 @@ end"#,
         assert!(
             flipped,
             "on some roll, Scouting finds the way where Searching loses it"
+        );
+    }
+
+    #[test]
+    fn a_long_march_tolls_the_party_exhaustion() {
+        let mut sys = pf2e_srd();
+        let mut scout = sys.default_sheet();
+        scout.set_int("wis", 100); // never loses even a hard road, so ticks == base
+        // A 20-tick march exhausts the party (level 2), a graded condition; a
+        // short hop tires no one.
+        let long = sys.resolve_travel(&scout, 20, 100, &mut Rng::new(1));
+        assert_eq!(long.ticks, 20);
+        assert_eq!(long.exhaustion, 2, "a long march tires the party");
+        let short = sys.resolve_travel(&scout, 4, 100, &mut Rng::new(1));
+        assert_eq!(short.exhaustion, 0, "a short hop tires no one");
+
+        // 5e declares no toll rule, so its travel never tires.
+        let mut plain = srd_5e();
+        let sheet = plain.default_sheet();
+        assert_eq!(
+            plain.resolve_travel(&sheet, 20, 100, &mut Rng::new(1)).exhaustion,
+            0,
+            "a system with no attrition never tires"
         );
     }
 
