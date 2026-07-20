@@ -49,8 +49,11 @@ use campaign_store::{CampaignCheckpoint, CampaignRepository};
 use layout_dom_api::{DomMutation, LayoutDomMut as _};
 use net::{NetBridge, Role};
 use netrender::{ColorLoad, ExternalTexturePlacement, NetrenderOptions};
-use paint_list_api::{DeviceIntSize, PaintList as _};
-use genet_layout::{Applied, IncrementalLayout, InteractionState, ScrollOffsets, SourceNodeId};
+use paint_list_api::{DeviceIntSize, PaintCmd, PaintList as _};
+use genet_layout::{
+    Applied, IncrementalLayout, InteractionState, LeafPaintSource, ScrollOffsets, SourceNodeId,
+};
+use sprigging::{ColorF, LeafRegistry, RenderedLeaves, Size};
 use genet_scripted_dom::{NodeId, ScriptedDom};
 use genet_winit_host::SurfaceHost;
 use winit::application::ApplicationHandler;
@@ -60,7 +63,7 @@ use winit::event::{
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey as WinitNamedKey};
 use winit::window::{Window, WindowId};
-use cambium::{GenetAppRunner, PointerClick, Propagation};
+use cambium::{GenetAppRunner, HoverEvent, HoverPhase, PointerClick, Propagation};
 
 type Runner = GenetAppRunner<UiState, fn(&UiState) -> UiChild, UiChild>;
 
@@ -68,6 +71,36 @@ type Runner = GenetAppRunner<UiState, fn(&UiState) -> UiChild, UiChild>;
 const WHEEL_NOTCH_PX: f32 = 48.0;
 /// Board pan in diagonal tile steps per wheel notch (over the board pane).
 const WHEEL_BOARD_TILES: f32 = 2.0;
+
+/// Bridges the neutral Sprigging leaf cache to the layout engine's paint splice:
+/// `emit_paint_list_with_leaves` asks this for each `<custom-leaf>`'s commands.
+struct RenderedLeafSource<'a>(&'a RenderedLeaves);
+
+impl LeafPaintSource for RenderedLeafSource<'_> {
+    fn leaf_commands(&self, key: u64) -> Option<&[PaintCmd]> {
+        self.0.get(key)
+    }
+}
+
+/// The overmap palette: the party's place reads warm-green, the rest of the
+/// discovered map cool-gray. The host owns the palette so no product-specific
+/// node kind leaks into Cambium.
+fn overmap_node_color(kind: &isometry_views::OvermapNodeKind) -> ColorF {
+    match kind {
+        isometry_views::OvermapNodeKind::Here => ColorF {
+            r: 0.62,
+            g: 0.83,
+            b: 0.54,
+            a: 1.0,
+        },
+        isometry_views::OvermapNodeKind::Elsewhere => ColorF {
+            r: 0.72,
+            g: 0.75,
+            b: 0.82,
+            a: 1.0,
+        },
+    }
+}
 
 struct App {
     window: Option<Arc<Window>>,
@@ -86,6 +119,13 @@ struct App {
     /// and incremental-apply subject.
     layout: Option<IncrementalLayout<NodeId>>,
     layout_size: (f32, f32),
+    /// Cambium's retained custom-paint leaves, keyed by leaf key. The overmap's
+    /// painted graph (nodes + edges) is registered here when the surface is
+    /// open; paint splices each leaf's commands at its `<custom-leaf>` box.
+    leaves: LeafRegistry<u64>,
+    /// The leaf-tier paint cache: each registered leaf's last-rendered command
+    /// buffer, reused across frames when the leaf and its box are unchanged.
+    rendered_leaves: RenderedLeaves,
     /// Origin of the CSS animation clock. `tick_animations` takes seconds
     /// since an arbitrary but monotonic zero; the process start is that zero.
     clock: Instant,
@@ -111,6 +151,10 @@ struct App {
     drag_token: Option<isometry_core::TokenId>,
     last_hover: Option<u64>,
     last_focus: Option<u64>,
+    /// The view node a cambium `on_hover` handler last saw the pointer enter, so
+    /// a crossing dispatches one leave to it and one enter to the next. Drives
+    /// the overmap's painted hover emphasis (and any future hoverable widget).
+    hover_target_node: Option<NodeId>,
     profile: bool,
     /// `ISOMETRY_CAPTURE_DIR`: overwrite `<dir>/isometry_capture.png`
     /// with every presented frame, read back from the app's own texture.
@@ -370,11 +414,39 @@ impl App {
                 let now_s = self.clock.elapsed().as_secs_f64();
                 let _ = layout.tick_animations(&*dom_ref, now_s);
             }
+            // Register (or clear) the overmap's painted graph leaf so the view's
+            // `<custom-leaf>` gets nodes + edges. Rebuilt from world state each
+            // frame it is open; a fresh `GraphCanvas` is born dirty, so the
+            // leaf cache repaints it. Closed -> removed, so it stops painting.
+            match isometry_views::overmap_swatch(runner.state()) {
+                Some(swatch) if runner.state().overmap_open => {
+                    self.leaves.insert(
+                        isometry_views::OVERMAP_LEAF_KEY,
+                        Box::new(swatch.paint_leaf(overmap_node_color)),
+                    );
+                }
+                _ => {
+                    self.leaves.remove(&isometry_views::OVERMAP_LEAF_KEY);
+                }
+            }
+
             let layout = self.layout.as_ref().expect("layout just ensured");
-            let list = layout.emit_paint_list(
+            // Repaint each laid-out leaf whose box appears this frame, sizing it
+            // from the completed layout, into the retained cache.
+            let sizes: std::collections::HashMap<u64, (f32, f32)> =
+                layout.custom_leaf_boxes().into_iter().collect();
+            self.leaves.render_into(
+                |key| {
+                    sizes.get(&key).map(|&(width, height)| Size { width, height })
+                },
+                &mut self.rendered_leaves,
+            );
+            let source = RenderedLeafSource(&self.rendered_leaves);
+            let list = layout.emit_paint_list_with_leaves(
                 &*dom_ref,
                 &ScrollOffsets::default(),
                 DeviceIntSize::new(lw as i32, lh as i32),
+                &source,
             );
             let translated = paint_list_render::translate_paint_cmd_stream(
                 list.viewport(),
@@ -453,32 +525,59 @@ impl App {
     }
 
     /// Drive `:hover` restyles on target change (engine `set_interaction`;
-    /// `Unchanged` when nothing interaction-sensitive matched).
+    /// `Unchanged` when nothing interaction-sensitive matched), and dispatch
+    /// cambium enter/leave to whatever `on_hover` handler sits under the cursor
+    /// (the overmap's painted node emphasis rides this).
     fn hover(&mut self) {
-        let (Some(runner), Some(layout)) = (self.runner.as_ref(), self.layout.as_mut()) else {
-            return;
+        // Phase 1: hit-test and the engine-level `:hover` restyle. Returns the
+        // view node carrying an `on_hover` handler under the cursor, if any.
+        let target = {
+            let (Some(runner), Some(layout)) = (self.runner.as_ref(), self.layout.as_mut()) else {
+                return;
+            };
+            let (x, y) = self.cursor;
+            let dom = runner.dom();
+            let dom_ref = dom.borrow();
+            let hit = layout.hit_test(&*dom_ref, x, y, &ScrollOffsets::default());
+            let hovered = hit.map(|n| layout_dom_api::LayoutDom::opaque_id(&*dom_ref, n));
+            let focused = runner
+                .focus()
+                .map(|n| layout_dom_api::LayoutDom::opaque_id(&*dom_ref, n));
+            let target = hit.and_then(|n| runner.hover_target(n));
+            if (hovered, focused) != (self.last_hover, self.last_focus) {
+                self.last_hover = hovered;
+                self.last_focus = focused;
+                let state = InteractionState {
+                    hovered: hovered.map(SourceNodeId),
+                    focused: focused.map(SourceNodeId),
+                    ..Default::default()
+                };
+                if layout.set_interaction(&*dom_ref, &state) != Applied::Unchanged {
+                    drop(dom_ref);
+                    if let Some(window) = self.window.as_ref() {
+                        window.request_redraw();
+                    }
+                }
+            }
+            target
         };
-        let (x, y) = self.cursor;
-        let dom = runner.dom();
-        let dom_ref = dom.borrow();
-        let hovered = layout
-            .hit_test(&*dom_ref, x, y, &ScrollOffsets::default())
-            .map(|n| layout_dom_api::LayoutDom::opaque_id(&*dom_ref, n));
-        let focused = runner
-            .focus()
-            .map(|n| layout_dom_api::LayoutDom::opaque_id(&*dom_ref, n));
-        if (hovered, focused) == (self.last_hover, self.last_focus) {
+        // Phase 2: view-level enter/leave. `dispatch_hover` no-ops on a stale
+        // node, so a target that has since been removed is harmless. Leave the
+        // old before entering the new, since a single hovered slot is shared.
+        if target == self.hover_target_node {
             return;
         }
-        self.last_hover = hovered;
-        self.last_focus = focused;
-        let state = InteractionState {
-            hovered: hovered.map(SourceNodeId),
-            focused: focused.map(SourceNodeId),
-            ..Default::default()
-        };
-        if layout.set_interaction(&*dom_ref, &state) != Applied::Unchanged {
-            drop(dom_ref);
+        let previous = self.hover_target_node;
+        self.hover_target_node = target;
+        if let Some(runner) = self.runner.as_mut() {
+            if let Some(prev) = previous {
+                runner.dispatch_hover(prev, HoverEvent::new(HoverPhase::Leave, (0.0, 0.0), (0.0, 0.0)));
+            }
+            if let Some(now) = target {
+                runner.dispatch_hover(now, HoverEvent::new(HoverPhase::Enter, (0.0, 0.0), (0.0, 0.0)));
+            }
+        }
+        if previous.is_some() || target.is_some() {
             if let Some(window) = self.window.as_ref() {
                 window.request_redraw();
             }
@@ -2010,26 +2109,47 @@ impl App {
             }
             return;
         }
-        // The frontier: places one route beyond the ones the party knows.
         let known: std::collections::BTreeSet<String> =
             world.party_known.get(&party).cloned().unwrap_or_default();
         let full = world.overmap();
-        let mut frontier: Vec<String> = Vec::new();
+        let mut reveal: Vec<String> = Vec::new();
+        let mut push = |node: &str, reveal: &mut Vec<String>| {
+            if !known.contains(node) && !reveal.iter().any(|r| r == node) {
+                reveal.push(node.to_owned());
+            }
+        };
+        // The frontier: places one route beyond the ones the party knows.
         for node in &known {
             for (neighbour, _) in full.neighbours(node) {
-                if !known.contains(neighbour) && !frontier.iter().any(|f| f == neighbour) {
-                    frontier.push(neighbour.to_owned());
+                push(neighbour, &mut reveal);
+            }
+        }
+        // Carried maps: a `map` item in the party's packs shows named places
+        // (`ItemInstance::revealed_places`). Reading one is how a bought or looted
+        // chart hands over somewhere far off the party has never been near.
+        if let Some(runner) = self.runner.as_ref() {
+            let s = runner.state();
+            for token in s
+                .map
+                .tokens
+                .iter()
+                .filter(|t| t.owner.as_deref() == Some(party.as_str()))
+            {
+                if let Some(inventory) = s.inventories.get(&token.id) {
+                    for node in inventory.revealed_places() {
+                        push(node, &mut reveal);
+                    }
                 }
             }
         }
-        if frontier.is_empty() {
+        if reveal.is_empty() {
             if let Some(runner) = self.runner.as_mut() {
                 runner.update(|ui| ui.status = "the map shows nothing you do not know".to_owned());
             }
             return;
         }
-        let count = frontier.len();
-        for node in frontier {
+        let count = reveal.len();
+        for node in reveal {
             self.emit_host_event(GameEvent::World(WorldEvent::NodeRevealed {
                 party: party.clone(),
                 node,
@@ -2626,20 +2746,24 @@ impl App {
         }
         self.overmap_fired = true;
 
-        use isometry_campaign::{WorldPlace, WorldRoute};
+        use isometry_campaign::{ItemId, ItemInstance, WorldPlace, WorldRoute};
         if let Some(runner) = self.runner.as_mut() {
             runner.update(|ui| {
+                // Positions left unset (`None`): the overmap relaxes a
+                // force-directed layout from the routes, proving that path.
                 let place = |id: &str, name: &str| WorldPlace {
                     id: id.to_owned(),
                     name: name.to_owned(),
                     tags: Vec::new(),
                     map: None,
+                    position: None,
                 };
                 for (id, name) in [
                     ("village", "Village"),
                     ("forest", "Deepwood"),
                     ("ruins", "Old Ruins"),
                     ("keep", "Grey Keep"),
+                    ("citadel", "Sky Citadel"),
                 ] {
                     ui.world.places.insert(id.to_owned(), place(id, name));
                 }
@@ -2653,16 +2777,49 @@ impl App {
                 ui.world.routes.insert("r1".to_owned(), route("r1", "village", "forest", 2));
                 ui.world.routes.insert("r2".to_owned(), route("r2", "forest", "ruins", 3));
                 ui.world.routes.insert("r3".to_owned(), route("r3", "village", "keep", 5));
+                ui.world.routes.insert("r4".to_owned(), route("r4", "keep", "citadel", 4));
 
                 let party = ui.viewer.clone().unwrap_or_else(|| "dm".to_owned());
                 ui.world.party_node.insert(party.clone(), "village".to_owned());
-                for node in ["village", "forest", "ruins", "keep"] {
+                // The party knows only its own ground and the near woods. The keep
+                // is one route past the known (a frontier the "study map" read
+                // finds); the Sky Citadel is two routes out, unreachable by that
+                // read -- it is only learned from a *carried* map (below).
+                for node in ["village", "forest", "ruins"] {
                     ui.world.reveal(&party, node);
                 }
+                // A party token to carry the pack: knight 1, deeded to the party,
+                // holding a looted chart tagged with the place it depicts.
+                if let Some(token) = ui.map.tokens.iter_mut().find(|t| t.id == TokenId(1)) {
+                    token.owner = Some(party.clone());
+                }
+                ui.inventories.entry(TokenId(1)).or_default().items.insert(
+                    ItemId::new("citadel-chart"),
+                    ItemInstance {
+                        id: ItemId::new("citadel-chart"),
+                        template: "map".to_owned(),
+                        name: "Chart to the Sky Citadel".to_owned(),
+                        quantity: 1,
+                        tags: vec!["map".to_owned(), "reveals:citadel".to_owned()],
+                        modifiers: Vec::new(),
+                        appearance_layers: Vec::new(),
+                    },
+                );
                 ui.open_overmap();
+                // Study the map at once so the capture shows the outcome: the
+                // frontier read finds the keep, and the carried chart discloses
+                // the citadel two routes out that no frontier read could reach.
+                ui.request_map_read();
             });
         }
-        eprintln!("[isometry] overmap selftest: seeded 4 places, party at the village, opened the overmap");
+        // The `request_map_read` above only arms a read; its pump normally runs
+        // on a window event, of which a headless selftest has none. Drive it once
+        // here so the seeded chart resolves and the capture shows the outcome.
+        self.pump_overmap_read();
+        eprintln!(
+            "[isometry] overmap selftest: seeded 5 places, party at the village knowing 3, \
+             carrying a chart to the citadel; reading the map reveals keep + citadel"
+        );
         if let Some(window) = self.window.as_ref() {
             window.request_redraw();
         }
@@ -3221,6 +3378,7 @@ impl ApplicationHandler for App {
             || (self.cmd_selftest && !self.cmd_fired)
             || (self.convince_selftest && !self.convince_fired)
             || (self.storylet_selftest && !self.storylet_fired)
+            || (self.overmap_selftest && !self.overmap_fired)
         {
             event_loop.set_control_flow(ControlFlow::WaitUntil(
                 Instant::now() + Duration::from_millis(100),
@@ -3596,6 +3754,8 @@ fn main() {
         history: Codicil::new(),
         layout: None,
         layout_size: (0.0, 0.0),
+        leaves: LeafRegistry::new(),
+        rendered_leaves: RenderedLeaves::new(),
         clock: Instant::now(),
         // A fixed seed keeps a solo session reproducible and makes the headed
         // verification deterministic. A real table seeds this per session.
@@ -3609,6 +3769,7 @@ fn main() {
         drag_token: None,
         last_hover: None,
         last_focus: None,
+        hover_target_node: None,
         profile: std::env::var_os("ISOMETRY_PROFILE").is_some(),
         capture_dir: std::env::var_os("ISOMETRY_CAPTURE_DIR").map(Into::into),
         net_intent: parse_net_intent(),

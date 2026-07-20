@@ -3974,6 +3974,7 @@ dependencies = [
  "pollster",
  "serde",
  "serde_json",
+ "sprigging",
  "tokio",
  "wgpu",
  "winit",

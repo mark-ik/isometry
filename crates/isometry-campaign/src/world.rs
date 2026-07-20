@@ -85,6 +85,12 @@ pub struct WorldPlace {
     pub tags: Vec<String>,
     #[serde(default)]
     pub map: Option<String>,
+    /// Optional hand-placed overmap coordinate. `None` lets the render layout
+    /// place the site (a force-directed relaxation from the routes); `Some`
+    /// pins it, and the overmap honors authored positions when any place sets
+    /// one. Integers keep [`CampaignWorld`] `Eq` (no float in the key state).
+    #[serde(default)]
+    pub position: Option<(i32, i32)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -336,7 +342,7 @@ impl CampaignWorld {
             .map(|place| OvermapNode {
                 id: place.id.clone(),
                 name: place.name.clone(),
-                at: (0, 0),
+                at: place.position.unwrap_or((0, 0)),
                 site: place.map.clone(),
             })
             .collect();
@@ -718,6 +724,7 @@ mod tests {
             name: name.into(),
             tags: vec![],
             map: None,
+            position: None,
         }
     }
 

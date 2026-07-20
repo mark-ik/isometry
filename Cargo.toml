@@ -60,6 +60,10 @@ thiserror = "1"
 # gitignored .cargo/config.toml source-specific [patch] entries. Cambium
 # supplies the view toolkit while Genet supplies the engine and host crates.
 cambium = "0.2.0"
+# Cambium's retained custom-paint leaves (the graph-canvas swatch's painted
+# nodes + edges). A host wires them directly, the pelt-desktop pattern; cambium
+# 0.2.0 depends on this same published version, so they unify to one copy.
+sprigging = "0.1.0"
 layout-dom-api = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 genet-scripted-dom = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 genet-layout = { git = "https://github.com/mark-ik/genet.git", branch = "main" }

@@ -1,9 +1,14 @@
 # Exploration mode
 
 **Date:** 2026-07-18
-**Status:** ACTIVE. **Trigger pulled 2026-07-18** (Mark: "overmap exploration is
-part of the game"). C8 is un-deferred; building from E0. The exploration board is
-the **overmap** (Mark's term): the pointcrawl graph above the tactical maps.
+**Status:** LANDED (2026-07-20). **Trigger pulled 2026-07-18** (Mark: "overmap
+exploration is part of the game"). C8 un-deferred; E0-E6 + polish + the two
+follow-on items (item-borne map read, sprigging paint-leaf pipeline) all built
+and runtime-verified. The exploration board is the **overmap** (Mark's term): the
+pointcrawl graph above the tactical maps, now drawn through Cambium's painted
+`graph_canvas_swatch` with a force-directed layout and pointer-hover emphasis.
+Remaining work is content (place art, pack authoring), not new mechanism. See
+Progress.
 **Related:**
 [2026-07-07_next_horizons_landscape.md](2026-07-07_next_horizons_landscape.md)
 (decision 2 deferred the WORLD tier; this revisits its trigger),
@@ -439,3 +444,41 @@ composition again (fog + secrets + a check).
   paint leaves into the app's render pipeline so the overmap can adopt Cambium's
   `graph_canvas_swatch` with painted edges (the element render works meanwhile).
   Neither is substrate.
+- **2026-07-20: both remaining items landed.**
+  - *Item-borne map read.* A `map` item carried in a party token's inventory now
+    discloses overmap places tagged `reveals:<place>`, read behind the same
+    literacy check as the surface "study map". The convention lives on the item
+    model (`ItemInstance::revealed_places`, `Inventory::revealed_places`, campaign
+    crate), so it is unit-tested there
+    (`a_chart_discloses_its_tagged_places_and_gear_discloses_none`,
+    `a_pack_aggregates_every_carried_chart`); `pump_overmap_read` scans the party's
+    packs and reveals the tagged nodes on a pass, alongside the frontier. Proven in
+    the overmap selftest: a party knowing only Village/Deepwood/Old Ruins reads a
+    chart tagged `reveals:citadel` and gains Grey Keep (frontier) *and* the Sky
+    Citadel two routes out, which no frontier read could reach.
+  - *Sprigging paint-leaf pipeline.* The host render loop now carries a
+    `LeafRegistry` + `RenderedLeaves` cache and emits through
+    `emit_paint_list_with_leaves` (a `RenderedLeafSource` adapter over the neutral
+    cache), the pelt-desktop host pattern. The overmap adopted
+    `graph_canvas_swatch`: painted nodes + edges on a retained `GraphCanvas` leaf
+    registered under `OVERMAP_LEAF_KEY`, with the view's own label overlay at the
+    swatch's projected positions (the component carries names only as aria-labels).
+    Shared model in `isometry_views::overmap_swatch` so the painted leaf and the
+    native hit targets project identically. Adds a direct `sprigging` dep (unified
+    with Cambium's copy via a `.cargo/config.toml` patch). This unlocks every
+    Cambium paint leaf (meters, glyphs, knobs) for Isometry, not just the overmap.
+- **2026-07-20: overmap render follow-ons landed.**
+  - *Force-directed layout.* `Overmap::layout` (core) returns normalized node
+    positions: authored `at` coordinates when the world sets them, else a
+    deterministic Fruchterman-Reingold relaxation from the routes, so linked
+    sites read as a shape without anyone placing a node. Deterministic (circle
+    seed, no clock/RNG), unit-tested
+    (`force_directed_layout_is_deterministic_and_inside_the_box`,
+    `authored_positions_override_the_force_layout`). Authored positions are
+    reachable through a new `WorldPlace.position: Option<(i32,i32)>` (kept
+    integer so `CampaignWorld` stays `Eq`), projected into `OvermapNode.at`.
+  - *Hover emphasis.* The host now dispatches Cambium `on_hover` enter/leave to
+    the handler under the cursor (`hover_target` + `dispatch_hover` in the
+    genet `hover()` loop, a general capability for any hoverable widget). The
+    overmap writes it to `UiState.overmap_hover`, which lifts the hovered node
+    on the painted leaf and brightens its label.

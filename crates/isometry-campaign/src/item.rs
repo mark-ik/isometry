@@ -96,6 +96,18 @@ impl ItemInstance {
         Ok(())
     }
 
+    /// The overmap places this item discloses when read as a map. A carried
+    /// chart tags the nodes it depicts as `reveals:<place>`; reading it (behind
+    /// a literacy check the system judges) hands those places to the party. This
+    /// is how a bought or looted map delivers somewhere far off the party has
+    /// never travelled near. Ordinary gear reveals nothing.
+    pub fn revealed_places(&self) -> impl Iterator<Item = &str> {
+        self.tags
+            .iter()
+            .filter_map(|tag| tag.strip_prefix("reveals:"))
+            .filter(|place| !place.is_empty())
+    }
+
     /// Appearance layers selected by equipment, in authored order. The view
     /// later resolves these keys through an `isometry-voxel::Appearance` rig.
     pub fn appearance_layers(&self) -> impl Iterator<Item = &str> {
@@ -154,6 +166,13 @@ impl Inventory {
         self.items.get_mut(id)
     }
 
+    /// Every overmap place the carried maps in this pack disclose, in item-id
+    /// order. Duplicates across charts are left in; the caller dedupes against
+    /// what the party already knows.
+    pub fn revealed_places(&self) -> impl Iterator<Item = &str> {
+        self.items.values().flat_map(ItemInstance::revealed_places)
+    }
+
     /// Remove a whole instance for transfer. Any equipped references to it are
     /// cleared in the same operation, so it cannot remain worn by two tokens.
     pub fn take(&mut self, id: &ItemId) -> Result<ItemInstance, InventoryError> {
@@ -209,6 +228,47 @@ mod tests {
             modifiers: Vec::new(),
             appearance_layers: vec!["weapon:longsword".to_owned()],
         }
+    }
+
+    fn chart(id: &str, places: &[&str]) -> ItemInstance {
+        ItemInstance {
+            id: ItemId::new(id),
+            template: "map".to_owned(),
+            name: "Old Chart".to_owned(),
+            quantity: 1,
+            tags: std::iter::once("map".to_owned())
+                .chain(places.iter().map(|p| format!("reveals:{p}")))
+                .collect(),
+            modifiers: Vec::new(),
+            appearance_layers: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_chart_discloses_its_tagged_places_and_gear_discloses_none() {
+        let map = chart("chart.citadel", &["citadel", "shrine"]);
+        assert_eq!(
+            map.revealed_places().collect::<Vec<_>>(),
+            vec!["citadel", "shrine"]
+        );
+        // An ordinary weapon, and an empty `reveals:` tag, disclose nothing.
+        assert!(sword().revealed_places().next().is_none());
+        let mut junk = sword();
+        junk.tags.push("reveals:".to_owned());
+        assert!(junk.revealed_places().next().is_none());
+    }
+
+    #[test]
+    fn a_pack_aggregates_every_carried_chart() {
+        let mut pack = Inventory::default();
+        pack.insert(sword()).unwrap();
+        pack.insert(chart("chart.a", &["keep"])).unwrap();
+        pack.insert(chart("chart.b", &["citadel"])).unwrap();
+        // Item-id order: chart.a before chart.b before reward-03.sword.
+        assert_eq!(
+            pack.revealed_places().collect::<Vec<_>>(),
+            vec!["keep", "citadel"]
+        );
     }
 
     #[test]

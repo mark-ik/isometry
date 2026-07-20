@@ -214,6 +214,7 @@ impl CampaignWorld {
                     name: format!("Hold of {}", faction.name),
                     tags: faction.tags.clone(),
                     map: None,
+                    position: None,
                 });
                 (text, Some(change))
             }

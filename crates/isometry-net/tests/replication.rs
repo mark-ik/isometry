@@ -1378,11 +1378,11 @@ fn discovery_replicates_as_the_party_travels() {
     let mut snap = snapshot();
     snap.world.places.insert(
         "village".into(),
-        WorldPlace { id: "village".into(), name: "Village".into(), tags: vec![], map: None },
+        WorldPlace { id: "village".into(), name: "Village".into(), tags: vec![], map: None, position: None },
     );
     snap.world.places.insert(
         "forest".into(),
-        WorldPlace { id: "forest".into(), name: "Forest".into(), tags: vec![], map: None },
+        WorldPlace { id: "forest".into(), name: "Forest".into(), tags: vec![], map: None, position: None },
     );
     snap.world.routes.insert(
         "r".into(),
@@ -1419,6 +1419,7 @@ fn a_party_travels_the_overmap_and_every_peer_agrees() {
             name: "Village".into(),
             tags: vec![],
             map: None,
+            position: None,
         },
     );
     snap.world.places.insert(
@@ -1428,6 +1429,7 @@ fn a_party_travels_the_overmap_and_every_peer_agrees() {
             name: "Forest".into(),
             tags: vec![],
             map: None,
+            position: None,
         },
     );
     snap.world.routes.insert(
@@ -1470,7 +1472,7 @@ fn a_resolved_travel_moves_the_party_and_ticks_the_clock_on_every_peer() {
     let mut snap = snapshot();
     snap.world.places.insert(
         "village".into(),
-        WorldPlace { id: "village".into(), name: "Village".into(), tags: vec![], map: None },
+        WorldPlace { id: "village".into(), name: "Village".into(), tags: vec![], map: None, position: None },
     );
     // The forest is a site (a tactical map), so arriving there advances its clock.
     snap.world.places.insert(
@@ -1480,6 +1482,7 @@ fn a_resolved_travel_moves_the_party_and_ticks_the_clock_on_every_peer() {
             name: "Forest".into(),
             tags: vec![],
             map: Some("forest-map".into()),
+            position: None,
         },
     );
     snap.world.party_node.insert("A".into(), "village".into());
@@ -1546,6 +1549,7 @@ fn an_encounter_on_the_road_drops_the_party_onto_the_map() {
             name: "Green".into(),
             tags: vec![],
             map: Some("field".into()),
+            position: None,
         },
     );
     snap.world.places.insert(
@@ -1555,6 +1559,7 @@ fn an_encounter_on_the_road_drops_the_party_onto_the_map() {
             name: "Hollow".into(),
             tags: vec![],
             map: Some("hut".into()),
+            position: None,
         },
     );
     snap.world.routes.insert(
@@ -1608,11 +1613,11 @@ fn a_client_cannot_pronounce_its_own_travel() {
     let mut snap = snapshot();
     snap.world.places.insert(
         "village".into(),
-        WorldPlace { id: "village".into(), name: "Village".into(), tags: vec![], map: None },
+        WorldPlace { id: "village".into(), name: "Village".into(), tags: vec![], map: None, position: None },
     );
     snap.world.places.insert(
         "forest".into(),
-        WorldPlace { id: "forest".into(), name: "Forest".into(), tags: vec![], map: None },
+        WorldPlace { id: "forest".into(), name: "Forest".into(), tags: vec![], map: None, position: None },
     );
     snap.world.party_node.insert("A".into(), "village".into());
     let mut sim = Sim::new(HostSession::new(snap));

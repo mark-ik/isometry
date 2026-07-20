@@ -332,10 +332,15 @@ const COMPENDIUM_CSS: &str = r#"
 .generator { position: absolute; left: 232px; top: 36px; width: 372px; background-color: #1b1e27; border: 1px solid #2c3347; border-radius: 4px; padding: 10px 10px 12px; z-index: 501; box-shadow: 0 8px 28px rgba(0,0,0,0.55); }
 .governance { position: absolute; left: 232px; top: 36px; width: 396px; background-color: #1b1e27; border: 1px solid #2c3347; border-radius: 4px; padding: 10px 10px 12px; z-index: 502; box-shadow: 0 8px 28px rgba(0,0,0,0.55); }
 .overmap { position: absolute; left: 232px; top: 36px; width: 480px; background-color: #1b1e27; border: 1px solid #2c3347; border-radius: 4px; padding: 10px 10px 12px; z-index: 503; box-shadow: 0 8px 28px rgba(0,0,0,0.55); }
-.overmap-canvas { margin: 8px 0; background-color: #12151d; border: 1px solid #2c3347; border-radius: 4px; }
-.overmap-node { color: #cfd3dd; font-size: 13px; cursor: pointer; white-space: nowrap; padding: 1px 4px; }
-.overmap-node:hover { color: #e8ebf2; }
-.overmap-here { color: #9fd48a; font-weight: bold; }
+.overmap-graph { margin: 8px 0; }
+.overmap-labels { position: absolute; left: 0; top: 0; pointer-events: none; }
+.overmap-label { position: absolute; font-size: 12px; color: #cfd3dd; white-space: nowrap; transform: translate(9px, -8px); }
+.overmap-label-here { color: #9fd48a; font-weight: bold; }
+.overmap-label-hover { color: #e8ebf2; }
+.graph-canvas-swatch { background-color: #12151d; border: 1px solid #2c3347; border-radius: 4px; }
+.graph-canvas-swatch-node { background-color: transparent; border: 0; border-radius: 999px; cursor: pointer; padding: 0; }
+.graph-canvas-swatch-node:focus-visible { outline: 1px solid #9fd48a; outline-offset: 1px; }
+.graph-canvas-swatch-expand { display: none; }
 .overmap-controls { display: flex; gap: 6px; margin-top: 8px; }
 .generator-proposal { color: #e8ebf2; font-size: 14px; font-weight: bold; margin: 10px 0; }
 .governance-row { padding: 8px; border-top: 1px solid #2c3347; cursor: pointer; }

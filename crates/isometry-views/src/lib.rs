@@ -23,6 +23,7 @@ mod widgets;
 
 pub use board::{board_root, UiChild};
 pub use demo::{demo_map, synth_map};
+pub use overmap::{overmap_swatch, OvermapNodeKind, OVERMAP_CANVAS, OVERMAP_LEAF_KEY};
 pub use state::{
     ActionRow, CompendiumTab, EditMode, FactionMoveRow, FogLevel, GenerationRequest,
     GovernanceBindingRow, GovernanceConflict, GovernanceResolutionRequest, InitiativeMode,

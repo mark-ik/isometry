@@ -491,6 +491,10 @@ pub struct UiState {
     /// literacy and, on a pass, reveals the places just beyond the known ones -- a
     /// dull-witted party learns nothing.
     pub overmap_read_request: bool,
+    /// The overmap node the pointer is over, if any. The host drives it from
+    /// hover enter/leave; the painted graph leaf lifts the hovered node so the
+    /// place under the cursor stands out before it is clicked.
+    pub overmap_hover: Option<String>,
     /// Host-fed competing-binding projection and one-shot resolution request.
     /// The view never reads Moot stores or signs campaign operations.
     pub governance_conflict: Option<GovernanceConflict>,
@@ -611,6 +615,7 @@ impl UiState {
             overmap_pace_request: None,
             overmap_stance_request: None,
             overmap_read_request: false,
+            overmap_hover: None,
             generator_open: false,
             generator_preview: None,
             generator_choices: Vec::new(),
@@ -847,6 +852,12 @@ impl UiState {
     /// party that cannot read a map learns nothing.
     pub fn request_map_read(&mut self) {
         self.overmap_read_request = true;
+    }
+
+    /// The pointer entered or left an overmap node (`None` clears). Drives the
+    /// painted graph's hover emphasis; no game state changes.
+    pub fn hover_overmap(&mut self, node: Option<String>) {
+        self.overmap_hover = node;
     }
 
     pub fn open_generator(&mut self) {
