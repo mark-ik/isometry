@@ -32,8 +32,8 @@ serde_json = "1.0"
 # Portable slots/blobs over a host-chosen backend. Isometry uses its redb
 # backend for private desktop campaign state; the future web host can swap
 # the backend without changing campaign data.
-muniment = { git = "https://github.com/mark-ik/muniment.git", branch = "main" }
-codicil = { git = "https://github.com/mark-ik/codicil.git", branch = "main" }
+muniment = { git = "https://github.com/mark-ik/eidetic.git", branch = "main" }
+codicil = { git = "https://github.com/mark-ik/eidetic.git", branch = "main" }
 # Host-neutral actor runtime for background host/session work. The SerVal
 # application owns its state on the winit thread and drains typed updates.
 armillary = { git = "https://github.com/mark-ik/armillary.git", branch = "main" }
@@ -84,7 +84,7 @@ winit = "0.30"
 # workspace tracks the repo. Two sources means two `muniment::Backend` traits and
 # `MunimentStore`'s bounds stop matching, so redirect the registry edge at the
 # same git source: exactly one muniment lands. Track the branch, not a pin.
-muniment = { git = "https://github.com/mark-ik/muniment.git", branch = "main" }
+muniment = { git = "https://github.com/mark-ik/eidetic.git", branch = "main" }
 layout-dom-api = { git = "https://github.com/mark-ik/genet.git", branch = "main", version = "=0.1.0" }
 genet-scripted-dom = { git = "https://github.com/mark-ik/genet.git", branch = "main", version = "=0.1.0" }
 # Only one package in the graph may declare `links = "servo_style_crate"`, so

@@ -126,6 +126,11 @@ struct App {
     /// The leaf-tier paint cache: each registered leaf's last-rendered command
     /// buffer, reused across frames when the leaf and its box are unchanged.
     rendered_leaves: RenderedLeaves,
+    /// The overmap swatch the registered leaf was last built from. Compared per
+    /// frame while the surface is open so the leaf is re-registered (and thus
+    /// repainted) only when the model actually changed; also the "any leaf is
+    /// live" gate for the per-frame leaf-box walk.
+    last_overmap_swatch: Option<cambium::GraphCanvasSwatch<String, isometry_views::OvermapNodeKind>>,
     /// Origin of the CSS animation clock. `tick_animations` takes seconds
     /// since an arbitrary but monotonic zero; the process start is that zero.
     clock: Instant,
@@ -415,32 +420,49 @@ impl App {
                 let _ = layout.tick_animations(&*dom_ref, now_s);
             }
             // Register (or clear) the overmap's painted graph leaf so the view's
-            // `<custom-leaf>` gets nodes + edges. Rebuilt from world state each
-            // frame it is open; a fresh `GraphCanvas` is born dirty, so the
-            // leaf cache repaints it. Closed -> removed, so it stops painting.
-            match isometry_views::overmap_swatch(runner.state()) {
-                Some(swatch) if runner.state().overmap_open => {
-                    self.leaves.insert(
-                        isometry_views::OVERMAP_LEAF_KEY,
-                        Box::new(swatch.paint_leaf(overmap_node_color)),
-                    );
+            // `<custom-leaf>` gets nodes + edges. The swatch is only *built*
+            // while the surface is open (building it projects the world and runs
+            // the force layout -- never pay that on an ordinary board frame), and
+            // the leaf is only *re-registered* when the swatch model changed: a
+            // fresh `GraphCanvas` is born dirty, so an unconditional insert would
+            // defeat the leaf-tier retention gate and repaint every frame.
+            if runner.state().overmap_open {
+                match isometry_views::overmap_swatch(runner.state()) {
+                    Some(swatch) => {
+                        if self.last_overmap_swatch.as_ref() != Some(&swatch) {
+                            self.leaves.insert(
+                                isometry_views::OVERMAP_LEAF_KEY,
+                                Box::new(swatch.paint_leaf(overmap_node_color)),
+                            );
+                            self.last_overmap_swatch = Some(swatch);
+                        }
+                    }
+                    None => {
+                        self.leaves.remove(&isometry_views::OVERMAP_LEAF_KEY);
+                        self.last_overmap_swatch = None;
+                    }
                 }
-                _ => {
-                    self.leaves.remove(&isometry_views::OVERMAP_LEAF_KEY);
-                }
+            } else if self.last_overmap_swatch.is_some() {
+                self.leaves.remove(&isometry_views::OVERMAP_LEAF_KEY);
+                self.rendered_leaves.retain_keys(|_| false);
+                self.last_overmap_swatch = None;
             }
 
             let layout = self.layout.as_ref().expect("layout just ensured");
             // Repaint each laid-out leaf whose box appears this frame, sizing it
-            // from the completed layout, into the retained cache.
-            let sizes: std::collections::HashMap<u64, (f32, f32)> =
-                layout.custom_leaf_boxes().into_iter().collect();
-            self.leaves.render_into(
-                |key| {
-                    sizes.get(&key).map(|&(width, height)| Size { width, height })
-                },
-                &mut self.rendered_leaves,
-            );
+            // from the completed layout, into the retained cache. Skipped whole
+            // when no leaf is live: `custom_leaf_boxes` walks the box tree, and
+            // an ordinary board frame should not pay that walk for nothing.
+            if self.last_overmap_swatch.is_some() {
+                let sizes: std::collections::HashMap<u64, (f32, f32)> =
+                    layout.custom_leaf_boxes().into_iter().collect();
+                self.leaves.render_into(
+                    |key| {
+                        sizes.get(&key).map(|&(width, height)| Size { width, height })
+                    },
+                    &mut self.rendered_leaves,
+                );
+            }
             let source = RenderedLeafSource(&self.rendered_leaves);
             let list = layout.emit_paint_list_with_leaves(
                 &*dom_ref,
@@ -633,6 +655,27 @@ impl App {
     /// Consume one-shot state requests (save/load) and repaint: the
     /// tail of every dispatch.
     fn after_dispatch(&mut self) {
+        // Cheap flags first: this tail runs after every dispatch, and the save
+        // path below starts by cloning the journal. An ordinary click asks for
+        // neither and must not pay for either.
+        let wants_save_or_load = self
+            .runner
+            .as_ref()
+            .is_some_and(|r| r.state().save_requested || r.state().load_requested);
+        if !wants_save_or_load {
+            if let Some(window) = self.window.as_ref() {
+                window.request_redraw();
+            }
+            self.pump_sheets();
+            self.pump_generators();
+            self.pump_storylets();
+            self.pump_faction_turn();
+            self.pump_overmap();
+            self.pump_overmap_orders();
+            self.pump_overmap_read();
+            self.pump_net();
+            return;
+        }
         let mut save: Option<(std::path::PathBuf, String, String, GameSnapshot)> = None;
         let mut load: Option<(std::path::PathBuf, String)> = None;
         let journal = self.journal.clone();
@@ -1598,16 +1641,22 @@ impl App {
     /// client's `open_storylets`/`play_storylet` are gated on `can_edit_inventory`
     /// upstream, so this never runs for a joined player.
     fn pump_storylets(&mut self) {
-        let (open, request, world, can_edit) = match self.runner.as_ref() {
+        // Cheap flags first: with the surface closed and no request pending
+        // (every ordinary dispatch), this returns before touching the world.
+        let (open, request, can_edit) = match self.runner.as_ref() {
             Some(r) => {
                 let s = r.state();
-                (s.storylet_open, s.storylet_request.clone(), s.world.clone(), s.can_edit_inventory)
+                (s.storylet_open, s.storylet_request.clone(), s.can_edit_inventory)
             }
             None => return,
         };
         if !can_edit || (!open && request.is_none()) {
             return;
         }
+        let world = match self.runner.as_ref() {
+            Some(r) => r.state().world.clone(),
+            None => return,
+        };
 
         // Refresh the rows while the surface is open: which storylets are
         // playable now (requirements met, roles cast) and which are still locked.
@@ -1731,7 +1780,9 @@ impl App {
     /// hosts (net_mode Remote), so the commit routes through the bridge; solo it
     /// runs a local HostSession. Either way the moves land as ordinary events.
     fn pump_faction_turn(&mut self) {
-        let (roll, commit, world, tick, can_edit, remote) = match self.runner.as_ref() {
+        // Cheap flags first: neither a roll nor a commit pending is the ordinary
+        // case for every dispatch, and it must not cost a world clone.
+        let (roll, commit, tick, can_edit, remote) = match self.runner.as_ref() {
             Some(r) => {
                 let s = r.state();
                 let tick = s
@@ -1743,7 +1794,6 @@ impl App {
                 (
                     s.downtime_roll_request,
                     s.downtime_commit_request,
-                    s.world.clone(),
                     tick,
                     s.can_edit_inventory,
                     s.net_mode == NetMode::Remote,
@@ -1751,9 +1801,13 @@ impl App {
             }
             None => return,
         };
-        if !can_edit {
+        if !can_edit || (!roll && !commit) {
             return;
         }
+        let world = match self.runner.as_ref() {
+            Some(r) => r.state().world.clone(),
+            None => return,
+        };
 
         // Roll a fresh tick: draw a move per faction (proportional to banked
         // time) and hand the view display rows, keeping the real moves aligned.
@@ -1902,12 +1956,13 @@ impl App {
     /// and emits a `TravelResolved` verdict every peer applies. If the party is
     /// not on the overmap yet, the first click simply places it there.
     fn pump_overmap(&mut self) {
-        let (request, world, remote) = match self.runner.as_ref() {
+        // Cheap flag first: this pump runs after every dispatch, and cloning the
+        // world to then discover there is no request would tax every click.
+        let (request, remote) = match self.runner.as_ref() {
             Some(r) => {
                 let s = r.state();
                 (
                     s.overmap_travel_request.clone(),
-                    s.world.clone(),
                     s.net_mode == NetMode::Remote,
                 )
             }
@@ -1915,6 +1970,10 @@ impl App {
         };
         let Some(to) = request else {
             return;
+        };
+        let world = match self.runner.as_ref() {
+            Some(r) => r.state().world.clone(),
+            None => return,
         };
         if let Some(runner) = self.runner.as_mut() {
             runner.update(|ui| ui.overmap_travel_request = None);
@@ -2062,20 +2121,21 @@ impl App {
     /// reveal the places just beyond the known frontier, so a lettered party sees
     /// further than it has walked and a dull-witted one learns nothing.
     fn pump_overmap_read(&mut self) {
-        let (read_req, world, remote) = match self.runner.as_ref() {
+        // Cheap flag first; the world clone below is only for a live request.
+        let (read_req, remote) = match self.runner.as_ref() {
             Some(r) => {
                 let s = r.state();
-                (
-                    s.overmap_read_request,
-                    s.world.clone(),
-                    s.net_mode == NetMode::Remote,
-                )
+                (s.overmap_read_request, s.net_mode == NetMode::Remote)
             }
             None => return,
         };
         if !read_req {
             return;
         }
+        let world = match self.runner.as_ref() {
+            Some(r) => r.state().world.clone(),
+            None => return,
+        };
         if let Some(runner) = self.runner.as_mut() {
             runner.update(|ui| ui.overmap_read_request = false);
         }
@@ -3756,6 +3816,7 @@ fn main() {
         layout_size: (0.0, 0.0),
         leaves: LeafRegistry::new(),
         rendered_leaves: RenderedLeaves::new(),
+        last_overmap_swatch: None,
         clock: Instant::now(),
         // A fixed seed keeps a solo session reproducible and makes the headed
         // verification deterministic. A real table seeds this per session.
