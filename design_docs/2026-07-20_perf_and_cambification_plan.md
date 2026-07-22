@@ -106,24 +106,22 @@ Already adopted: `data_grid` (compendium), `summary_body` (downtime),
 | `overlay_panel` | keep the layout, adopt `overlay_surface` semantics | The catalog surface owns Escape/outside-click/roles; isometry surfaces currently hand-roll or lack dismissal. |
 | Hand-copied `.graph-canvas-swatch*` CSS in `theme.rs` | `GRAPH_CANVAS_SWATCH_CSS` | Adopt the exported structural constant; keep only palette overrides host-side. |
 
-### Promotion lane: isometry work the catalog should own
+### Shared projection and catalog lanes
 
-1. **`Overmap::layout` (deterministic force-directed layout) -> sprigging.**
-   Every `graph_canvas_swatch` consumer must currently invent node positions;
-   the component's contract says "normalized 0..1" and stops there. The FR
-   relaxation here is deterministic by construction (circle seed, no clock, no
-   RNG), which is exactly the library-grade shape. Mere's graph canvas is the
-   second consumer waiting.
-2. **Visible node labels for `graph_canvas_swatch`.** The component carries
-   names as aria-labels only; isometry's label overlay re-implements the
-   component's own projection to place visible text. An opt-in labels layer
-   belongs in the component (projection alignment guaranteed, no duplicate).
+1. **`Overmap::layout` moves through Scenograph P4, not Sprigging.** The
+   2026-07-21 projection proofs plan makes Isometry the second portable-scene
+   consumer and explicitly deletes this hand-rolled force layout. Sprigging
+   remains the retained paint-leaf layer; it does not grow a competing placement
+   engine.
+2. **Visible node labels landed in `graph_canvas_swatch`.** Cambium 0.3.0 ships
+   `with_node_labels` and `with_expand`; Isometry can now delete its duplicate
+   label projection and the hidden no-op Expand route as a local adoption slice.
 
-**Constraint:** isometry's committed manifest pins published `cambium = 0.2.0`
-and `sprigging = 0.1.0` (local checkouts only override via the gitignored
-`.cargo/config.toml`). Promotions therefore land in cambium first, release,
-then isometry bumps and adopts. Never commit an isometry build that needs
-unpublished catalog API.
+**Constraint:** isometry's committed manifest pins published `cambium = 0.3.0`
+and `sprigging = 0.2.0` (local checkouts only override via the gitignored
+`.cargo/config.toml`). The release and Isometry bump landed 2026-07-22. Future
+catalog promotions follow the same order: land upstream, release, then adopt.
+Never commit an Isometry build that needs unpublished catalog API.
 
 ### File-size note
 
@@ -142,5 +140,14 @@ the pump family; the selftest family.
 - [ ] Obviation lane: adopt `segmented_control`, `tab_bar`, `command_menu`,
       `caret_text_field`, `GRAPH_CANVAS_SWATCH_CSS` (each its own small PR-
       sized change, in that order of value).
-- [ ] Promotion lane: FR layout + swatch labels proposed to cambium; adopt
-      here after the next cambium/sprigging release.
+- [ ] Projection lane: consume the Scenograph scene contract in P4 and delete
+      `Overmap::layout`.
+- [ ] Catalog lane: adopt Cambium 0.3.0 node labels and remove Isometry's
+      duplicate label projection and no-op Expand route.
+
+## Progress
+
+- **2026-07-22:** Sprigging 0.2.0, Cambium 0.3.0, and Cambium Nematic 0.3.0
+  published; Isometry bumped to the published Cambium/Sprigging pair. Cambium
+  Winit 0.3.0 remains source-only until `genet-layout` has a standalone
+  crates.io release.
