@@ -2801,7 +2801,6 @@ dependencies = [
 [[package]]
 name = "graphshell-endpoint"
 version = "0.0.1"
-source = "git+https://github.com/mark-ik/graphshell.git?branch=main#bdbe1f046ebe55581981437724f06d5f1d3b6278"
 dependencies = [
  "graphshell-protocol",
 ]
@@ -2809,7 +2808,6 @@ dependencies = [
 [[package]]
 name = "graphshell-protocol"
 version = "0.0.1"
-source = "git+https://github.com/mark-ik/graphshell.git?branch=main#bdbe1f046ebe55581981437724f06d5f1d3b6278"
 dependencies = [
  "blake3",
  "sceno",
@@ -2820,7 +2818,6 @@ dependencies = [
 [[package]]
 name = "graphshell-stdio"
 version = "0.0.1"
-source = "git+https://github.com/mark-ik/graphshell.git?branch=main#bdbe1f046ebe55581981437724f06d5f1d3b6278"
 dependencies = [
  "graphshell-endpoint",
  "graphshell-protocol",

@@ -100,7 +100,24 @@ pub fn overmap_score(overmap: &Overmap) -> Score {
 /// adapter, replacing the old `Overmap::layout` solver rather than relocating it
 /// into the campaign model.
 pub fn overmap_positions(overmap: &Overmap) -> BTreeMap<String, (f32, f32)> {
-    normalize_for_swatch(&scenomise::solve(&overmap_score(overmap)))
+    overmap_positions_relaxed(overmap, None)
+}
+
+/// The same overmap, optionally loosened by the shared relaxation before it is
+/// normalized: sites push apart, routes pull toward their rest length, and the
+/// arrangement keeps drawing them back toward the slots it chose. Physics is a
+/// capability of any graph surface, not of the one canvas that owns a rigid-body
+/// world — a swatch gets the same reading at swatch cost, and `None` keeps the
+/// purely analytic placement.
+pub fn overmap_positions_relaxed(
+    overmap: &Overmap,
+    relaxation: Option<scenomise::Relaxation>,
+) -> BTreeMap<String, (f32, f32)> {
+    let mut scene = scenomise::solve(&overmap_score(overmap));
+    if let Some(settings) = relaxation {
+        scenomise::relax(&mut scene, &settings);
+    }
+    normalize_for_swatch(&scene)
 }
 
 fn normalize_for_swatch(scene: &sceno::Scene) -> BTreeMap<String, (f32, f32)> {
@@ -413,4 +430,51 @@ pub fn overmap_overlay(ui: &UiState) -> Option<UiChild> {
         actions,
         body,
     ))
+}
+
+#[cfg(test)]
+mod relax_tests {
+    use super::*;
+    use isometry_core::OvermapNode;
+
+    fn node(id: &str, at: (i32, i32)) -> OvermapNode {
+        OvermapNode {
+            id: id.to_owned(),
+            name: id.to_owned(),
+            at,
+            site: None,
+        }
+    }
+
+    /// A swatch can run physics. The shared relaxation loosens the overmap in
+    /// place -- no rigid-body world at swatch scale -- and placement changes
+    /// while membership and the normalized viewport fit do not.
+    #[test]
+    fn a_relaxed_overmap_still_places_every_site() {
+        let mut overmap = Overmap::new("shore");
+        overmap.nodes = vec![
+            node("west", (0, 4)),
+            node("east", (10, 0)),
+            node("north", (5, 9)),
+        ];
+        let analytic = overmap_positions(&overmap);
+        let relaxed = overmap_positions_relaxed(&overmap, Some(scenomise::Relaxation::default()));
+
+        assert_eq!(
+            analytic.keys().collect::<Vec<_>>(),
+            relaxed.keys().collect::<Vec<_>>(),
+            "relaxation changes placement, never membership"
+        );
+        for (_, (x, y)) in &relaxed {
+            assert!(
+                (0.0..=1.0).contains(x) && (0.0..=1.0).contains(y),
+                "a relaxed site still fits the swatch viewport"
+            );
+        }
+        assert_eq!(
+            relaxed,
+            overmap_positions_relaxed(&overmap, Some(scenomise::Relaxation::default())),
+            "swatch physics is deterministic"
+        );
+    }
 }
