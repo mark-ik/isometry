@@ -8,10 +8,11 @@
 
 use std::collections::HashSet;
 
+use cambium::{clickable, el, text, AnyView, GenetCtx, GenetElement};
 use isometry_core::{depth_key, path_to, MapDocument, TileCoord, TileKindId, Token};
-use cambium::{AnyView, GenetCtx, GenetElement, clickable, el, text};
 
 use crate::panel::side_panel;
+use crate::projection::tile_board_cells;
 use crate::state::{EditMode, FogLevel, UiState};
 
 pub type UiChild = Box<dyn AnyView<UiState, (), GenetCtx, GenetElement>>;
@@ -77,6 +78,10 @@ fn in_view(ui: &UiState, at: TileCoord) -> bool {
 /// tints lighter still.
 fn ground_tiles(ui: &UiState) -> Vec<UiChild> {
     let map = &ui.map;
+    // The portable board scene decides which authored tile instances are live;
+    // the local isometric painter keeps responsibility for elevation, fog, and
+    // DOM interaction.
+    let projected_tiles = tile_board_cells(map);
     let playing = ui.mode == EditMode::Play;
     let path: HashSet<TileCoord> = if playing {
         ui.hover_tile
@@ -94,6 +99,9 @@ fn ground_tiles(ui: &UiState) -> Vec<UiChild> {
             continue;
         }
         let at: TileCoord = (col as i32, row as i32);
+        if !projected_tiles.contains(&at) {
+            continue;
+        }
         if !in_view(ui, at) {
             continue; // outside the pane: windowing skips the emit
         }

@@ -9,14 +9,23 @@
 //! the time, and moves the party (`resolve_travel` -> `TravelResolved`), so the
 //! view never decides a trip's outcome.
 //!
-//! The nodes are laid out on a circle (the projection carries no positions yet;
-//! an authored or force-directed layout is a later refinement). The leaf key and
-//! the swatch model are shared with the host through [`overmap_swatch`], so the
-//! painted leaf and these hit targets project through one identical layout.
+//! Isometry adapts the campaign's pointcrawl to Scenograph's portable score and
+//! realizes it with Scenomise. The final unit-box fit remains here because it is
+//! a property of Cambium's swatch viewport, not of the score or scene. The leaf
+//! key and the swatch model are shared with the host through [`overmap_swatch`],
+//! so the painted leaf and these hit targets project through one identical
+//! layout.
+
+use std::collections::BTreeMap;
 
 use cambium::{
-    GraphCanvasEdge, GraphCanvasNode, GraphCanvasSubgraph, GraphCanvasSwatch, clickable, el,
-    graph_canvas_swatch, text,
+    clickable, el, graph_canvas_swatch, text, GraphCanvasEdge, GraphCanvasNode,
+    GraphCanvasSubgraph, GraphCanvasSwatch,
+};
+use isometry_core::Overmap;
+use sceno::{
+    Arrangement, Footprint, Geographic, Placement, Representation, Score, ScoreItem, SourceRef,
+    Spiral, Vec2,
 };
 
 use crate::board::UiChild;
@@ -42,6 +51,93 @@ pub enum OvermapNodeKind {
 /// box) and the host (the leaf's intrinsic size), so the two never disagree.
 pub const OVERMAP_CANVAS: (u32, u32) = (440, 300);
 
+/// The adapter id persisted in a score's opaque source refs. It identifies a
+/// boundary, not an Isometry type in the portable scene schema.
+pub const ISOMETRY_OVERMAP_ADAPTER: &str = "isometry.overmap";
+
+/// Adapt a pointcrawl to the shared score contract.
+///
+/// Authored coordinates choose the geographic arrangement. Uniform default
+/// coordinates instead choose the generic spiral: the campaign owns the choice
+/// of whether locations were authored, while Scenomise owns the analytic layout.
+pub fn overmap_score(overmap: &Overmap) -> Score {
+    let authored = overmap
+        .nodes
+        .first()
+        .is_some_and(|first| overmap.nodes.iter().any(|node| node.at != first.at));
+    let arrangement = if authored {
+        Arrangement::Geographic(Geographic {
+            invert_y: false,
+            ..Geographic::default()
+        })
+    } else {
+        Arrangement::Spiral(Spiral::default())
+    };
+    let mut score = Score::new(arrangement);
+    score.items = overmap
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(ordinal, node)| ScoreItem {
+            source: SourceRef::new(ISOMETRY_OVERMAP_ADAPTER, &node.id),
+            ordinal: ordinal as u32,
+            footprint: Footprint::Circle { radius: 6.0 },
+            representation: Representation::Glyph,
+            placement: if authored {
+                Placement::Coordinate(Vec2::new(node.at.0 as f32, node.at.1 as f32))
+            } else {
+                Placement::Ordinal
+            },
+            layer: 0,
+            visible: true,
+        })
+        .collect();
+    score
+}
+
+/// Realize an overmap score, then fit the scene's product-neutral coordinates
+/// into Cambium's normalized swatch viewport. This is deliberately a view
+/// adapter, replacing the old `Overmap::layout` solver rather than relocating it
+/// into the campaign model.
+pub fn overmap_positions(overmap: &Overmap) -> BTreeMap<String, (f32, f32)> {
+    normalize_for_swatch(&scenomise::solve(&overmap_score(overmap)))
+}
+
+fn normalize_for_swatch(scene: &sceno::Scene) -> BTreeMap<String, (f32, f32)> {
+    const MARGIN: f32 = 0.08;
+    let raw: Vec<_> = scene
+        .items
+        .iter()
+        .filter_map(|item| {
+            scene
+                .sources
+                .get(item.source.0 as usize)
+                .map(|source| (source.id.clone(), item.transform.translate))
+        })
+        .collect();
+    if raw.is_empty() {
+        return BTreeMap::new();
+    }
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    for (_, point) in &raw {
+        min_x = min_x.min(point.x);
+        min_y = min_y.min(point.y);
+        max_x = max_x.max(point.x);
+        max_y = max_y.max(point.y);
+    }
+    let span = 1.0 - 2.0 * MARGIN;
+    let fit = |value: f32, low: f32, high: f32| {
+        if high - low < 1e-4 {
+            0.5
+        } else {
+            MARGIN + (value - low) / (high - low) * span
+        }
+    };
+    raw.into_iter()
+        .map(|(id, point)| (id, (fit(point.x, min_x, max_x), fit(point.y, min_y, max_y))))
+        .collect()
+}
+
 /// Build the graph-canvas swatch for the party's discovered overmap. Both the
 /// view (native hit targets + the `custom_leaf`) and the host (the registered
 /// `paint_leaf`) call this, so they agree on node identity, order, and layout.
@@ -56,9 +152,9 @@ pub fn overmap_swatch(ui: &UiState) -> Option<GraphCanvasSwatch<String, OvermapN
     }
     let here = ui.world.party_at(party).map(str::to_owned);
 
-    // Node positions: authored coordinates when the world sets them, else a
-    // deterministic force-directed relaxation from the routes (`Overmap::layout`).
-    let placed = overmap.layout();
+    // Shared score -> scene realization; the final viewport fit is local to the
+    // Cambium swatch and does not alter campaign or scene data.
+    let placed = overmap_positions(&overmap);
     let nodes: Vec<GraphCanvasNode<String, OvermapNodeKind>> = overmap
         .nodes
         .iter()
@@ -98,6 +194,51 @@ pub fn overmap_swatch(ui: &UiState) -> Option<GraphCanvasSwatch<String, OvermapN
     swatch.selected = here;
     swatch.hovered = ui.overmap_hover.clone();
     Some(swatch)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use isometry_core::OvermapNode;
+
+    fn node(id: &str, at: (i32, i32)) -> OvermapNode {
+        OvermapNode {
+            id: id.to_owned(),
+            name: id.to_owned(),
+            at,
+            site: None,
+        }
+    }
+
+    #[test]
+    fn authored_overmap_uses_geographic_score_and_viewport_fit() {
+        let mut overmap = Overmap::new("shore");
+        overmap.nodes = vec![node("west", (0, 4)), node("east", (10, 0))];
+        let score = overmap_score(&overmap);
+        assert!(matches!(score.arrangement, Arrangement::Geographic(_)));
+        let positions = overmap_positions(&overmap);
+        assert_eq!(positions["west"], (0.08, 0.92));
+        assert_eq!(positions["east"], (0.92, 0.08));
+    }
+
+    #[test]
+    fn uniform_overmap_uses_portable_spiral_and_product_free_types() {
+        let mut overmap = Overmap::new("unplaced");
+        overmap.nodes = vec![node("a", (0, 0)), node("b", (0, 0)), node("c", (0, 0))];
+        let score = overmap_score(&overmap);
+        assert!(matches!(score.arrangement, Arrangement::Spiral(_)));
+        let scene = scenomise::solve(&score);
+        assert!(std::any::type_name::<Score>().starts_with("sceno::"));
+        assert!(std::any::type_name::<sceno::Scene>().starts_with("sceno::"));
+        let score_json = serde_json::to_string(&score).unwrap();
+        let scene_json = serde_json::to_string(&scene).unwrap();
+        assert_eq!(serde_json::from_str::<Score>(&score_json).unwrap(), score);
+        assert_eq!(
+            serde_json::from_str::<sceno::Scene>(&scene_json).unwrap(),
+            scene
+        );
+        assert_eq!(overmap_positions(&overmap).len(), 3);
+    }
 }
 
 pub fn overmap_overlay(ui: &UiState) -> Option<UiChild> {
@@ -151,10 +292,12 @@ pub fn overmap_overlay(ui: &UiState) -> Option<UiChild> {
                         .map(|n| n.label.clone())
                         .unwrap_or_else(|| id.clone());
                     Box::new(
-                        el::<_, UiState, ()>("div", text(name)).attr("class", class).attr(
-                            "style",
-                            format!("position:absolute; left:{x:.0}px; top:{y:.0}px;"),
-                        ),
+                        el::<_, UiState, ()>("div", text(name))
+                            .attr("class", class)
+                            .attr(
+                                "style",
+                                format!("position:absolute; left:{x:.0}px; top:{y:.0}px;"),
+                            ),
                     ) as UiChild
                 })
                 .collect();
@@ -173,10 +316,7 @@ pub fn overmap_overlay(ui: &UiState) -> Option<UiChild> {
                         ),
                         el::<_, UiState, ()>("div", labels)
                             .attr("class", "overmap-labels")
-                            .attr(
-                                "style",
-                                format!("width:{cw}px; height:{ch}px;"),
-                            ),
+                            .attr("style", format!("width:{cw}px; height:{ch}px;")),
                     ),
                 )
                 .attr("class", "overmap-graph")
@@ -188,8 +328,11 @@ pub fn overmap_overlay(ui: &UiState) -> Option<UiChild> {
         }
         None => {
             body.push(Box::new(
-                el("div", text("no map yet — travel or ask around to find your way"))
-                    .attr("class", "side-hint"),
+                el(
+                    "div",
+                    text("no map yet — travel or ask around to find your way"),
+                )
+                .attr("class", "side-hint"),
             ));
             return Some(crate::widgets::overlay_panel(
                 "overmap",
@@ -262,9 +405,7 @@ pub fn overmap_overlay(ui: &UiState) -> Option<UiChild> {
         Some(node) => format!("here: {} — click a place to travel", name_of(node)),
         None => "the party is not on the overmap yet".to_owned(),
     };
-    body.push(Box::new(
-        el("div", text(hint)).attr("class", "side-hint"),
-    ));
+    body.push(Box::new(el("div", text(hint)).attr("class", "side-hint")));
 
     Some(crate::widgets::overlay_panel(
         "overmap",

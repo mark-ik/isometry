@@ -55,6 +55,12 @@ p2panda-store = { version = "0.7.0", default-features = false }
 p2panda-sync = "0.7.0"
 thiserror = "1"
 
+# Product-free projection score and analytic solvers. Isometry owns the
+# campaign-to-score adapter in `isometry-views`; the shared crates carry only
+# opaque source refs, measured footprints, and scenes.
+sceno = { git = "https://github.com/mark-ik/scenograph.git", branch = "main" }
+scenomise = { git = "https://github.com/mark-ik/scenograph.git", branch = "main" }
+
 # UI: the Genet host stack (I1, the Woodshed pattern). Git deps on the
 # owned repos so any machine resolves; local checkouts override via the
 # gitignored .cargo/config.toml source-specific [patch] entries. Cambium

@@ -15,6 +15,7 @@ mod generator;
 mod governance;
 mod overmap;
 mod panel;
+mod projection;
 mod sheet;
 mod state;
 mod storylet;
@@ -23,7 +24,13 @@ mod widgets;
 
 pub use board::{board_root, UiChild};
 pub use demo::{demo_map, synth_map};
-pub use overmap::{overmap_swatch, OvermapNodeKind, OVERMAP_CANVAS, OVERMAP_LEAF_KEY};
+pub use overmap::{
+    overmap_positions, overmap_score, overmap_swatch, OvermapNodeKind, ISOMETRY_OVERMAP_ADAPTER,
+    OVERMAP_CANVAS, OVERMAP_LEAF_KEY,
+};
+pub use projection::{
+    tile_board_cells, tile_board_scene, tile_board_score, ISOMETRY_TILE_BOARD_ADAPTER,
+};
 pub use state::{
     ActionRow, CompendiumTab, EditMode, FactionMoveRow, FogLevel, GenerationRequest,
     GovernanceBindingRow, GovernanceConflict, GovernanceResolutionRequest, InitiativeMode,
