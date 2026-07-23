@@ -395,8 +395,13 @@ const COMPENDIUM_CSS: &str = r#"
 /// once from [`board_css`]. `background-size: contain` plus a bottom anchor
 /// stands the sprite in the 24x36 token box with its feet at the tile.
 fn voxel_token_css() -> String {
-    use isometry_voxel::{BakeParams, Palette, bake_facing, demo};
-    let p = BakeParams { half_w: 2, cube_h: 2, facings: 4, margin: 2 };
+    use isometry_voxel::{bake_facing, demo, BakeParams, Palette};
+    let p = BakeParams {
+        half_w: 2,
+        cube_h: 2,
+        facings: 4,
+        margin: 2,
+    };
     let (rig, base) = demo::hero();
     // Palette-swap the one rig into per-monster recolours (skin index 0, shirt
     // index 1). Proves recolour across the starter bestiary; per-monster voxel

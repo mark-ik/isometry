@@ -10,7 +10,7 @@
 
 use std::rc::Rc;
 
-use cambium::{GridColumn, GridSpec, clickable, data_grid, el, on_wheel, text};
+use cambium::{clickable, data_grid, el, on_wheel, text, GridColumn, GridSpec};
 
 use crate::board::UiChild;
 use crate::state::{CompendiumTab, ItemRow, MonsterRow, SpellRow, UiState};

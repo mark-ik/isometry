@@ -744,9 +744,14 @@ impl UiState {
             self.status = "storylets are the DM's".to_owned();
             return;
         }
-        let picked = self
-            .selected_storylet()
-            .map(|row| (row.available, row.key.clone(), row.entry.clone(), row.status.clone()));
+        let picked = self.selected_storylet().map(|row| {
+            (
+                row.available,
+                row.key.clone(),
+                row.entry.clone(),
+                row.status.clone(),
+            )
+        });
         match picked {
             Some((true, key, entry, _)) => {
                 self.storylet_request = Some(key);
@@ -1116,9 +1121,8 @@ impl UiState {
     /// block outward from it. Bounds-checked, because placing a token off-map is
     /// rejected (and on a narrow map the block can walk off the edge).
     fn free_spawn_tile(&self) -> TileCoord {
-        let free = |at: TileCoord| {
-            self.map.ground.in_bounds(at.0, at.1) && self.token_at(at).is_none()
-        };
+        let free =
+            |at: TileCoord| self.map.ground.in_bounds(at.0, at.1) && self.token_at(at).is_none();
         let start = self.selected.filter(|&s| free(s)).unwrap_or((2, 2));
         for d in 0..64 {
             let at = (start.0 + (d % 8), start.1 + (d / 8));
@@ -1126,7 +1130,10 @@ impl UiState {
                 return at;
             }
         }
-        let (w, h) = (self.map.ground.width() as i32, self.map.ground.height() as i32);
+        let (w, h) = (
+            self.map.ground.width() as i32,
+            self.map.ground.height() as i32,
+        );
         for row in 0..h {
             for col in 0..w {
                 if free((col, row)) {
@@ -1299,8 +1306,8 @@ impl UiState {
                 self.turns = snap.turns;
                 self.inventories = snap.inventories;
                 self.campaign_maps = snap.maps;
-        self.clocks = snap.clocks;
-        self.party_cap = snap.party_cap;
+                self.clocks = snap.clocks;
+                self.party_cap = snap.party_cap;
                 self.active_map = snap.active_map;
                 if switched {
                     self.selected_token = None;
@@ -1476,7 +1483,10 @@ impl UiState {
             return None;
         }
         let by = |pred: &dyn Fn(&MonsterRow) -> bool| {
-            self.bestiary.iter().find(|m| pred(m)).map(|m| m.key.clone())
+            self.bestiary
+                .iter()
+                .find(|m| pred(m))
+                .map(|m| m.key.clone())
         };
         by(&|m| m.key.to_ascii_lowercase() == q)
             .or_else(|| by(&|m| m.name.to_ascii_lowercase() == q))
@@ -1500,10 +1510,12 @@ impl UiState {
         // Match by the id's trailing segment (`demo:npc` -> `npc`), then by a
         // substring of the id or the friendly name.
         let idx = self.generator_choices.iter().position(|c| {
-            let suffix = c.id.rsplit(':').next().unwrap_or(&c.id).to_ascii_lowercase();
-            suffix == k
-                || suffix.contains(&k)
-                || c.name.to_ascii_lowercase().contains(&k)
+            let suffix =
+                c.id.rsplit(':')
+                    .next()
+                    .unwrap_or(&c.id)
+                    .to_ascii_lowercase();
+            suffix == k || suffix.contains(&k) || c.name.to_ascii_lowercase().contains(&k)
         });
         match idx {
             Some(i) => {
@@ -1556,7 +1568,10 @@ impl UiState {
         self.status = if total == 0 {
             format!("no matches for '{query}'")
         } else {
-            format!("{total} match{} for '{query}'", if total == 1 { "" } else { "es" })
+            format!(
+                "{total} match{} for '{query}'",
+                if total == 1 { "" } else { "es" }
+            )
         };
     }
 
@@ -1597,7 +1612,10 @@ impl UiState {
         if text.is_empty() {
             return;
         }
-        let target = self.whisper_target.clone().unwrap_or_else(|| "table".to_owned());
+        let target = self
+            .whisper_target
+            .clone()
+            .unwrap_or_else(|| "table".to_owned());
         self.messages.push(format!("to {target}: {text}"));
         self.whisper_outbox.push((target, text));
         self.status = "whisper sent".to_owned();
@@ -1638,7 +1656,13 @@ impl UiState {
             return std::collections::HashSet::new();
         };
         let toward = self.hover_tile.unwrap_or(anchor);
-        template_tiles(&self.map, anchor, self.template_kind, self.template_size, toward)
+        template_tiles(
+            &self.map,
+            anchor,
+            self.template_kind,
+            self.template_size,
+            toward,
+        )
     }
 
     /// The measured distance from the anchor to the hovered tile, if both
@@ -2096,7 +2120,9 @@ impl UiState {
 
     pub fn recompute_reach(&mut self) {
         self.reach.clear();
-        let Some(id) = self.selected_token else { return };
+        let Some(id) = self.selected_token else {
+            return;
+        };
         let Some(token) = self.map.token(id) else {
             self.selected_token = None;
             return;
@@ -2104,9 +2130,7 @@ impl UiState {
         if !self.may_move(id) {
             return;
         }
-        let (budget, _) = self
-            .map
-            .effective_mobility(id, (MOVE_BUDGET, SIGHT_RADIUS));
+        let (budget, _) = self.map.effective_mobility(id, (MOVE_BUDGET, SIGHT_RADIUS));
         let rules = MoveRules {
             budget,
             step_up: 1,
@@ -2176,7 +2200,9 @@ impl UiState {
     /// Rotate the selected token's facing clockwise (undoable locally,
     /// replicated in a session).
     pub fn rotate_selected(&mut self) {
-        let Some(id) = self.selected_token else { return };
+        let Some(id) = self.selected_token else {
+            return;
+        };
         let Some(t) = self.map.token(id) else { return };
         let next = match t.facing {
             Facing::North => Facing::East,
@@ -2184,7 +2210,10 @@ impl UiState {
             Facing::South => Facing::West,
             Facing::West => Facing::North,
         };
-        if self.net_emit(GameEvent::Map(SessionEvent::TokenFaced { id, facing: next })) {
+        if self.net_emit(GameEvent::Map(SessionEvent::TokenFaced {
+            id,
+            facing: next,
+        })) {
             return;
         }
         self.apply_step(vec![SessionEvent::TokenFaced { id, facing: next }]);
@@ -2243,11 +2272,7 @@ impl UiState {
                 } else if let Some(id) = self.selected_token {
                     if self.reach.contains_key(&at) {
                         let path = isometry_core::path_to(&self.reach, at);
-                        let from = self
-                            .map
-                            .token(id)
-                            .map(|t| t.at)
-                            .unwrap_or(at);
+                        let from = self.map.token(id).map(|t| t.at).unwrap_or(at);
                         let last_from = path
                             .len()
                             .checked_sub(2)
@@ -2539,7 +2564,10 @@ mod tests {
             beat_seq: 0,
         };
         ui.apply_snapshot(snap);
-        assert_eq!(ui.map.token(TokenId(1)).unwrap().at, (before.0 + 1, before.1));
+        assert_eq!(
+            ui.map.token(TokenId(1)).unwrap().at,
+            (before.0 + 1, before.1)
+        );
         assert_eq!(ui.inventories, inventories);
     }
 
@@ -2881,10 +2909,15 @@ mod tests {
         ui.spawn_query("goblin");
 
         // The local map is untouched; the placement is queued for the authority.
-        assert_eq!(ui.map.tokens.len(), before, "no local mutation in a session");
-        let placed = ui.net_outbox.iter().any(|e| {
-            matches!(e, GameEvent::Map(SessionEvent::TokenPlaced(_)))
-        });
+        assert_eq!(
+            ui.map.tokens.len(),
+            before,
+            "no local mutation in a session"
+        );
+        let placed = ui
+            .net_outbox
+            .iter()
+            .any(|e| matches!(e, GameEvent::Map(SessionEvent::TokenPlaced(_))));
         assert!(placed, "the spawn must replicate as an authoritative event");
         // And the stat-block bind is queued for the same id.
         assert!(ui.spawn_sheet_request.is_some());
@@ -2896,7 +2929,10 @@ mod tests {
         // A joined player cannot open or play storylets (matching reads secrets).
         ui.can_edit_inventory = false;
         ui.open_storylets();
-        assert!(!ui.storylet_open, "a client must not open the storylet surface");
+        assert!(
+            !ui.storylet_open,
+            "a client must not open the storylet surface"
+        );
 
         // The DM can. A locked storylet cannot be played; a ready one arms a
         // request the host will commit.
@@ -2922,7 +2958,10 @@ mod tests {
 
         ui.storylet_selected = 0; // the locked one
         ui.play_storylet();
-        assert_eq!(ui.storylet_request, None, "a locked storylet cannot be played");
+        assert_eq!(
+            ui.storylet_request, None,
+            "a locked storylet cannot be played"
+        );
 
         ui.storylet_selected = 1; // the ready one
         ui.play_storylet();
@@ -2936,7 +2975,10 @@ mod tests {
         // spends host entropy), so nothing is armed.
         ui.can_edit_inventory = false;
         ui.open_downtime();
-        assert!(!ui.downtime_open, "a client must not open the downtime surface");
+        assert!(
+            !ui.downtime_open,
+            "a client must not open the downtime surface"
+        );
         assert!(!ui.downtime_roll_request);
 
         // The DM can: opening arms a roll request the host fills with rows.
@@ -2972,7 +3014,10 @@ mod tests {
         ui.downtime_commit_request = false;
         ui.faction_moves.iter_mut().for_each(|m| m.struck = true);
         ui.commit_downtime();
-        assert!(!ui.downtime_commit_request, "nothing kept, nothing to commit");
+        assert!(
+            !ui.downtime_commit_request,
+            "nothing kept, nothing to commit"
+        );
     }
 
     #[test]
@@ -3005,8 +3050,13 @@ mod tests {
         // Ungranted, a faction's token is not B's to command.
         assert!(!ui.commands(Some("tide")));
         // Grant B the Tide Court's channel (as the replicated world would carry).
-        ui.world.faction_control.insert("tide".to_owned(), "B".to_owned());
-        assert!(ui.commands(Some("tide")), "the grant extends command to the faction");
+        ui.world
+            .faction_control
+            .insert("tide".to_owned(), "B".to_owned());
+        assert!(
+            ui.commands(Some("tide")),
+            "the grant extends command to the faction"
+        );
 
         // Direct ownership is unchanged, and a stranger's token stays off-limits.
         assert!(ui.commands(Some("B")));

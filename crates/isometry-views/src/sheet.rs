@@ -4,9 +4,9 @@
 //! rules and holds no scripting engine; the system plugin lives in the
 //! host.
 
+use cambium::{clickable, el, text};
 use isometry_campaign::EquipmentSlot;
 use isometry_core::FieldValue;
-use cambium::{clickable, el, text};
 
 use crate::board::UiChild;
 use crate::state::UiState;

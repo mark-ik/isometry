@@ -3,8 +3,8 @@
 //! swatches take their color from the same `tile-<kind>` classes the
 //! board uses, so the palette can never drift from the tileset.
 
-use isometry_core::{TemplateKind, TileKindId, TokenId};
 use cambium::{clickable, el, text};
+use isometry_core::{TemplateKind, TileKindId, TokenId};
 
 use crate::board::UiChild;
 use crate::state::{EditMode, UiState};
@@ -26,39 +26,42 @@ fn messages_section(ui: &UiState) -> UiChild {
     } else {
         "(w to whisper)".to_owned()
     };
-    Box::new(el(
-        "div",
-        (
-            el(
-                "div",
-                (
-                    clickable(
-                        el("div", text("Whisper")).attr("class", "btn"),
-                        |ui: &mut UiState, _| ui.start_compose(),
+    Box::new(
+        el(
+            "div",
+            (
+                el(
+                    "div",
+                    (
+                        clickable(
+                            el("div", text("Whisper")).attr("class", "btn"),
+                            |ui: &mut UiState, _| ui.start_compose(),
+                        ),
+                        clickable(
+                            el("div", text(format!("to: {target}"))).attr("class", "btn"),
+                            |ui: &mut UiState, _| ui.cycle_whisper_target(),
+                        ),
                     ),
-                    clickable(
-                        el("div", text(format!("to: {target}"))).attr("class", "btn"),
-                        |ui: &mut UiState, _| ui.cycle_whisper_target(),
-                    ),
-                ),
-            )
-            .attr("class", "btn-row"),
-            el("div", text(draft)).attr("class", "roll-line"),
-            el(
-                "div",
-                ui.messages
-                    .iter()
-                    .rev()
-                    .take(5)
-                    .map(|m| {
-                        Box::new(el("div", text(m.clone())).attr("class", "roll-line")) as UiChild
-                    })
-                    .collect::<Vec<UiChild>>(),
-            )
-            .attr("class", "roll-log"),
-        ),
+                )
+                .attr("class", "btn-row"),
+                el("div", text(draft)).attr("class", "roll-line"),
+                el(
+                    "div",
+                    ui.messages
+                        .iter()
+                        .rev()
+                        .take(5)
+                        .map(|m| {
+                            Box::new(el("div", text(m.clone())).attr("class", "roll-line"))
+                                as UiChild
+                        })
+                        .collect::<Vec<UiChild>>(),
+                )
+                .attr("class", "roll-log"),
+            ),
+        )
+        .attr("class", "messages"),
     )
-    .attr("class", "messages"))
 }
 
 /// Measure controls: template shape toggle, size stepper, and the
@@ -68,38 +71,40 @@ fn measure_controls(ui: &UiState) -> UiChild {
         Some(d) => format!("size {} · dist {d}", ui.template_size),
         None => format!("size {} · dist -", ui.template_size),
     };
-    Box::new(el(
-        "div",
-        (
-            el(
-                "div",
-                (
-                    clickable(
-                        el("div", text(format!("tpl: {}", ui.template_kind.label())))
-                            .attr("class", "btn"),
-                        |ui: &mut UiState, _| {
-                            ui.template_kind = next_template_kind(ui.template_kind);
-                        },
+    Box::new(
+        el(
+            "div",
+            (
+                el(
+                    "div",
+                    (
+                        clickable(
+                            el("div", text(format!("tpl: {}", ui.template_kind.label())))
+                                .attr("class", "btn"),
+                            |ui: &mut UiState, _| {
+                                ui.template_kind = next_template_kind(ui.template_kind);
+                            },
+                        ),
+                        clickable(
+                            el("div", text("-")).attr("class", "btn btn-mini"),
+                            |ui: &mut UiState, _| {
+                                ui.template_size = ui.template_size.saturating_sub(1).max(1);
+                            },
+                        ),
+                        clickable(
+                            el("div", text("+")).attr("class", "btn btn-mini"),
+                            |ui: &mut UiState, _| {
+                                ui.template_size = (ui.template_size + 1).min(12);
+                            },
+                        ),
                     ),
-                    clickable(
-                        el("div", text("-")).attr("class", "btn btn-mini"),
-                        |ui: &mut UiState, _| {
-                            ui.template_size = ui.template_size.saturating_sub(1).max(1);
-                        },
-                    ),
-                    clickable(
-                        el("div", text("+")).attr("class", "btn btn-mini"),
-                        |ui: &mut UiState, _| {
-                            ui.template_size = (ui.template_size + 1).min(12);
-                        },
-                    ),
-                ),
-            )
-            .attr("class", "btn-row"),
-            el("div", text(dist)).attr("class", "side-line"),
-        ),
+                )
+                .attr("class", "btn-row"),
+                el("div", text(dist)).attr("class", "side-line"),
+            ),
+        )
+        .attr("class", "measure"),
     )
-    .attr("class", "measure"))
 }
 
 const TOKEN_SPRITES: [&str; 2] = ["knight", "goblin"];
@@ -138,21 +143,23 @@ fn turn_row(ui: &UiState, id: TokenId) -> UiChild {
         token.sprite,
         id.0
     );
-    Box::new(el(
-        "div",
-        (
-            clickable(
-                el("div", text(label)).attr("class", "turn-label"),
-                move |ui: &mut UiState, _| ui.select_token(id),
+    Box::new(
+        el(
+            "div",
+            (
+                clickable(
+                    el("div", text(label)).attr("class", "turn-label"),
+                    move |ui: &mut UiState, _| ui.select_token(id),
+                ),
+                clickable(
+                    el("div", text(if listed { "out" } else { "in" }))
+                        .attr("class", "btn btn-mini"),
+                    move |ui: &mut UiState, _| ui.toggle_turn(id),
+                ),
             ),
-            clickable(
-                el("div", text(if listed { "out" } else { "in" }))
-                    .attr("class", "btn btn-mini"),
-                move |ui: &mut UiState, _| ui.toggle_turn(id),
-            ),
-        ),
+        )
+        .attr("class", class),
     )
-    .attr("class", class))
 }
 
 fn mode_button(mode: EditMode, active: bool) -> UiChild {
@@ -399,11 +406,8 @@ pub fn side_panel(ui: &UiState) -> UiChild {
                     .take(5)
                     .map(|r| {
                         Box::new(
-                            el(
-                                "div",
-                                text(format!("{}: {} = {}", r.by, r.expr, r.total)),
-                            )
-                            .attr("class", "roll-line"),
+                            el("div", text(format!("{}: {} = {}", r.by, r.expr, r.total)))
+                                .attr("class", "roll-line"),
                         ) as UiChild
                     })
                     .collect::<Vec<UiChild>>(),

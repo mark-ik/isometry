@@ -25,16 +25,23 @@ pub fn storylet_overlay(ui: &UiState) -> Option<UiChild> {
     let mut body: Vec<UiChild> = Vec::new();
     if ui.storylets.is_empty() {
         body.push(Box::new(
-            el("div", text("no storylets in this campaign yet"))
-                .attr("class", "side-hint"),
+            el("div", text("no storylets in this campaign yet")).attr("class", "side-hint"),
         ));
     } else {
         // The selector line: cycle through storylets, showing which is playable.
         let selected = ui.selected_storylet();
         let selector = selected
             .map(|row| {
-                let mark = if row.available { "\u{2022}" } else { "\u{2013}" }; // • / –
-                format!("Storylet {}: {mark} {}", ui.storylet_selected + 1, row.entry)
+                let mark = if row.available {
+                    "\u{2022}"
+                } else {
+                    "\u{2013}"
+                }; // • / –
+                format!(
+                    "Storylet {}: {mark} {}",
+                    ui.storylet_selected + 1,
+                    row.entry
+                )
             })
             .unwrap_or_else(|| "Storylet".to_owned());
         body.push(Box::new(clickable(
@@ -49,8 +56,7 @@ pub fn storylet_overlay(ui: &UiState) -> Option<UiChild> {
             // The cast: who fills each role.
             for (role, character) in &row.cast {
                 body.push(Box::new(
-                    el("div", text(format!("{role}: {character}")))
-                        .attr("class", "side-line"),
+                    el("div", text(format!("{role}: {character}"))).attr("class", "side-line"),
                 ));
             }
             if row.available {
@@ -61,8 +67,7 @@ pub fn storylet_overlay(ui: &UiState) -> Option<UiChild> {
             } else {
                 // Why it is locked, so the DM knows what unlocks it.
                 body.push(Box::new(
-                    el("div", text(format!("locked: {}", row.status)))
-                        .attr("class", "side-hint"),
+                    el("div", text(format!("locked: {}", row.status))).attr("class", "side-hint"),
                 ));
             }
         }

@@ -30,7 +30,11 @@ pub enum Command {
 /// is entered by `>`, so the draft usually has none). Verbs are
 /// case-insensitive and take a single trailing argument string.
 pub fn parse(input: &str) -> Command {
-    let line = input.trim().strip_prefix('>').unwrap_or(input.trim()).trim();
+    let line = input
+        .trim()
+        .strip_prefix('>')
+        .unwrap_or(input.trim())
+        .trim();
     if line.is_empty() {
         return Command::Help;
     }
@@ -64,7 +68,10 @@ mod tests {
     fn verbs_parse_with_their_argument() {
         assert_eq!(parse("spawn goblin"), Command::Spawn("goblin".to_owned()));
         assert_eq!(parse("gen npc"), Command::Gen("npc".to_owned()));
-        assert_eq!(parse("find rusty sword"), Command::Find("rusty sword".to_owned()));
+        assert_eq!(
+            parse("find rusty sword"),
+            Command::Find("rusty sword".to_owned())
+        );
         assert_eq!(parse("roll 2d6+3"), Command::Roll("2d6+3".to_owned()));
         assert_eq!(parse("time 5"), Command::Time(5));
     }
@@ -74,7 +81,10 @@ mod tests {
         assert_eq!(parse(">SPAWN Goblin"), Command::Spawn("Goblin".to_owned()));
         assert_eq!(parse("   >  gen   npc  "), Command::Gen("npc".to_owned()));
         // The argument's own case is preserved; only the verb folds.
-        assert_eq!(parse("find LongSword"), Command::Find("LongSword".to_owned()));
+        assert_eq!(
+            parse("find LongSword"),
+            Command::Find("LongSword".to_owned())
+        );
     }
 
     #[test]
@@ -90,14 +100,20 @@ mod tests {
         assert_eq!(parse(""), Command::Help);
         assert_eq!(parse(">"), Command::Help);
         assert_eq!(parse("help"), Command::Help);
-        assert_eq!(parse("teleport everyone"), Command::Unknown("teleport".to_owned()));
+        assert_eq!(
+            parse("teleport everyone"),
+            Command::Unknown("teleport".to_owned())
+        );
     }
 
     #[test]
     fn a_non_numeric_time_is_a_mistake_not_zero() {
         // Silently treating "time soon" as 0 would look like it worked.
         assert_eq!(parse("time soon"), Command::Unknown("time soon".to_owned()));
-        assert_eq!(parse("time"), Command::Unknown("time (needs a number)".to_owned()));
+        assert_eq!(
+            parse("time"),
+            Command::Unknown("time (needs a number)".to_owned())
+        );
     }
 
     #[test]
