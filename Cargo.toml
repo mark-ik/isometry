@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/isometry-core",
     "crates/isometry-campaign",
+    "crates/isometry-graphshell",
     "crates/isometry-views",
     "crates/isometry-genet",
     "crates/isometry-net",
@@ -60,6 +61,9 @@ thiserror = "1"
 # opaque source refs, measured footprints, and scenes.
 sceno = { git = "https://github.com/mark-ik/scenograph.git", branch = "main" }
 scenomise = { git = "https://github.com/mark-ik/scenograph.git", branch = "main" }
+graphshell-endpoint = { git = "https://github.com/mark-ik/graphshell.git", branch = "main" }
+graphshell-protocol = { git = "https://github.com/mark-ik/graphshell.git", branch = "main" }
+graphshell-stdio = { git = "https://github.com/mark-ik/graphshell.git", branch = "main" }
 
 # UI: the Genet host stack (I1, the Woodshed pattern). Git deps on the
 # owned repos so any machine resolves; local checkouts override via the

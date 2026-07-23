@@ -2799,6 +2799,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "graphshell-endpoint"
+version = "0.0.1"
+source = "git+https://github.com/mark-ik/graphshell.git?branch=main#bdbe1f046ebe55581981437724f06d5f1d3b6278"
+dependencies = [
+ "graphshell-protocol",
+]
+
+[[package]]
+name = "graphshell-protocol"
+version = "0.0.1"
+source = "git+https://github.com/mark-ik/graphshell.git?branch=main#bdbe1f046ebe55581981437724f06d5f1d3b6278"
+dependencies = [
+ "blake3",
+ "sceno",
+ "scenotime",
+ "serde",
+]
+
+[[package]]
+name = "graphshell-stdio"
+version = "0.0.1"
+source = "git+https://github.com/mark-ik/graphshell.git?branch=main#bdbe1f046ebe55581981437724f06d5f1d3b6278"
+dependencies = [
+ "graphshell-endpoint",
+ "graphshell-protocol",
+ "serde_json",
+]
+
+[[package]]
 name = "grid"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3978,6 +4007,21 @@ dependencies = [
  "tokio",
  "wgpu",
  "winit",
+]
+
+[[package]]
+name = "isometry-graphshell"
+version = "0.1.0"
+dependencies = [
+ "graphshell-endpoint",
+ "graphshell-protocol",
+ "graphshell-stdio",
+ "isometry-campaign",
+ "isometry-core",
+ "isometry-views",
+ "sceno",
+ "scenomise",
+ "serde_json",
 ]
 
 [[package]]
@@ -7108,6 +7152,15 @@ name = "scenomise"
 version = "0.0.1"
 dependencies = [
  "sceno",
+]
+
+[[package]]
+name = "scenotime"
+version = "0.0.1"
+source = "git+https://github.com/mark-ik/scenograph.git?branch=main#eba39e30627f8a07df24446e3aa825910799e7e1"
+dependencies = [
+ "sceno",
+ "serde",
 ]
 
 [[package]]
