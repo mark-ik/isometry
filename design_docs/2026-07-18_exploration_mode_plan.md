@@ -467,16 +467,21 @@ composition again (fog + secrets + a check).
     native hit targets project identically. Adds a direct `sprigging` dep (unified
     with Cambium's copy via a `.cargo/config.toml` patch). This unlocks every
     Cambium paint leaf (meters, glyphs, knobs) for Isometry, not just the overmap.
-- **2026-07-20: overmap render follow-ons landed.**
-  - *Force-directed layout.* `Overmap::layout` (core) returns normalized node
-    positions: authored `at` coordinates when the world sets them, else a
-    deterministic Fruchterman-Reingold relaxation from the routes, so linked
-    sites read as a shape without anyone placing a node. Deterministic (circle
-    seed, no clock/RNG), unit-tested
-    (`force_directed_layout_is_deterministic_and_inside_the_box`,
-    `authored_positions_override_the_force_layout`). Authored positions are
-    reachable through a new `WorldPlace.position: Option<(i32,i32)>` (kept
-    integer so `CampaignWorld` stays `Eq`), projected into `OvermapNode.at`.
+- **2026-07-22: projection boundary replacement landed.**
+  - *Shared score and scene.* The hand-rolled `Overmap::layout` and its
+    force-directed solver are gone from `isometry-core`. `isometry-views`
+    adapts authored overmap coordinates to a geographic `sceno::Score`, and
+    uniform defaults to the shared spiral score; `scenomise` realizes both.
+    The view alone fits scene coordinates to its Cambium swatch viewport.
+    The tactical ground layer likewise creates a portable board score and
+    takes painted members from its realized scene, while local isometric
+    geometry, fog, elevation, and interaction remain local.
+  - *Receipt.* The view tests serialize and deserialize the shared `Score` and
+    `Scene` types and assert their type paths are in `sceno`, not in either
+    consumer. Opaque source adapter strings still identify the local return
+    boundary, as intended. Authored positions remain reachable through
+    `WorldPlace.position: Option<(i32,i32)>` (kept integer so `CampaignWorld`
+    stays `Eq`), projected into `OvermapNode.at`.
   - *Hover emphasis.* The host now dispatches Cambium `on_hover` enter/leave to
     the handler under the cursor (`hover_target` + `dispatch_hover` in the
     genet `hover()` loop, a general capability for any hoverable widget). The

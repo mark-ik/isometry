@@ -13,3 +13,8 @@ isometry-campaign = { workspace = true }
 isometry-net = { workspace = true }
 isometry-voxel = { workspace = true }
 cambium = { workspace = true }
+sceno = { workspace = true }
+scenomise = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
