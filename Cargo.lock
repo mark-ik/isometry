@@ -7154,7 +7154,6 @@ dependencies = [
 [[package]]
 name = "scenotime"
 version = "0.0.1"
-source = "git+https://github.com/mark-ik/scenograph.git?branch=main#eba39e30627f8a07df24446e3aa825910799e7e1"
 dependencies = [
  "sceno",
  "serde",
@@ -10480,3 +10479,47 @@ dependencies = [
 [[patch.unused]]
 name = "chartulary"
 version = "0.1.1"
+
+[[patch.unused]]
+name = "graphshell"
+version = "0.0.1"
+
+[[patch.unused]]
+name = "graphshell-client"
+version = "0.0.1"
+
+[[patch.unused]]
+name = "numen"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "quint"
+version = "0.0.2"
+
+[[patch.unused]]
+name = "scholia"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "seiche"
+version = "0.0.3"
+
+[[patch.unused]]
+name = "servitor"
+version = "0.0.1"
+
+[[patch.unused]]
+name = "sibylla"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "vates"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "cambium-winit"
+version = "0.3.0"
+
+[[patch.unused]]
+name = "netfetcher"
+version = "0.1.0"
