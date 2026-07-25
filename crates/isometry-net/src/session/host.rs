@@ -8,25 +8,27 @@
 
 use super::*;
 
+/// The host's authoritative session. Owns the canonical state and the
+/// ordered log; validates every intent before it becomes `Applied`.
 pub struct HostSession {
-    state: GameSnapshot,
+    pub(super) state: GameSnapshot,
     /// The host-private GM layer. It never enters a public snapshot or event.
-    campaign: CampaignStore,
+    pub(super) campaign: CampaignStore,
     /// The durable, append-only authority history. The public snapshot is a
     /// materialized view of this log; checkpoints keep both for fast restore.
-    history: Codicil<GameEvent>,
+    pub(super) history: Codicil<GameEvent>,
     /// Count of applied events; also the seq stamped on the next one.
-    seq: u64,
-    log_hash: u64,
+    pub(super) seq: u64,
+    pub(super) log_hash: u64,
     /// Player name each connected peer announced (via `Hello`), so the
     /// DM can whisper by name.
-    peer_names: HashMap<PeerId, String>,
+    pub(super) peer_names: HashMap<PeerId, String>,
     /// Client action requests awaiting adjudication. They sit here because this
     /// crate is deliberately rules-blind: it can validate that you own the token
     /// you are swinging, but it has no `System` and so cannot say whether you
     /// hit. The host *app* drains these, resolves them with its rules plugin, and
     /// commits the outcome back through `local_event`.
-    pending_actions: Vec<ActionIntent>,
+    pub(super) pending_actions: Vec<ActionIntent>,
 }
 
 impl HostSession {
@@ -400,6 +402,4 @@ impl HostSession {
         Ok(out)
     }
 
-    /// Complete interrupted reveals after restoring a snapshot and campaign
-    /// store. An identical public fact finalizes; an absent one is retried.
 }

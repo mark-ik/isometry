@@ -24,8 +24,11 @@ mod client;
 mod host;
 mod messages;
 
-/// Apply one [`GameEvent`] to the replicated state, or reject it
-/// unchanged. Turn ops that name a token validate its existence so a
-/// stale intent can't desync the order.
-#[derive(Clone, Debug, PartialEq, Eq)]
+// The 2026-07-24 split moved the bodies into the four modules above while this
+// file kept the shared imports they read through `use super::*`. Re-exported
+// here so the session layer's surface is unchanged: `lib.rs` still publishes
+// exactly these four names.
+pub use apply::{apply_game, GameError};
+pub use client::ClientSession;
+pub use host::HostSession;
 

@@ -24,7 +24,7 @@ pub struct ClientSession {
 }
 
 impl Default for ClientSession {
-    pub(crate) fn default() -> Self {
+    fn default() -> Self {
         Self::new()
     }
 }

@@ -976,6 +976,7 @@ dependencies = [
 name = "cambium"
 version = "0.3.2"
 dependencies = [
+ "genet-host-api",
  "genet-scripted-dom",
  "layout-dom-api",
  "meristem",
@@ -2523,6 +2524,10 @@ dependencies = [
  "version_check",
  "zeroize",
 ]
+
+[[package]]
+name = "genet-host-api"
+version = "0.1.0"
 
 [[package]]
 name = "genet-layout"
@@ -10611,6 +10616,14 @@ dependencies = [
 ]
 
 [[patch.unused]]
+name = "cambium-winit"
+version = "0.3.0"
+
+[[patch.unused]]
+name = "netfetcher"
+version = "0.1.1"
+
+[[patch.unused]]
 name = "graphshell"
 version = "0.0.1"
 
@@ -10640,12 +10653,4 @@ version = "0.1.1"
 
 [[patch.unused]]
 name = "vates"
-version = "0.1.1"
-
-[[patch.unused]]
-name = "cambium-winit"
-version = "0.3.0"
-
-[[patch.unused]]
-name = "netfetcher"
 version = "0.1.1"

@@ -8,6 +8,9 @@
 
 use super::*;
 
+/// Why a [`GameEvent`] was rejected rather than applied. Turn ops that name a
+/// token validate its existence, so a stale intent cannot desync the order.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GameError {
     Core(EventError),
     ConflictingFact(String),
@@ -541,5 +544,3 @@ pub(crate) fn require_token(state: &GameSnapshot, id: TokenId) -> Result<(), Gam
     }
 }
 
-/// The host's authoritative session. Owns the canonical state and the
-/// ordered log; validates every intent before it becomes `Applied`.
