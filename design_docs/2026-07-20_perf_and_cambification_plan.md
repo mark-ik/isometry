@@ -1,8 +1,12 @@
 # Performance and cambification
 
 **Date:** 2026-07-20
-**Status:** ACTIVE. The performance regressions found by the audit are FIXED
-(this session); the cambification lanes are proposals awaiting a go.
+**Status:** ACTIVE, one item left. Every performance regression is fixed and
+receipted, the files are split, and the catalog and obviation lanes are adopted
+except `caret_text_field`, which is blocked on a host key-routing seam and on
+`cambium-winit` being unpublishable (2026-07-25; see Findings). The plan also
+absorbed one thing it did not start with: the client-intent authority gap C5
+left open.
 **Trigger:** Mark reported "an odd lag that wasn't present a few days ago" and
 asked for an audit: duplications/inefficiencies lowering fps, plus candidates
 for cambification (promotion into the Cambium catalog, or obviation by adopting
@@ -292,6 +296,93 @@ public `active` / `selected` fields; rebuilding the state instead would drop
 `focus_active` mid-keyboard-interaction. Worth a `pub fn set_selection` upstream
 if a third consumer wants it.
 
+### 2026-07-25: the rest of the obviation lane was not mechanical
+
+The done-condition below said the remaining three were "now mechanical" because
+the bridge was settled. Two of them were. The third is blocked twice over, and
+the reason is worth stating because it is not a Cambium gap.
+
+**The bridge question and the key-routing question are different questions.**
+The 2026-07-24 ruling settled how a component's *state* reaches a domain action.
+It said nothing about how a *key* reaches a component, and that is what the last
+item needs.
+
+`tab_strip` and `command_menu` landed on the settled bridge. `command_menu`
+also answered a case the ruling did not cover: an activation is a one-shot
+action with no world truth behind it, so there is nothing for a pump-side
+compare to compare. It maps its action instead. That is not a second
+convention, because the ruling was about two-way selection bindings and a menu
+activation is not one -- worth saying plainly, since "one convention" was the
+whole reason `map_action` was declined for the rows.
+
+**`caret_text_field` cannot land, for two independent reasons.**
+
+1. **The host never routes a key to the DOM.** `isometry-genet`'s `key()`
+   handles every key itself and returns; `runner.dispatch_key` is never called
+   anywhere in the repo. `caret_text_field` *is* `on_key(el("input"), edit)` --
+   DOM key routing is its entire mechanism. The three bespoke key-capture lanes
+   exist precisely because the host captures keys, so adopting the component
+   means first building a key-routing seam (focus the field when a lane opens,
+   translate and dispatch, keep Escape/Enter as app semantics). That is a real
+   change to the host input model, with every existing shortcut as the
+   regression surface, and it wants runtime verification rather than a green
+   suite.
+2. **The translation helper is in an unpublishable crate.** `cambium-winit`
+   exports exactly the missing piece, `key_event_from_winit`. Its local version
+   is 0.3.0 and its manifest carries bare `path` deps on `genet-layout`,
+   `genet-winit-host`, `genet-scripted-dom`, and `layout-dom-api`, so cargo
+   cannot publish it; the 0.1.0 on crates.io is stale. Isometry's committed
+   manifest may only use published catalog API, and hand-rolling the winit ->
+   Cambium key mapping inside Isometry to dodge that would be re-hand-rolling a
+   catalog piece in order to adopt a component whose point is to stop
+   hand-rolling.
+
+So it waits on the same land-release-adopt order the node labels waited on, with
+`genet-layout`'s standalone release as the upstream event. The keyboard half of
+`command_menu` (Escape, arrows) is inert for the same reason 1, and lights up
+free when the seam lands.
+
+Also corrected: the lane's table claimed `command_menu` "deletes the
+hand-rolled dismissal branch in the winit host." It deletes half of it. Escape
+is the component's, but a DOM subtree cannot observe a click *outside* itself
+without a backdrop element, and the component renders none, so outside-click
+dismissal stays the host's.
+
+### 2026-07-25: the intent authority was deny-by-default in the wrong direction
+
+Not a cambification finding, but it surfaced here and belongs on the record.
+C5 noted that a client's `TokenMoved` was not ownership-gated and left it as a
+follow-up. It was never one missing check. `on_message` refused a list of
+named events and let everything else fall through to `try_commit`, so the
+default for anything nobody had thought about was **accept**. The refusal arms
+were written one at a time as each verdict was invented; the substrate document,
+the turn order, and `SheetSet` were simply never on the list.
+
+`SheetSet` was the sharp end. A forged `ActionResolved` was already refused, but
+a sheet holds every number a rule reads, so a peer could set the boss to zero
+hit points directly and skip the forgery entirely.
+
+The fix is one exhaustive `intent_refusal`, so a new `GameEvent` variant fails
+to compile until someone says who may send it. Three rules, none of which needs
+the rules engine: a verdict is the host's, authoring is the DM's, and a
+declaration about your own token is yours (ownership is the whole check;
+legality is not, since reach and turn order are the rules'). `TurnAdvance` is
+allowed only to whoever is actually up, which is checkable from replicated
+state. `Rolled` stays open deliberately: that is the friendly-table trust model,
+and `by` carries a character or side name ("Knight", "side A") rather than the
+peer's, so it cannot be compared against the sender without a schema change.
+
+Four existing tests encoded the permissive behavior with anonymous peers moving
+other people's tokens; they now announce a name and play what they own. The
+validation test needed splitting, because with ownership refusing first, two of
+its three cases no longer reached the bounds check they claimed to test.
+
+The UI was gated to match, which is the half that would otherwise read as a
+regression: a joined player's sheet steppers and bind-on-open are gone rather
+than left to fail silently against the authority (the Expand-chip argument), and
+binding locally anyway would have left that peer holding a sheet the host never
+logged until the next mirror wiped it.
+
 ### 2026-07-24: the leaf-gate generalization is not yet worth writing
 
 Scoped and dropped. `OVERMAP_LEAF_KEY` is the only key ever inserted into the
@@ -310,10 +401,10 @@ Already adopted: `data_grid` (compendium), `summary_body` (downtime),
 
 | Isometry hand-roll | Cambium component | Notes |
 | --- | --- | --- |
-| `widgets::tab_strip` (compendium nav) | `tab_bar` / `tabs::tab_strip` | Name-collides with the catalog component today; the catalog one adds keyboard activation (`TabActivation`) and ARIA. |
-| Mode row, pace row, stance row | `segmented_control` | Exact shape (one-of-N choice row); pace/stance pickers and the Select/Paint/... mode row are three consumers at once. |
-| Context menu (`board.rs::context_menu_overlay` + host-side outside-click dismissal in `main.rs`) | `command_menu` | Brings Escape dismissal, outside-click, disabled-with-reason rows, submenus; deletes the hand-rolled dismissal branch in the winit host. |
-| `search_field` (display-only) + the `>` command line + the whisper composer (all host-routed key capture) | `caret_text_field` / `styled_field` | Real caret editing replaces three bespoke key-capture lanes in `genet::key()`. Biggest UX upgrade of the lane. |
+| ~~`widgets::tab_strip` (compendium nav)~~ | `tabs::tab_strip` | **Adopted 2026-07-25.** The name collision is gone with the hand-roll. Brings roving-tabindex arrow keys and the ARIA tabs roles. |
+| ~~Mode row, pace row, stance row~~ | `segmented_control` | **Adopted 2026-07-24.** Three consumers at once. |
+| ~~Context menu (`board.rs::context_menu_overlay`)~~ | `command_menu` | **Adopted 2026-07-25.** Brings `role="menu"`, disabled-with-reason rows, submenus, and Escape. *Not* outside-click: the host branch stays, see Findings. |
+| `search_field` (display-only) + the `>` command line + the whisper composer (all host-routed key capture) | `caret_text_field` / `styled_field` | **Blocked.** Needs a host key-routing seam *and* the unpublishable `cambium-winit`. Still the biggest UX upgrade of the lane; see Findings. |
 | `record_card` + `stat_row`/`stat_list` | `summary_body` (title/eyebrow/facts) or `detail_panel` (`DetailRow`/`DetailSection`) | The facts vec is exactly the stat-list shape; one of the two components covers each consumer. |
 | Turn list / roll log / messages panes | `sectioned_list` | Moderate value; brings selection + row kinds. |
 | `overlay_panel` | keep the layout, adopt `overlay_surface` semantics | The catalog surface owns Escape/outside-click/roles; isometry surfaces currently hand-roll or lack dismissal. |
@@ -391,8 +482,12 @@ module's tests are what someone is actually reading.
 - [x] Split the three oversized files (2026-07-24); see the file-size note.
 - [x] Obviation lane, `segmented_control`: the mode, pace, and stance rows
       migrated on the ruled pump-side bridge (2026-07-24).
-- [ ] Obviation lane, remaining: `tab_bar`, `command_menu`, `caret_text_field`.
-      The bridge is settled and proven, so these are now mechanical.
+- [x] Obviation lane, `tab_strip` and `command_menu` (2026-07-25). The menu also
+      settled the one-shot-action case the bridge ruling did not cover, and
+      gained disabled-with-reason rows the hand-roll could not express.
+- [ ] Obviation lane, `caret_text_field`: **blocked twice** -- the host routes no
+      key to the DOM, and the winit key translation lives in the unpublishable
+      `cambium-winit`. Not mechanical; see Findings.
 - [x] Split `isometry-net/src/session.rs`, `campaign_space.rs`, and
       `isometry-campaign/src/world.rs` (2026-07-24). Every non-test source file
       in the repo is now under the 600-LOC ceiling.
@@ -401,8 +496,13 @@ module's tests are what someone is actually reading.
 - [x] Catalog lane, upstream half: Cambium's visible labels now carry the
       node's `selected` / `focused` / `hovered` state (2026-07-24, cambium
       0.3.2, 142 tests green).
-- [ ] Catalog lane, adoption: **blocked on publishing cambium 0.3.2** to
-      crates.io. Nothing else stands in the way; see Findings.
+- [x] Catalog lane, adoption: cambium 0.3.2 published by Mark and the overmap
+      switched to `with_node_labels` (2026-07-25). The `overmap-label*` overlay
+      is deleted and the manifest states 0.3.2 as a floor, so a stale registry
+      is a build error rather than a silent loss of the "here" emphasis.
+- [x] Close the client-intent authority gap C5 left open (2026-07-25). Not in
+      this plan's original scope; it surfaced while reading the same code. See
+      Findings.
 
 ## Progress
 
@@ -432,6 +532,16 @@ module's tests are what someone is actually reading.
   non-test source file is now under the ceiling. Cambium 0.3.2 teaches visible
   labels their node state, which leaves only the publish step between here and
   the label adoption. Suite green at `--all-features`, 18 targets.
+- **2026-07-25:** Cambium 0.3.2 published, so the node-label adoption landed and
+  the hand-rolled `overmap-label*` layer is gone; the manifest now states 0.3.2
+  as a floor rather than relying on a caret range that happens to resolve.
+  `tab_strip` and `command_menu` adopted, retiring `widgets::tab_strip` and the
+  hand-rolled menu markup. The obviation lane's last item is **not** mechanical
+  and did not land; both blockers are recorded in Findings. Separately, the
+  client-intent authority is now deny-by-default with one exhaustive refusal,
+  closing the gap C5 noted. Suite green at `--all-features`: campaign 28, core
+  56, genet 5, graphshell 2, net 10 + 43, system 48, views 46 + 6, voxel 7 (251
+  total, plus the ignored receipt).
 - **2026-07-24:** Catalog lane half-landed: `with_expand(false)` and
   `GRAPH_CANVAS_SWATCH_CSS` adopted, node labels blocked upstream. Suite green
   at `--all-features`: core 56, campaign 28, net 10 + 42, system 48, views 40 +
