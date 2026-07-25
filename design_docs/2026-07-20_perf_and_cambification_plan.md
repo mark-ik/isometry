@@ -242,6 +242,56 @@ The same question governs `command_menu` (dismissal state) and
 live). Deciding the bridge once unblocks all of them; deciding it per surface is
 how the lane ends up with three conventions.
 
+### 2026-07-24: what actually blocks the node-label adoption
+
+The code blocker is gone. Cambium's `graph_canvas_swatch` now puts the same
+`selected` / `focused` / `hovered` modifiers on a visible label that it already
+put on the node button, with a test that fails if a label stops carrying node
+state. That is the whole reason Isometry was hand-rolling its own label layer.
+
+What remains is **one release step, and it is not Claude's to take**:
+
+1. ~~Teach the swatch to emit per-node label state.~~ Done, cambium 0.3.2.
+2. **Publish cambium 0.3.2 to crates.io.** 0.3.1 is already published, so the
+   next version is the vehicle. This is an outward-facing, irreversible
+   action and needs Mark.
+3. Delete Isometry's `overmap-label*` overlay and switch to
+   `with_node_labels(true)`. No manifest change is needed: Isometry's
+   `cambium = "0.3.0"` is a caret range, so a published 0.3.2 is picked up.
+
+Step 3 is deliberately *not* done yet, and not merely out of caution. Isometry
+builds locally against the path-overridden cambium, so the adoption would
+compile and look correct here while a clean checkout resolved to the published
+0.3.1, whose labels have no state classes. That failure is silent: the labels
+render, just without the "here" emphasis. A build error would be safer than
+what adopting early actually produces, which is why the plan's land-release-
+adopt order exists.
+
+### 2026-07-24: the selection bridge, built and proven
+
+The mode, pace, and stance rows are now one `segmented_control` each, on the
+ruled pump-side compare. The shape that made it work:
+
+- **The rows are a mirror, never the truth.** Truth stays in `ui.mode` and in
+  the world. `UiState::sync_selection_rows` pushes it into the rows wherever it
+  can change (`apply_snapshot`, opening a surface), so by the time
+  `pump_selection_rows` runs, a disagreement can only be the user having moved
+  a control. That one-way push is what makes a two-way binding tractable;
+  without it the compare cannot tell which side moved and fires spuriously
+  every dispatch.
+- **Order tables are the single source of row order.** `PACE_PCTS` and
+  `STANCE_KEYS` are indexed by the selection index, so the row's order and its
+  meaning cannot drift apart in separate literals.
+- **Mode commits locally, pace and stance only ask.** Mode is view state.
+  Pace and stance are world state, so the bridge sets the existing request
+  flags and the adjudicated host path is unchanged. A catalog component did not
+  get to shortcut the authority.
+
+`SelectionState::select_one` is private in Cambium, so the sync writes the
+public `active` / `selected` fields; rebuilding the state instead would drop
+`focus_active` mid-keyboard-interaction. Worth a `pub fn set_selection` upstream
+if a third consumer wants it.
+
 ### 2026-07-24: the leaf-gate generalization is not yet worth writing
 
 Scoped and dropped. `OVERMAP_LEAF_KEY` is the only key ever inserted into the
@@ -339,16 +389,20 @@ module's tests are what someone is actually reading.
 - [x] Adopt `GRAPH_CANVAS_SWATCH_CSS` and drop the no-op Expand route
       (2026-07-24).
 - [x] Split the three oversized files (2026-07-24); see the file-size note.
-- [ ] Obviation lane: adopt `segmented_control`, `tab_bar`, `command_menu`,
-      `caret_text_field` (each its own small PR-sized change, in that order of
-      value). Bridge decided; see Findings.
-- [ ] Split `isometry-net/src/session.rs` (1325) and `campaign_space.rs` (1271),
-      and `isometry-campaign/src/world.rs` (860).
+- [x] Obviation lane, `segmented_control`: the mode, pace, and stance rows
+      migrated on the ruled pump-side bridge (2026-07-24).
+- [ ] Obviation lane, remaining: `tab_bar`, `command_menu`, `caret_text_field`.
+      The bridge is settled and proven, so these are now mechanical.
+- [x] Split `isometry-net/src/session.rs`, `campaign_space.rs`, and
+      `isometry-campaign/src/world.rs` (2026-07-24). Every non-test source file
+      in the repo is now under the 600-LOC ceiling.
 - [x] Projection lane: consume the Scenograph scene contract in P4 and delete
       `Overmap::layout`.
-- [ ] Catalog lane: adopt Cambium node labels. **Blocked upstream** -- see
-      Findings; the swatch emits one flat label class and cannot express the
-      here/hover states Isometry's overlay carries.
+- [x] Catalog lane, upstream half: Cambium's visible labels now carry the
+      node's `selected` / `focused` / `hovered` state (2026-07-24, cambium
+      0.3.2, 142 tests green).
+- [ ] Catalog lane, adoption: **blocked on publishing cambium 0.3.2** to
+      crates.io. Nothing else stands in the way; see Findings.
 
 ## Progress
 
@@ -372,6 +426,12 @@ module's tests are what someone is actually reading.
   3672 -> 413. Mechanical, suite unchanged and green. The obviation lane's
   state-bridge question was scoped and ruled (pump-side compare) before any
   surface was migrated.
+- **2026-07-24:** `segmented_control` adopted for the mode, pace, and stance
+  rows, with `sync_selection_rows` + `pump_selection_rows` as the bridge and
+  tests pinning the mirror. `campaign_space.rs` and `world.rs` split; every
+  non-test source file is now under the ceiling. Cambium 0.3.2 teaches visible
+  labels their node state, which leaves only the publish step between here and
+  the label adoption. Suite green at `--all-features`, 18 targets.
 - **2026-07-24:** Catalog lane half-landed: `with_expand(false)` and
   `GRAPH_CANVAS_SWATCH_CSS` adopted, node labels blocked upstream. Suite green
   at `--all-features`: core 56, campaign 28, net 10 + 42, system 48, views 40 +

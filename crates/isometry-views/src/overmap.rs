@@ -19,8 +19,8 @@
 use std::collections::BTreeMap;
 
 use cambium::{
-    clickable, el, graph_canvas_swatch, text, GraphCanvasEdge, GraphCanvasNode,
-    GraphCanvasSubgraph, GraphCanvasSwatch,
+    clickable, el, graph_canvas_swatch, lens, segmented_control, text, GraphCanvasEdge,
+    GraphCanvasNode, GraphCanvasSubgraph, GraphCanvasSwatch,
 };
 use isometry_core::Overmap;
 use sceno::{
@@ -416,37 +416,33 @@ pub fn overmap_overlay(ui: &UiState) -> Option<UiChild> {
 
     // Pace (E1) and stance (E3): the party's marching orders. The chosen pace is
     // marked; a stance is set on the lead token by the host.
-    let pace = ui.world.pace(party);
-    let pace_row: Vec<UiChild> = [("Fast", 50i64), ("Normal", 100), ("Slow", 200)]
-        .into_iter()
-        .map(|(label, pct)| {
-            let class = if pace == pct { "btn btn-attack" } else { "btn" };
-            Box::new(clickable(
-                el::<_, UiState, ()>("span", text(label)).attr("class", class),
-                move |ui: &mut UiState, _| ui.request_pace(pct),
-            )) as UiChild
-        })
-        .collect();
+    // Pace and stance are catalog `segmented_control` rows: one-of-N choice, which
+    // is exactly the component's shape. The row writes only its own
+    // `SelectionState`; `pump_selection_rows` notices the divergence from the
+    // world and dispatches the real request, so a click still travels the
+    // ordinary host-adjudicated path.
+    let pace_items = crate::state::pace_items();
     body.push(Box::new(
-        el("div", pace_row).attr("class", "overmap-controls"),
+        el::<_, UiState, ()>(
+            "div",
+            lens(
+                move |sel: &mut cambium::SelectionState| segmented_control(sel, &pace_items),
+                |ui: &mut UiState| &mut ui.pace_selection,
+            ),
+        )
+        .attr("class", "overmap-controls"),
     ));
 
-    let stance_row: Vec<UiChild> = [
-        ("Scout", "scout"),
-        ("Search", "search"),
-        ("Forage", "forage"),
-        ("Walk", ""),
-    ]
-    .into_iter()
-    .map(|(label, stance)| {
-        Box::new(clickable(
-            el::<_, UiState, ()>("span", text(label)).attr("class", "btn"),
-            move |ui: &mut UiState, _| ui.request_stance(stance),
-        )) as UiChild
-    })
-    .collect();
+    let stance_items = crate::state::stance_items();
     body.push(Box::new(
-        el("div", stance_row).attr("class", "overmap-controls"),
+        el::<_, UiState, ()>(
+            "div",
+            lens(
+                move |sel: &mut cambium::SelectionState| segmented_control(sel, &stance_items),
+                |ui: &mut UiState| &mut ui.stance_selection,
+            ),
+        )
+        .attr("class", "overmap-controls"),
     ));
 
     let hint = match &here {

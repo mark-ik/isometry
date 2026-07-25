@@ -23,6 +23,7 @@ impl App {
             if let Some(window) = self.window.as_ref() {
                 window.request_redraw();
             }
+            self.pump_selection_rows();
             self.pump_sheets();
             self.pump_generators();
             self.pump_storylets();
@@ -166,6 +167,7 @@ impl App {
         if let Some(window) = self.window.as_ref() {
             window.request_redraw();
         }
+        self.pump_selection_rows();
         self.pump_sheets();
         self.pump_generators();
         self.pump_storylets();

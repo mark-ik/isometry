@@ -53,6 +53,7 @@ mod input;
 mod net;
 mod overmap;
 mod render;
+mod selection_rows;
 mod selftest;
 mod sheets;
 mod storylets;

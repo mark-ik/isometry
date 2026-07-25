@@ -3,11 +3,11 @@
 //! swatches take their color from the same `tile-<kind>` classes the
 //! board uses, so the palette can never drift from the tileset.
 
-use cambium::{clickable, el, text};
+use cambium::{clickable, el, lens, segmented_control, text};
 use isometry_core::{TemplateKind, TileKindId, TokenId};
 
 use crate::board::UiChild;
-use crate::state::{EditMode, UiState};
+use crate::state::UiState;
 
 fn next_template_kind(k: TemplateKind) -> TemplateKind {
     let i = TemplateKind::ALL.iter().position(|&x| x == k).unwrap_or(0);
@@ -162,17 +162,6 @@ fn turn_row(ui: &UiState, id: TokenId) -> UiChild {
     )
 }
 
-fn mode_button(mode: EditMode, active: bool) -> UiChild {
-    let class = if active { "btn btn-active" } else { "btn" };
-    Box::new(clickable(
-        el("div", text(mode.label())).attr("class", class),
-        move |ui: &mut UiState, _| {
-            ui.mode = mode;
-            ui.status = format!("mode: {}", mode.label());
-        },
-    ))
-}
-
 fn swatch(ui: &UiState, kind: TileKindId, name: &str) -> UiChild {
     let mut class = format!("swatch tile-{name}");
     if ui.brush == kind {
@@ -257,10 +246,15 @@ fn command_line(ui: &UiState) -> UiChild {
 }
 
 pub fn side_panel(ui: &UiState) -> UiChild {
-    let modes: Vec<UiChild> = EditMode::ALL
-        .iter()
-        .map(|&m| mode_button(m, m == ui.mode))
-        .collect();
+    // The mode row is a one-of-N choice, so it is the catalog's
+    // `segmented_control`. It writes only `mode_selection`; the host's
+    // `pump_selection_rows` sees the divergence from `ui.mode` and commits it,
+    // the same bridge the pace and stance rows use.
+    let mode_items = crate::state::mode_items();
+    let modes: UiChild = Box::new(lens(
+        move |sel: &mut cambium::SelectionState| segmented_control(sel, &mode_items),
+        |ui: &mut UiState| &mut ui.mode_selection,
+    ));
     let swatches: Vec<UiChild> = ui
         .map
         .tile_kinds
@@ -297,7 +291,7 @@ pub fn side_panel(ui: &UiState) -> UiChild {
         Box::new(el("div", text(selected)).attr("class", "side-line side-strong")),
         command_line(ui),
         Box::new(el("div", text("Mode")).attr("class", "side-heading")),
-        Box::new(el("div", modes).attr("class", "btn-row")),
+        Box::new(el::<_, UiState, ()>("div", modes).attr("class", "btn-row")),
         Box::new(el("div", text("Brush")).attr("class", "side-heading")),
         Box::new(el("div", swatches).attr("class", "swatch-row")),
         Box::new(el("div", text("Map")).attr("class", "side-heading")),

@@ -291,6 +291,10 @@ impl UiState {
         }
         self.recompute_fog();
         self.recompute_reach();
+        // The authority may have moved pace, stance, or the lead token. Push
+        // that into the selection rows so the host's compare stays meaningful:
+        // after this, any disagreement is the user having moved a control.
+        self.sync_selection_rows();
     }
 
     /// In Remote mode, queue a game event for the session instead of

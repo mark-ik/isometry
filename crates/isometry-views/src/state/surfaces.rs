@@ -452,4 +452,37 @@ impl UiState {
         self.compendium_selected = None;
     }
 
+    /// Push the authoritative values into the catalog rows' selection state.
+    ///
+    /// Truth lives in `mode` and in the world, not in a `SelectionState`. This
+    /// runs wherever truth can change (a snapshot from the authority, opening a
+    /// surface), so afterwards the rows agree with it. Any *later* disagreement
+    /// is the user having moved a control, which is exactly what the host pumps
+    /// compare for. Without this one-way push the two would drift and the
+    /// compare could not tell which side moved.
+    pub fn sync_selection_rows(&mut self) {
+        let mode = EditMode::ALL.iter().position(|m| *m == self.mode).unwrap_or(0);
+        point_selection(&mut self.mode_selection, mode);
+
+        let party = self.viewer.clone().unwrap_or_else(|| "dm".to_owned());
+        let pace = self.world.pace(&party);
+        point_selection(
+            &mut self.pace_selection,
+            PACE_PCTS.iter().position(|p| *p == pace).unwrap_or(1),
+        );
+
+        // Stance is per-token; the row speaks for the party's lead token.
+        let stance = self
+            .selected_token
+            .or_else(|| self.map.tokens.first().map(|t| t.id))
+            .and_then(|id| self.map.stances.get(&id).cloned())
+            .unwrap_or_default();
+        point_selection(
+            &mut self.stance_selection,
+            STANCE_KEYS
+                .iter()
+                .position(|k| *k == stance)
+                .unwrap_or(STANCE_KEYS.len() - 1),
+        );
+    }
 }

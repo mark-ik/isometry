@@ -11,6 +11,8 @@ use isometry_core::{
 };
 use isometry_net::{apply_game, GameEvent, GameSnapshot, ROLL_LOG_CAP};
 
+use cambium::{SelectionItem, SelectionState};
+
 /// Fixed side-panel width in logical px (CSS `.side` width plus its
 /// padding); the host uses it to keep drag painting off the panel.
 pub const PANEL_W: f32 = 228.0;
@@ -29,6 +31,48 @@ const SIGHT_RADIUS: u32 = 6;
 /// magnitude and stays far above the five the pane shows, so scrollback is
 /// still there when the pane grows one.
 pub const MESSAGES_CAP: usize = 50;
+
+/// Point a selection row at `index` without disturbing its keyboard focus.
+///
+/// `SelectionState::select_one` is private to Cambium, and rebuilding the state
+/// would drop `focus_active` mid-interaction, so this writes the two public
+/// fields the component reads.
+fn point_selection(state: &mut SelectionState, index: usize) {
+    state.active = index;
+    state.selected = vec![index];
+}
+
+/// Travel pace as a percent of normal, in the order the row presents them.
+/// The index into this array *is* the selection index, so the array is the
+/// single place the row's order is decided.
+pub const PACE_PCTS: [i64; 3] = [50, 100, 200];
+
+/// Marching stance keys, in row order. The empty key is "no stance": walking.
+pub const STANCE_KEYS: [&str; 4] = ["scout", "search", "forage", ""];
+
+/// The pace row's labels, paired with [`PACE_PCTS`] by index.
+pub fn pace_items() -> Vec<SelectionItem> {
+    ["Fast", "Normal", "Slow"]
+        .into_iter()
+        .map(SelectionItem::new)
+        .collect()
+}
+
+/// The stance row's labels, paired with [`STANCE_KEYS`] by index.
+pub fn stance_items() -> Vec<SelectionItem> {
+    ["Scout", "Search", "Forage", "Walk"]
+        .into_iter()
+        .map(SelectionItem::new)
+        .collect()
+}
+
+/// The mode row's labels, paired with [`EditMode::ALL`] by index.
+pub fn mode_items() -> Vec<SelectionItem> {
+    EditMode::ALL
+        .iter()
+        .map(|mode| SelectionItem::new(mode.label()))
+        .collect()
+}
 
 mod interaction;
 mod play;
@@ -216,6 +260,18 @@ pub struct UiState {
     /// hover enter/leave; the painted graph leaf lifts the hovered node so the
     /// place under the cursor stands out before it is clicked.
     pub overmap_hover: Option<String>,
+    /// The catalog `segmented_control` state behind the mode, pace, and stance
+    /// rows. Cambium's selection components own their own state, so these are
+    /// the inner states a `lens` projects into.
+    ///
+    /// They are *not* the source of truth: mode lives in [`Self::mode`], pace
+    /// and stance in the world. [`Self::sync_selection_rows`] pushes truth into
+    /// them whenever it changes, and the host pumps notice a user-driven
+    /// divergence and dispatch it back. That one-way sync plus a compare is
+    /// what keeps a two-way binding from fighting itself.
+    pub mode_selection: SelectionState,
+    pub pace_selection: SelectionState,
+    pub stance_selection: SelectionState,
     /// Host-fed competing-binding projection and one-shot resolution request.
     /// The view never reads Moot stores or signs campaign operations.
     pub governance_conflict: Option<GovernanceConflict>,
@@ -337,6 +393,9 @@ impl UiState {
             overmap_stance_request: None,
             overmap_read_request: false,
             overmap_hover: None,
+            mode_selection: SelectionState::single(0).with_id("mode-row"),
+            pace_selection: SelectionState::single(1).with_id("pace-row"),
+            stance_selection: SelectionState::single(3).with_id("stance-row"),
             generator_open: false,
             generator_preview: None,
             generator_choices: Vec::new(),

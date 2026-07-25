@@ -766,3 +766,50 @@ fn a_spawn_tile_stays_on_the_board_on_a_narrow_map() {
     );
     assert_eq!(at, (2, 2), "the one free in-bounds cell");
 }
+
+/// The selection rows are a mirror of truth, never the truth itself.
+///
+/// The host bridge dispatches when a row disagrees with the world, so a sync
+/// that failed to track truth would look exactly like a user click and fire a
+/// spurious request every dispatch. These pin the one-way push.
+#[test]
+fn selection_rows_mirror_mode_and_world() {
+    let mut ui = UiState::new(demo_map());
+
+    ui.mode = EditMode::Measure;
+    ui.sync_selection_rows();
+    assert_eq!(
+        ui.mode_selection.selected,
+        vec![EditMode::ALL.iter().position(|m| *m == EditMode::Measure).unwrap()],
+        "the mode row must follow ui.mode"
+    );
+
+    // Pace 200 is "Slow", index 2 of PACE_PCTS.
+    ui.world.party_pace.insert("dm".to_owned(), 200);
+    ui.sync_selection_rows();
+    assert_eq!(ui.pace_selection.selected, vec![2]);
+    assert_eq!(PACE_PCTS[2], 200, "index and value must agree");
+
+    // An unset pace reads as normal, not as whatever was there before.
+    ui.world.party_pace.remove("dm");
+    ui.sync_selection_rows();
+    assert_eq!(ui.pace_selection.selected, vec![1]);
+    assert_eq!(PACE_PCTS[1], 100);
+}
+
+/// Stance is per-token and the row speaks for the lead token, so an unset
+/// stance must land on "Walk" (the empty key) rather than a stale index.
+#[test]
+fn stance_row_defaults_to_walking() {
+    let mut ui = UiState::new(demo_map());
+    ui.sync_selection_rows();
+    assert_eq!(ui.stance_selection.selected, vec![STANCE_KEYS.len() - 1]);
+    assert_eq!(STANCE_KEYS[STANCE_KEYS.len() - 1], "");
+
+    let lead = ui.map.tokens.first().map(|t| t.id).expect("demo has tokens");
+    ui.map.stances.insert(lead, "forage".to_owned());
+    ui.sync_selection_rows();
+    assert_eq!(ui.stance_selection.selected, vec![2]);
+    assert_eq!(STANCE_KEYS[2], "forage");
+}
+
