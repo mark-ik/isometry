@@ -37,7 +37,12 @@ pub fn sheet_overlay(ui: &UiState) -> Option<UiChild> {
             Some(FieldValue::Map(m)) => format!("{} entries", m.len()),
             None => "-".to_owned(),
         };
-        let row: UiChild = if *is_int {
+        // Steppers only for whoever may actually commit the edit. A joined
+        // player's `SheetSet` is refused by the authority (a sheet holds every
+        // number the rules read, so damage arrives adjudicated instead), and a
+        // button that silently fails is worse than no button -- the same reason
+        // the overmap's Expand chip is off at the model rather than hidden.
+        let row: UiChild = if *is_int && ui.can_edit_inventory {
             let dec = key.clone();
             let inc = key.clone();
             Box::new(

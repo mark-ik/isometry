@@ -182,6 +182,9 @@ fn from_start_clients_converge_on_host_ordering() {
     let mut sim = Sim::new(HostSession::new(snapshot()));
     sim.connect(PeerId(10));
     sim.connect(PeerId(11));
+    // Each peer plays the token it owns: token 1 is A's knight, token 2 is B's.
+    sim.client_hello(PeerId(11), "A");
+    sim.client_hello(PeerId(10), "B");
 
     // Host and both clients each propose moves; the host orders them.
     sim.host_event(mv(1, (2, 1)));
@@ -199,6 +202,7 @@ fn from_start_clients_converge_on_host_ordering() {
 fn late_joiner_gets_snapshot_plus_tail_and_converges() {
     let mut sim = Sim::new(HostSession::new(snapshot()));
     sim.connect(PeerId(10));
+    sim.client_hello(PeerId(10), "B"); // token 2 is B's goblin
 
     // Play happens before the second player joins.
     sim.host_event(mv(1, (3, 1)));
@@ -209,6 +213,7 @@ fn late_joiner_gets_snapshot_plus_tail_and_converges() {
 
     // Mid-session join: snapshot carries the 3 prior events' state+hash.
     sim.connect(PeerId(20));
+    sim.client_hello(PeerId(20), "A"); // the joiner plays A's knight
     let joiner = &sim.clients[&PeerId(20)];
     assert_eq!(joiner.applied(), seq_at_join);
     assert_eq!(joiner.log_hash(), hash_at_join);
@@ -226,15 +231,19 @@ fn late_joiner_gets_snapshot_plus_tail_and_converges() {
 fn invalid_intent_is_rejected_without_divergence() {
     let mut sim = Sim::new(HostSession::new(snapshot()));
     sim.connect(PeerId(10));
+    sim.client_hello(PeerId(10), "A"); // token 1 is A's knight
     sim.host_event(mv(1, (2, 1)));
     let seq = sim.host.seq();
     let hash = sim.host.log_hash();
 
-    // Out-of-bounds move and a move of a nonexistent token: both must
-    // fail validation on the host and never enter the log.
+    // Its own token, off the edge of the board: this one clears the ownership
+    // gate and must then fail the substrate's own validation. (Before the gate
+    // existed every case below was refused for bounds; now only this one is, so
+    // it is the case that still proves validation runs.)
     sim.client_intent(PeerId(10), mv(1, (99, 0)));
+    // A token that does not exist is nobody's, so it is refused as unowned.
     sim.client_intent(PeerId(10), mv(7, (2, 2)));
-    // A turn-add for a missing token is rejected too.
+    // And the turn order is the DM's, whatever token is named.
     sim.client_intent(PeerId(10), GameEvent::TurnAdd(TokenId(7)));
 
     assert_eq!(sim.host.seq(), seq, "rejected intents changed the log");
@@ -308,6 +317,110 @@ fn a_killing_blow_replicates_and_the_fallen_lose_their_turn() {
     assert_eq!(sim.host.state().turns.active(), Some(TokenId(1)));
     sim.host_event(GameEvent::TurnAdvance);
     assert_eq!(sim.host.state().turns.active(), Some(TokenId(1)));
+    assert_converged(&sim);
+}
+
+/// The substrate document is not a free-for-all. A joined peer may declare
+/// things about the tokens it commands and nothing else: the board itself, the
+/// initiative order, and the sheets every rule reads are the DM's.
+///
+/// This closes the gap C5 noted and left open ("a client's `TokenMoved` is not
+/// ownership-gated on the host"). It was never one missing check: intents fell
+/// through to a permissive catch-all, so every event nobody had explicitly
+/// refused was accepted from anyone. `SheetSet` was the sharp end -- there is no
+/// need to forge a 999-damage verdict, already refused, if you can set the
+/// boss's hit points to zero directly.
+#[test]
+fn a_player_commands_its_own_tokens_and_may_not_edit_the_board() {
+    let mut sim = Sim::new(HostSession::new(snapshot()));
+    sim.connect(PeerId(10));
+    sim.client_hello(PeerId(10), "B"); // token 2 is B's goblin; token 1 is A's knight
+
+    // Its own token moves and turns to face: an ordinary play move.
+    sim.client_intent(PeerId(10), mv(2, (5, 6)));
+    sim.client_intent(
+        PeerId(10),
+        GameEvent::Map(SessionEvent::TokenFaced {
+            id: TokenId(2),
+            facing: Facing::East,
+        }),
+    );
+    let goblin = sim.host.state().map.token(TokenId(2)).unwrap();
+    assert_eq!((goblin.at, goblin.facing), ((5, 6), Facing::East));
+
+    let seq = sim.host.seq();
+    let hash = sim.host.log_hash();
+
+    // Somebody else's token is not yours to walk around.
+    sim.client_intent(PeerId(10), mv(1, (4, 4)));
+    assert_eq!(sim.host.state().map.token(TokenId(1)).unwrap().at, (1, 1));
+
+    // The board is the DM's: no painting terrain, no raising ground, no
+    // spawning (a placed token carries its own `owner`, so an unchecked spawn
+    // hands out ownership of anything), and no deleting what you dislike.
+    let grass = sim.host.state().map.tile_kinds.len() as u16 - 1;
+    sim.client_intent(
+        PeerId(10),
+        GameEvent::Map(SessionEvent::TilePlaced {
+            layer: isometry_core::Layer::Ground,
+            at: (0, 0),
+            kind: isometry_core::TileKindId(grass),
+        }),
+    );
+    sim.client_intent(
+        PeerId(10),
+        GameEvent::Map(SessionEvent::ElevationSet {
+            at: (0, 0),
+            height: 3,
+        }),
+    );
+    sim.client_intent(
+        PeerId(10),
+        GameEvent::Map(SessionEvent::TokenPlaced(Token {
+            id: TokenId(50),
+            at: (3, 3),
+            facing: Facing::South,
+            sprite: "dragon".to_owned(),
+            owner: None, // claiming a DM-owned token outright
+        })),
+    );
+    sim.client_intent(
+        PeerId(10),
+        GameEvent::Map(SessionEvent::TokenRemoved { id: TokenId(1) }),
+    );
+    assert!(
+        sim.host.state().map.token(TokenId(1)).is_some(),
+        "a player deleted another player's token"
+    );
+    assert!(
+        sim.host.state().map.token(TokenId(50)).is_none(),
+        "a player spawned a token onto the board"
+    );
+
+    // The initiative order is the table's.
+    sim.client_intent(PeerId(10), GameEvent::TurnAdd(TokenId(2)));
+    sim.client_intent(PeerId(10), GameEvent::TurnSetOrder(vec![TokenId(2)]));
+    assert!(sim.host.state().turns.active().is_none());
+
+    // And a sheet is where every number a rule reads lives.
+    sim.client_intent(
+        PeerId(10),
+        GameEvent::SheetSet {
+            token: TokenId(1),
+            sheet: sheet("Knight", 0, 1), // the boss, at zero hit points
+        },
+    );
+    assert!(
+        sim.host.state().map.sheets.get(&TokenId(1)).is_none(),
+        "a player wrote another token's sheet"
+    );
+
+    assert_eq!(
+        sim.host.seq(),
+        seq,
+        "a refused intent entered the replicated log"
+    );
+    assert_eq!(sim.host.log_hash(), hash);
     assert_converged(&sim);
 }
 
@@ -891,11 +1004,21 @@ fn per_turn_counters_replicate_and_reset_when_the_turn_comes_round() {
 fn turn_order_replicates() {
     let mut sim = Sim::new(HostSession::new(snapshot()));
     sim.connect(PeerId(10));
+    sim.client_hello(PeerId(10), "A"); // token 1 is A's knight, and goes first
     sim.host_event(GameEvent::TurnAdd(TokenId(1)));
     sim.host_event(GameEvent::TurnAdd(TokenId(2)));
+    // A ends its own turn, which is the one turn it may end.
     sim.client_intent(PeerId(10), GameEvent::TurnAdvance);
 
     assert_eq!(sim.host.state().turns.active(), Some(TokenId(2)));
+    // Now it is B's turn, so A may not end it: a player cannot skip past
+    // somebody else, nor spam the order forward through an enemy's turn.
+    sim.client_intent(PeerId(10), GameEvent::TurnAdvance);
+    assert_eq!(
+        sim.host.state().turns.active(),
+        Some(TokenId(2)),
+        "a player ended a turn that was not its own"
+    );
     sim.host_event(GameEvent::TurnRemove(TokenId(2)));
     assert_eq!(sim.host.state().turns.active(), Some(TokenId(1)));
     assert_converged(&sim);
@@ -933,6 +1056,7 @@ fn move_and_facing_batch_orders_atomically() {
     // intent fully before the next.
     let mut sim = Sim::new(HostSession::new(snapshot()));
     sim.connect(PeerId(10));
+    sim.client_hello(PeerId(10), "A"); // token 1 is A's knight
     sim.client_intent(PeerId(10), mv(1, (2, 1)));
     sim.client_intent(
         PeerId(10),

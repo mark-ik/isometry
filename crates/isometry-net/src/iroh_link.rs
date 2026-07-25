@@ -418,7 +418,10 @@ mod tests {
             at: (6, 6),
             facing: Facing::North,
             sprite: "goblin".to_owned(),
-            owner: None,
+            // The joining client announces itself as "tester", and a peer may
+            // only move what it commands, so this is the token it plays. The
+            // knight above stays DM furniture (`owner: None`).
+            owner: Some("tester".to_owned()),
         });
         GameSnapshot {
             map,

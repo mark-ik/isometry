@@ -7,6 +7,7 @@
 //! Split out of `session.rs` on 2026-07-24; behavior unchanged.
 
 use super::*;
+use isometry_core::SessionEvent;
 
 impl HostSession {
     pub fn reconcile_pending_reveals(&mut self) -> Result<Vec<Outbound>, String> {
@@ -57,101 +58,6 @@ impl HostSession {
     /// misbehaving client cannot corrupt the authority).
     pub fn on_message(&mut self, from: PeerId, msg: NetMessage) -> Vec<Outbound> {
         match msg {
-            // Campaign reveals are DM-committed only (`local_event`); a
-            // client cannot make a hidden record public by proposing it.
-            // A resolution is a *verdict*, and a peer cannot pronounce its own.
-            // Accepting this as an intent would let a client choose whether it
-            // hit and how much damage it dealt. The rules run on the sequencer;
-            // a client asks, it does not decide. (The ask itself, an action
-            // intent a client can send, is the next step: it needs a message the
-            // host app can drain and resolve with its system plugin, since this
-            // crate is deliberately rules-blind.)
-            NetMessage::Intent {
-                event: GameEvent::ActionResolved(_),
-            } => vec![(
-                Recipient::One(from),
-                NetMessage::Rejected {
-                    reason: "actions are adjudicated by the host".to_owned(),
-                },
-            )],
-            // Travel is a verdict too: a client cannot pronounce where its party
-            // arrived, how long it took, or whether it got lost.
-            NetMessage::Intent {
-                event: GameEvent::TravelResolved { .. },
-            } => vec![(
-                Recipient::One(from),
-                NetMessage::Rejected {
-                    reason: "travel is adjudicated by the host".to_owned(),
-                },
-            )],
-            // The DM keeps the clock: a player does not declare hours passing.
-            NetMessage::Intent {
-                event: GameEvent::TimeAdvanced { .. },
-            } => vec![(
-                Recipient::One(from),
-                NetMessage::Rejected {
-                    reason: "the DM keeps the clock".to_owned(),
-                },
-            )],
-            // Travel is ruled by the host's own sweep (it watches for tokens
-            // standing on doors after every applied move), so a client walks
-            // through a door by walking; it never asks in words.
-            NetMessage::Intent {
-                event: GameEvent::Traveled { .. },
-            } => vec![(
-                Recipient::One(from),
-                NetMessage::Rejected {
-                    reason: "travel is ruled by the host".to_owned(),
-                },
-            )],
-            // A condition is a rules ruling with numbers attached; a client
-            // proposing one would be pronouncing what `prone` means. Standing up
-            // travels as an action intent instead, so the host's rules answer.
-            NetMessage::Intent {
-                event: GameEvent::ConditionSet { .. },
-            } => vec![(
-                Recipient::One(from),
-                NetMessage::Rejected {
-                    reason: "conditions are ruled by the host".to_owned(),
-                },
-            )],
-            NetMessage::Intent {
-                event:
-                    GameEvent::Fact(_)
-                    | GameEvent::InventorySet { .. }
-                    | GameEvent::ItemTransfer { .. }
-                    | GameEvent::ItemModifierRevealed(_)
-                    | GameEvent::Generation(_)
-                    | GameEvent::MapStored(_)
-                    | GameEvent::MapActivated { .. }
-                    | GameEvent::World(_),
-            } => vec![(
-                Recipient::One(from),
-                NetMessage::Rejected {
-                    reason: "campaign authoring is committed by the DM".to_owned(),
-                },
-            )],
-            // An emote needs no adjudication (there is no verdict to forge), but
-            // it does need ownership: waving is harmless, and puppeteering the
-            // DM's monsters is not. A player emotes their own tokens.
-            NetMessage::Intent {
-                event: GameEvent::Emoted { token, .. },
-            } if !self.peer_owns(from, token) => vec![(
-                Recipient::One(from),
-                NetMessage::Rejected {
-                    reason: "you can only emote your own tokens".to_owned(),
-                },
-            )],
-            // A stance is a declaration, not a verdict, so a player sets it on its
-            // own tokens (and only its own), exactly like an emote.
-            NetMessage::Intent {
-                event: GameEvent::StanceSet { token, .. },
-            } if !self.peer_owns(from, token) => vec![(
-                Recipient::One(from),
-                NetMessage::Rejected {
-                    reason: "you can only set the stance of your own tokens".to_owned(),
-                },
-            )],
             // A player asking to act. Two things are checkable without any rules
             // at all, so they are checked here: the actor exists, and it is
             // yours. Everything else -- reach, turn, whether it hits, what it
@@ -169,15 +75,127 @@ impl HostSession {
                 self.pending_actions.push(intent);
                 Vec::new()
             }
-            NetMessage::Intent { event } => match self.try_commit(event) {
-                Ok(out) => out,
-                Err(reason) => vec![(Recipient::One(from), NetMessage::Rejected { reason })],
-            },
+            NetMessage::Intent { event } => {
+                if let Some(reason) = self.intent_refusal(from, &event) {
+                    return vec![(Recipient::One(from), NetMessage::Rejected { reason })];
+                }
+                match self.try_commit(event) {
+                    Ok(out) => out,
+                    Err(reason) => vec![(Recipient::One(from), NetMessage::Rejected { reason })],
+                }
+            }
             NetMessage::Hello { name } => {
                 self.peer_names.insert(from, name);
                 Vec::new()
             }
             _ => Vec::new(),
+        }
+    }
+
+    /// Why `from` may not commit `event`, or `None` if it may.
+    ///
+    /// The one place a client's authority is decided, and **exhaustive on
+    /// purpose**: a new `GameEvent` variant fails to compile here until someone
+    /// says who may send it. It used to fall through to a permissive catch-all,
+    /// which is how `Map` and `SheetSet` came to be committable by any peer --
+    /// the forged-verdict arms were written one at a time as each verdict was
+    /// invented, and the events nobody thought about inherited "yes".
+    ///
+    /// Three rules, all checkable without running a single line of rules script,
+    /// which is what keeps this crate rules-blind:
+    ///
+    /// - **A verdict is the host's.** Whether you hit, what `prone` costs you,
+    ///   where the road took you. A peer pronouncing its own is forgery.
+    /// - **Authoring is the DM's.** The world, the maps, the terrain, the
+    ///   initiative order, and the sheets every rule reads its numbers from.
+    /// - **A declaration about your own token is yours.** Moving, facing,
+    ///   emoting, taking a stance. Ownership is the whole check; legality is not
+    ///   (reach and turn order are the rules', and the host does not re-derive
+    ///   them here).
+    fn intent_refusal(&self, from: PeerId, event: &GameEvent) -> Option<String> {
+        match event {
+            // Verdicts. A peer cannot choose whether it hit and for how much,
+            // what a condition means, or how its own journey went.
+            GameEvent::ActionResolved(_) => Some("actions are adjudicated by the host".to_owned()),
+            GameEvent::TravelResolved { .. } => {
+                Some("travel is adjudicated by the host".to_owned())
+            }
+            GameEvent::ConditionSet { .. } => Some("conditions are ruled by the host".to_owned()),
+            // Ruled by the host's own door sweep after each applied move, so a
+            // client walks through a door by walking; it never asks in words.
+            GameEvent::Traveled { .. } => Some("travel is ruled by the host".to_owned()),
+            GameEvent::TimeAdvanced { .. } => Some("the DM keeps the clock".to_owned()),
+
+            // Campaign authoring: what is true, what exists, and what it is worth.
+            GameEvent::Fact(_)
+            | GameEvent::InventorySet { .. }
+            | GameEvent::ItemTransfer { .. }
+            | GameEvent::ItemModifierRevealed(_)
+            | GameEvent::Generation(_)
+            | GameEvent::MapStored(_)
+            | GameEvent::MapActivated { .. }
+            | GameEvent::World(_) => Some("campaign authoring is committed by the DM".to_owned()),
+
+            // A sheet holds every number the rules read: hit points, AC, the
+            // ability scores. Replacing one outright is strictly stronger than
+            // the forged verdict already refused above -- there is no need to
+            // claim a 999-damage hit if you can simply set the boss to 0 hp. The
+            // DM edits sheets (a joined player's UI never offers it, per
+            // `can_edit_inventory`); damage reaches a sheet as an adjudicated
+            // `ActionResolved` delta instead.
+            GameEvent::SheetSet { .. } => {
+                Some("sheets are edited by the DM; damage arrives as a resolution".to_owned())
+            }
+
+            // Initiative is the table's business, not a player's: reordering it
+            // (or adding and dropping combatants) decides who acts and when.
+            GameEvent::TurnAdd(_) | GameEvent::TurnRemove(_) | GameEvent::TurnSetOrder(_) => {
+                Some("the turn order is set by the DM".to_owned())
+            }
+
+            // "I am done." Legitimate for whoever is up -- and only for them, or
+            // a player could end someone else's turn, or skip an enemy's by
+            // spamming it. Which token is active is replicated state, so this
+            // asks nothing of the rules.
+            GameEvent::TurnAdvance => match self.state.turns.active() {
+                Some(active) if self.peer_owns(from, active) => None,
+                _ => Some("you can only end your own turn".to_owned()),
+            },
+
+            // The substrate document. Moving and facing are declarations about a
+            // token, so they need ownership and nothing more. Painting terrain,
+            // spawning, and removing are authoring: a spawned token carries its
+            // own `owner` field, so an unchecked `TokenPlaced` hands out
+            // ownership of anything, and `TokenRemoved` deletes the boss.
+            GameEvent::Map(map_event) => match map_event {
+                SessionEvent::TokenMoved { id, .. } | SessionEvent::TokenFaced { id, .. } => {
+                    (!self.peer_owns(from, *id))
+                        .then(|| "you can only move your own tokens".to_owned())
+                }
+                SessionEvent::TilePlaced { .. }
+                | SessionEvent::ElevationSet { .. }
+                | SessionEvent::TokenPlaced(_)
+                | SessionEvent::TokenRemoved { .. } => {
+                    Some("the board is edited by the DM".to_owned())
+                }
+            },
+
+            // A declaration about your own token, with no verdict to forge and
+            // no state to change: the worst a liar can do is wave.
+            GameEvent::Emoted { token, .. } => (!self.peer_owns(from, *token))
+                .then(|| "you can only emote your own tokens".to_owned()),
+            GameEvent::StanceSet { token, .. } => (!self.peer_owns(from, *token))
+                .then(|| "you can only set the stance of your own tokens".to_owned()),
+
+            // A die in the shared log. Accepted from anyone, deliberately: this
+            // is the friendly-table trust model, where a forged total is no
+            // worse than lying about a physical die, and the table can see it.
+            // Attribution is *not* verified, because `by` legitimately carries a
+            // character or side name ("Knight", "side A") rather than the
+            // peer's, so it cannot be compared against the sender without a
+            // schema change. Worth revisiting with the tier-3 commit-reveal
+            // randomness the shared-authority plan describes.
+            GameEvent::Rolled(_) => None,
         }
     }
 

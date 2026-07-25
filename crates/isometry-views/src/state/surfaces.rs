@@ -17,7 +17,16 @@ impl UiState {
             self.status = "select a token first".to_owned();
             return;
         };
+        // Minting a sheet is DM work: the authority refuses a joined player's
+        // `SheetSet`, and binding one locally anyway would leave this peer
+        // holding a sheet the host never logged, until the next mirror wiped it
+        // (the orphan-sheet shape the `>spawn` review found). A player opening
+        // an unsheeted token simply sees nothing to show.
         if self.map.sheet(id).is_none() {
+            if !self.can_edit_inventory {
+                self.status = "no sheet yet; the DM binds one".to_owned();
+                return;
+            }
             self.bind_sheet_request = Some(id);
         }
         self.open_sheet = Some(id);

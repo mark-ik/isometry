@@ -206,7 +206,11 @@ pub fn overmap_swatch(ui: &UiState) -> Option<GraphCanvasSwatch<String, OvermapN
         // The overmap *is* the full view; there is nothing to expand into. The
         // chip used to render and get hidden with `display: none`, which left a
         // focusable, screen-reader-announced control that did nothing.
-        .with_expand(false);
+        .with_expand(false)
+        // A pointcrawl is unreadable as unnamed dots, and since cambium 0.3.2 the
+        // visible labels carry each node's `selected` / `hovered` state, so "here"
+        // can be emphasized without a parallel hand-rolled label layer.
+        .with_node_labels(true);
     // A larger ring for a full-panel canvas than the card default.
     swatch.node_radius = 6.0;
     swatch.edge_width = 1.5;
@@ -268,6 +272,39 @@ mod tests {
     /// would no longer hide the evidence.
     #[test]
     fn overmap_renders_no_expand_affordance() {
+        let swatch = overmap_swatch(&discovered_one_place()).expect("a discovered place draws");
+        assert!(
+            !swatch.show_expand,
+            "the overmap has no fuller view to expand into; wire the route before re-enabling"
+        );
+    }
+
+    /// The names come from the component, not a parallel layer. Isometry drew its
+    /// own `overmap-label*` layer until cambium 0.3.2 taught visible labels the
+    /// node's state; turning `show_labels` back off would render an unnamed
+    /// pointcrawl rather than fall back to anything, since the hand-rolled layer
+    /// is deleted. Cambium's own suite pins that the labels carry `selected` /
+    /// `hovered`, which is the emphasis "here" needs.
+    #[test]
+    fn the_component_draws_the_place_names() {
+        let ui = discovered_one_place();
+        let swatch = overmap_swatch(&ui).expect("a discovered place draws");
+        assert!(
+            swatch.show_labels,
+            "the pointcrawl reads as unnamed dots without the component's labels"
+        );
+        assert_eq!(
+            swatch.graph.nodes[0].label, "Here",
+            "the label the component renders is the place's name"
+        );
+        assert_eq!(
+            swatch.selected.as_deref(),
+            Some("here"),
+            "the party's place is the selected node, which is what emphasizes its label"
+        );
+    }
+
+    fn discovered_one_place() -> UiState {
         let mut ui = UiState::new(isometry_core::MapDocument::new("t", 2, 2));
         ui.world.places.insert(
             "here".to_owned(),
@@ -280,11 +317,13 @@ mod tests {
             },
         );
         ui.world.reveal("dm", "here");
-        let swatch = overmap_swatch(&ui).expect("a discovered place draws");
-        assert!(
-            !swatch.show_expand,
-            "the overmap has no fuller view to expand into; wire the route before re-enabling"
-        );
+        ui.world
+            .apply(&isometry_campaign::WorldEvent::PartyMoved {
+                party: "dm".to_owned(),
+                node: "here".to_owned(),
+            })
+            .expect("the party stands on a discovered place");
+        ui
     }
 }
 
@@ -312,66 +351,24 @@ pub fn overmap_overlay(ui: &UiState) -> Option<UiChild> {
     // The painted graph, when there is one; else the "find your way" hint.
     match overmap_swatch(ui) {
         Some(swatch) => {
-            // The swatch paints dots + edges and carries each place name only as
-            // an aria-label. A pointcrawl needs the names on screen, so overlay a
-            // label layer at the swatch's own projected node positions (same
-            // projection as the painted leaf, so labels sit on their dots). The
-            // layer is click-through; the swatch's hit targets under it travel.
-            let (cw, ch) = OVERMAP_CANVAS;
-            let labels: Vec<UiChild> = swatch
-                .projected_positions()
-                .into_iter()
-                .map(|(id, (x, y))| {
-                    let here = swatch.selected.as_deref() == Some(id.as_str());
-                    let hovered = swatch.hovered.as_deref() == Some(id.as_str());
-                    let class = if here {
-                        "overmap-label overmap-label-here"
-                    } else if hovered {
-                        "overmap-label overmap-label-hover"
-                    } else {
-                        "overmap-label"
-                    };
-                    let name = swatch
-                        .graph
-                        .nodes
-                        .iter()
-                        .find(|n| &n.id == id)
-                        .map(|n| n.label.clone())
-                        .unwrap_or_else(|| id.clone());
-                    Box::new(
-                        el::<_, UiState, ()>("div", text(name))
-                            .attr("class", class)
-                            .attr(
-                                "style",
-                                format!("position:absolute; left:{x:.0}px; top:{y:.0}px;"),
-                            ),
-                    ) as UiChild
-                })
-                .collect();
+            // The swatch draws its own named nodes (`with_node_labels`), so the
+            // place names ride the same projection as the painted dots by
+            // construction rather than by a second layer agreeing with the first.
             body.push(Box::new(
                 el(
                     "div",
-                    (
-                        graph_canvas_swatch(
-                            &swatch,
-                            // A node click asks the host to travel there.
-                            |ui: &mut UiState, id: String| ui.request_travel(id),
-                            // Enter/leave lifts the hovered node on the painted leaf.
-                            |ui: &mut UiState, id: Option<String>| ui.hover_overmap(id),
-                            // Never called: the swatch renders no Expand chip
-                            // (`with_expand(false)`).
-                            |_ui: &mut UiState| {},
-                        ),
-                        el::<_, UiState, ()>("div", labels)
-                            .attr("class", "overmap-labels")
-                            .attr("style", format!("width:{cw}px; height:{ch}px;")),
+                    graph_canvas_swatch(
+                        &swatch,
+                        // A node click asks the host to travel there.
+                        |ui: &mut UiState, id: String| ui.request_travel(id),
+                        // Enter/leave lifts the hovered node on the painted leaf.
+                        |ui: &mut UiState, id: Option<String>| ui.hover_overmap(id),
+                        // Never called: the swatch renders no Expand chip
+                        // (`with_expand(false)`).
+                        |_ui: &mut UiState| {},
                     ),
                 )
-                .attr("class", "overmap-graph")
-                .attr(
-                    "style",
-                    format!("position:relative; width:{cw}px; height:{ch}px;"),
-                ),
+                .attr("class", "overmap-graph"),
             ));
         }
         None => {

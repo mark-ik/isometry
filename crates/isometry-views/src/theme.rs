@@ -286,6 +286,9 @@ pub fn board_css() -> String {
 const GRAPH_CANVAS_SWATCH_PALETTE: &str = r#"
 .graph-canvas-swatch { background-color: #12151d; border-color: #2c3347; border-radius: 4px; }
 .graph-canvas-swatch-node:focus-visible { outline-color: #9fd48a; }
+.graph-canvas-swatch-label { color: #cfd3dd; font-size: 12px; }
+.graph-canvas-swatch-label.selected { color: #9fd48a; }
+.graph-canvas-swatch-label.hovered { color: #e8ebf2; }
 "#;
 
 /// The directional force beats, generated from the projection so a shove lands
@@ -349,10 +352,6 @@ const COMPENDIUM_CSS: &str = r#"
 .governance { position: absolute; left: 232px; top: 36px; width: 396px; background-color: #1b1e27; border: 1px solid #2c3347; border-radius: 4px; padding: 10px 10px 12px; z-index: 502; box-shadow: 0 8px 28px rgba(0,0,0,0.55); }
 .overmap { position: absolute; left: 232px; top: 36px; width: 480px; background-color: #1b1e27; border: 1px solid #2c3347; border-radius: 4px; padding: 10px 10px 12px; z-index: 503; box-shadow: 0 8px 28px rgba(0,0,0,0.55); }
 .overmap-graph { margin: 8px 0; }
-.overmap-labels { position: absolute; left: 0; top: 0; pointer-events: none; }
-.overmap-label { position: absolute; font-size: 12px; color: #cfd3dd; white-space: nowrap; transform: translate(9px, -8px); }
-.overmap-label-here { color: #9fd48a; font-weight: bold; }
-.overmap-label-hover { color: #e8ebf2; }
 .overmap-controls { display: flex; gap: 6px; margin-top: 8px; }
 .generator-proposal { color: #e8ebf2; font-size: 14px; font-weight: bold; margin: 10px 0; }
 .governance-row { padding: 8px; border-top: 1px solid #2c3347; cursor: pointer; }
