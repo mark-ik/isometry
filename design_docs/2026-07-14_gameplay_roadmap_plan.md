@@ -1,7 +1,7 @@
 # Gameplay roadmap
 
 **Date:** 2026-07-14
-**Status:** active plan. Order set by Mark 2026-07-14; **C1 (conditions), C2 (transition points), and C3 (split-party time) landed 2026-07-15**; C4 (generators + command grammar) is next.
+**Status:** active plan, substantially complete (status reconciled 2026-07-25). Order set by Mark 2026-07-14. **C1-C7 and C9a landed 2026-07-15..18**; C8 landed 2026-07-20 as exploration mode ([2026-07-18_exploration_mode_plan.md](2026-07-18_exploration_mode_plan.md)). Remaining: C9's tail (a real pixel tileset as pack CSS; pack distribution after the murm peer-runtime lands) plus the follow-ups noted under C7 and C5.
 **Related:** [adjudication_and_representation_plan](2026-07-14_adjudication_and_representation_plan.md)
 (complete; this continues its lane), [next_horizons_landscape](2026-07-07_next_horizons_landscape.md)
 (C1 answers its open question B.5; C2 takes its lane 2 recommendation),
@@ -32,7 +32,7 @@ displacement, conditions, allegiance) grows one type at a time.
    graph above the tactical maps, and the wilderness rules ride primitives mostly
    already shipped. Scoped and scheduled in
    [2026-07-18_exploration_mode_plan.md](2026-07-18_exploration_mode_plan.md)
-   (phases E0-E5); building from E0.
+   (phases E0-E5); **landed 2026-07-20** (E0-E6 plus the two follow-ons).
 9. **C9: Campaign pack options** — the PF2e skeleton **landed 2026-07-17**,
    below. Remaining: a real pixel tileset as pack CSS; pack distribution after
    the murm peer-runtime lands.
