@@ -493,5 +493,12 @@ impl UiState {
                 .position(|k| *k == stance)
                 .unwrap_or(STANCE_KEYS.len() - 1),
         );
+
+        // The compendium's namespace nav is the same shape with the catalog's
+        // tab state: truth is `compendium_tab`, the strip mirrors it.
+        self.compendium_tabs.selected = CompendiumTab::ALL
+            .iter()
+            .position(|t| *t == self.compendium_tab)
+            .unwrap_or(0);
     }
 }

@@ -797,6 +797,39 @@ fn selection_rows_mirror_mode_and_world() {
     assert_eq!(PACE_PCTS[1], 100);
 }
 
+/// The compendium's namespace strip is a mirror on the same terms as the
+/// selection rows, and its bridge is the one that does more than assign a
+/// field: switching a namespace also clears the open page, sort, scroll, and
+/// filter, so the strip must never be treated as the truth.
+#[test]
+fn compendium_tab_strip_mirrors_the_namespace() {
+    use crate::state::CompendiumTab;
+    let mut ui = UiState::new(demo_map());
+    ui.sync_selection_rows();
+    assert_eq!(ui.compendium_tabs.selected, 0, "Monsters is the first tab");
+
+    ui.set_compendium_tab(CompendiumTab::Items);
+    ui.sync_selection_rows();
+    assert_eq!(
+        ui.compendium_tabs.selected,
+        CompendiumTab::ALL
+            .iter()
+            .position(|t| *t == CompendiumTab::Items)
+            .unwrap(),
+        "the strip must follow compendium_tab"
+    );
+
+    // What the bridge has to run, and why poking the field would not do: a
+    // namespace switch resets everything scoped to the old namespace.
+    ui.compendium_selected = Some("goblin".to_owned());
+    ui.compendium_search = "gob".to_owned();
+    ui.compendium_scroll = 40.0;
+    ui.set_compendium_tab(CompendiumTab::Spells);
+    assert!(ui.compendium_selected.is_none(), "the open page follows");
+    assert!(ui.compendium_search.is_empty(), "the filter follows");
+    assert_eq!(ui.compendium_scroll, 0.0, "the scroll follows");
+}
+
 /// Stance is per-token and the row speaks for the lead token, so an unset
 /// stance must land on "Walk" (the empty key) rather than a stale index.
 #[test]

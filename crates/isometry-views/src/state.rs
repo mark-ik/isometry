@@ -11,7 +11,7 @@ use isometry_core::{
 };
 use isometry_net::{apply_game, GameEvent, GameSnapshot, ROLL_LOG_CAP};
 
-use cambium::{SelectionItem, SelectionState};
+use cambium::{CommandState, SelectionItem, SelectionState, TabStrip};
 
 /// Fixed side-panel width in logical px (CSS `.side` width plus its
 /// padding); the host uses it to keep drag painting off the panel.
@@ -272,6 +272,11 @@ pub struct UiState {
     pub mode_selection: SelectionState,
     pub pace_selection: SelectionState,
     pub stance_selection: SelectionState,
+    /// The catalog `tab_strip` state behind the compendium's namespace nav, on
+    /// the same terms: a mirror of [`Self::compendium_tab`], never the truth.
+    /// The catalog strip brings roving-tabindex arrow-key switching and the ARIA
+    /// tabs roles the hand-rolled nav had neither of.
+    pub compendium_tabs: TabStrip,
     /// Host-fed competing-binding projection and one-shot resolution request.
     /// The view never reads Moot stores or signs campaign operations.
     pub governance_conflict: Option<GovernanceConflict>,
@@ -292,6 +297,10 @@ pub struct UiState {
     /// Right-click context menu: the token it targets and the pane-space
     /// position (logical px) to anchor it at. `None` when closed.
     pub context_menu: Option<(TokenId, (f32, f32))>,
+    /// Interaction state for the catalog `command_menu` the context menu is
+    /// rendered by (its highlighted row and open submenu). Opening resets it,
+    /// so a fresh menu never starts on the row the last one ended on.
+    pub context_menu_state: CommandState,
     /// The SRD compendium (host-supplied view-side rows) and its overlay
     /// state: the open flag, the grid's scroll offset, and the sort
     /// (column index, descending).
@@ -335,6 +344,9 @@ impl UiState {
             reach: HashMap::new(),
             hover_tile: None,
             context_menu: None,
+            context_menu_state: CommandState::default()
+                .with_id("token-menu")
+                .with_label("Token actions"),
             net_mode: NetMode::Local,
             net_outbox: Vec::new(),
             viewer: None,
@@ -396,6 +408,7 @@ impl UiState {
             mode_selection: SelectionState::single(0).with_id("mode-row"),
             pace_selection: SelectionState::single(1).with_id("pace-row"),
             stance_selection: SelectionState::single(3).with_id("stance-row"),
+            compendium_tabs: TabStrip::new(0).with_label("Compendium namespaces"),
             generator_open: false,
             generator_preview: None,
             generator_choices: Vec::new(),

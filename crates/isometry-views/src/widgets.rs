@@ -8,27 +8,9 @@ use cambium::{clickable, el, text};
 use crate::board::UiChild;
 use crate::state::UiState;
 
-/// A segmented namespace nav: one clickable tab per `(label, active)`, firing
-/// `on_select(index)`. The compendium's Monsters/Spells/Items nav; a second
-/// consumer (roster tabs) can share it later.
-pub fn tab_strip(
-    tabs: Vec<(String, bool)>,
-    on_select: impl Fn(&mut UiState, usize) + Clone + 'static,
-) -> UiChild {
-    let items: Vec<UiChild> = tabs
-        .into_iter()
-        .enumerate()
-        .map(|(i, (label, active))| {
-            let class = if active { "tab tab-active" } else { "tab" };
-            let sel = on_select.clone();
-            Box::new(clickable(
-                el::<_, UiState, ()>("div", text(label)).attr("class", class),
-                move |ui: &mut UiState, _| sel(ui, i),
-            )) as UiChild
-        })
-        .collect();
-    Box::new(el::<_, UiState, ()>("div", items).attr("class", "tab-strip"))
-}
+// The namespace nav used to be a hand-rolled `tab_strip` here. It is Cambium's
+// `tab_strip` now (adopted 2026-07-25), which adds arrow-key switching and the
+// ARIA tabs roles this one never had.
 
 /// A floating titled panel over the board: a header (title plus action
 /// buttons) above a body, positioned by `panel_class`. The compendium and the

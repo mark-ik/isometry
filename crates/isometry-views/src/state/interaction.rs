@@ -59,6 +59,11 @@ impl UiState {
     pub fn open_context_menu(&mut self, id: TokenId, at: (f32, f32)) {
         self.select_token(id);
         self.context_menu = Some((id, at));
+        // A fresh menu starts at the top rather than wherever the last one was
+        // left, and with no submenu hanging open.
+        self.context_menu_state.selected = 0;
+        self.context_menu_state.submenu = None;
+        self.context_menu_state.submenu_selected = 0;
     }
 
     /// Close the context menu (a click elsewhere, or after an action).

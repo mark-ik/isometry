@@ -132,18 +132,31 @@ pub fn board_css() -> String {
 .sheet-mods .stat-row { min-width: 72px; font-size: 12px; margin-bottom: 2px; }
 .sheet-actions { display: flex; flex-wrap: wrap; }
 
-/* Right-click token context menu: a small card at the click position. */
-.context-menu {
-    position: absolute;
+/* Right-click token context menu: the catalog `command_menu`, themed here.
+   The component sets its own position, roles, and row structure; these are
+   colours plus the card the surrounding chrome expects. `.selected` is the
+   keyboard highlight, which is why it is styled distinctly from `:hover`. */
+.command-menu {
     min-width: 100px;
     padding: 4px;
     background-color: #1b1e27;
     border: 1px solid #3d4666;
     z-index: 100000;
 }
-.menu-title { color: #8b91a0; font-size: 11px; padding: 2px 6px 4px; }
-.menu-item { padding: 4px 8px; color: #cfd3dd; font-size: 13px; }
-.menu-item:hover { background-color: #323949; }
+.command-item { padding: 4px 8px; color: #cfd3dd; font-size: 13px; cursor: pointer; }
+.command-item:hover { background-color: #323949; }
+.command-item.selected { background-color: #293243; box-shadow: inset 3px 0 0 #9fd48a; }
+.command-item[aria-disabled="true"] { color: #6a7080; cursor: default; }
+.command-item[aria-disabled="true"]:hover { background-color: transparent; }
+.command-disabled-reason { color: #8a90a0; font-size: 11px; margin-left: 6px; }
+.command-shortcut { color: #8a90a0; font-size: 11px; margin-left: 6px; }
+.command-submenu-mark { color: #8a90a0; margin-left: 6px; }
+.command-submenu {
+    min-width: 100px;
+    padding: 4px;
+    background-color: #1b1e27;
+    border: 1px solid #3d4666;
+}
 
 .pane {
     position: relative;
@@ -391,9 +404,10 @@ const COMPENDIUM_CSS: &str = r#"
 .action-name { font-size: 13px; color: #e8ebf2; font-weight: bold; }
 .action-desc { font-size: 11px; color: #cfd3dd; }
 .spawn-btn { display: inline-block; background-color: #2c6e49; color: #eaffea; padding: 7px 14px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 13px; }
-.tab-strip { display: flex; gap: 4px; margin-bottom: 8px; }
+.tablist { display: flex; gap: 4px; margin-bottom: 8px; }
 .tab { font-size: 12px; color: #8a90a0; background-color: #232734; padding: 4px 11px; border-radius: 3px; cursor: pointer; }
-.tab-active { color: #eef1f7; background-color: #31527a; }
+.tab.selected { color: #eef1f7; background-color: #31527a; }
+.tab:focus-visible { outline: 1px solid #9fd48a; outline-offset: 1px; }
 .entry-name { font-size: 16px; font-weight: bold; color: #e8ebf2; margin-bottom: 2px; }
 .compendium-desc { font-size: 12px; color: #cfd3dd; line-height: 1.45; }
 .search-field { display: flex; align-items: center; justify-content: space-between; background-color: #232734; border: 1px solid #2c3347; border-radius: 3px; padding: 5px 9px; margin-bottom: 8px; font-size: 12px; }

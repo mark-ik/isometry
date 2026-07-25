@@ -10,7 +10,9 @@
 
 use std::rc::Rc;
 
-use cambium::{clickable, data_grid, el, on_wheel, text, GridColumn, GridSpec};
+use cambium::{
+    clickable, data_grid, el, lens, on_wheel, tab_strip, text, GridColumn, GridSpec, TabStrip,
+};
 
 use crate::board::UiChild;
 use crate::state::{CompendiumTab, ItemRow, MonsterRow, SpellRow, UiState};
@@ -28,13 +30,16 @@ pub fn compendium_overlay(ui: &UiState) -> Option<UiChild> {
         return None;
     }
     let tab = ui.compendium_tab;
-    let tabs: Vec<(String, bool)> = CompendiumTab::ALL
-        .iter()
-        .map(|t| (t.label().to_owned(), *t == tab))
-        .collect();
-    let nav = crate::widgets::tab_strip(tabs, |ui: &mut UiState, i| {
-        ui.set_compendium_tab(CompendiumTab::ALL[i])
-    });
+    // The catalog strip, on the ruled pump-side bridge: it writes only its own
+    // `TabStrip`, and `pump_selection_rows` notices the divergence from
+    // `compendium_tab` and runs the real switch (which also clears the search,
+    // sort, scroll, and open page). Arrow keys and the ARIA tabs roles come free
+    // with it; the hand-rolled nav had neither.
+    let labels: Vec<&str> = CompendiumTab::ALL.iter().map(|t| t.label()).collect();
+    let nav: UiChild = Box::new(lens(
+        move |tabs: &mut TabStrip| tab_strip(tabs, &labels),
+        |ui: &mut UiState| &mut ui.compendium_tabs,
+    ));
 
     let body: UiChild = match (ui.compendium_selected.as_deref(), tab) {
         (Some(key), CompendiumTab::Monsters) => ui

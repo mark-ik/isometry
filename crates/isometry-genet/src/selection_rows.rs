@@ -47,7 +47,15 @@ impl App {
             .unwrap_or_default();
         let stance_moved = wanted_stance.is_some_and(|s| s != current_stance);
 
-        if !mode_moved && !pace_moved && !stance_moved {
+        // The compendium's namespace strip, same shape. Switching is view state
+        // like mode, but it is not a plain field assignment: the real switch also
+        // clears the open page, the sort, the scroll, and the filter, so the
+        // divergence has to run `set_compendium_tab` rather than poke the field.
+        let tab_index = ui.compendium_tabs.selected;
+        let wanted_tab = isometry_views::CompendiumTab::ALL.get(tab_index).copied();
+        let tab_moved = wanted_tab.is_some_and(|t| t != ui.compendium_tab);
+
+        if !mode_moved && !pace_moved && !stance_moved && !tab_moved {
             return;
         }
 
@@ -65,6 +73,9 @@ impl App {
                 }
                 if let Some(stance) = wanted_stance.filter(|_| stance_moved) {
                     ui.request_stance(stance);
+                }
+                if let Some(tab) = wanted_tab.filter(|_| tab_moved) {
+                    ui.set_compendium_tab(tab);
                 }
             });
         }
