@@ -23,7 +23,7 @@ mod theme;
 mod widgets;
 
 pub use board::{board_root, UiChild};
-pub use demo::{demo_map, synth_map};
+pub use demo::{demo_map, synth_map, synth_world, SYNTH_PARTY};
 pub use overmap::{
     overmap_positions, overmap_score, overmap_swatch, OvermapNodeKind, ISOMETRY_OVERMAP_ADAPTER,
     OVERMAP_CANVAS, OVERMAP_LEAF_KEY,
@@ -35,6 +35,6 @@ pub use state::{
     ActionRow, CompendiumTab, EditMode, FactionMoveRow, FogLevel, GenerationRequest,
     GovernanceBindingRow, GovernanceConflict, GovernanceResolutionRequest, InitiativeMode,
     InventoryRequest, ItemRow, MonsterRow, NetMode, SheetSchema, SpellRow, StoryletRow, UiState,
-    PANEL_W,
+    MESSAGES_CAP, PANEL_W,
 };
 pub use theme::board_css;

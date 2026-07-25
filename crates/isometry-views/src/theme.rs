@@ -269,8 +269,24 @@ pub fn board_css() -> String {
     css.push_str(&voxel_token_css());
     css.push_str(&force_css());
     css.push_str(COMPENDIUM_CSS);
+    // Structure from the catalog, palette from here. The swatch's own classes
+    // (box, node buttons, focus ring, labels) were hand-copied into
+    // COMPENDIUM_CSS and drifted from the component; adopting the exported
+    // constant means a catalog change arrives instead of silently disagreeing.
+    css.push_str(cambium::GRAPH_CANVAS_SWATCH_CSS);
+    css.push_str(GRAPH_CANVAS_SWATCH_PALETTE);
     css
 }
+
+/// Isometry's palette over the catalog's structural swatch sheet. Colors, plus
+/// the one geometric value that has to agree with the chrome around it: every
+/// isometry surface is a 4px radius, and the catalog's 7px default would read as
+/// a foreign card dropped into the overmap panel. Nothing else belongs here --
+/// further geometry is the hand-roll creeping back in.
+const GRAPH_CANVAS_SWATCH_PALETTE: &str = r#"
+.graph-canvas-swatch { background-color: #12151d; border-color: #2c3347; border-radius: 4px; }
+.graph-canvas-swatch-node:focus-visible { outline-color: #9fd48a; }
+"#;
 
 /// The directional force beats, generated from the projection so a shove lands
 /// exactly one tile away rather than a guessed number of pixels.
@@ -337,10 +353,6 @@ const COMPENDIUM_CSS: &str = r#"
 .overmap-label { position: absolute; font-size: 12px; color: #cfd3dd; white-space: nowrap; transform: translate(9px, -8px); }
 .overmap-label-here { color: #9fd48a; font-weight: bold; }
 .overmap-label-hover { color: #e8ebf2; }
-.graph-canvas-swatch { background-color: #12151d; border: 1px solid #2c3347; border-radius: 4px; }
-.graph-canvas-swatch-node { background-color: transparent; border: 0; border-radius: 999px; cursor: pointer; padding: 0; }
-.graph-canvas-swatch-node:focus-visible { outline: 1px solid #9fd48a; outline-offset: 1px; }
-.graph-canvas-swatch-expand { display: none; }
 .overmap-controls { display: flex; gap: 6px; margin-top: 8px; }
 .generator-proposal { color: #e8ebf2; font-size: 14px; font-weight: bold; margin: 10px 0; }
 .governance-row { padding: 8px; border-top: 1px solid #2c3347; cursor: pointer; }

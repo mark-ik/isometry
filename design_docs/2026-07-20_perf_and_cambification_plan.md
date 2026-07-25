@@ -51,6 +51,9 @@ sprigging paint-leaf pipeline (07-19). Both held regressions. Severity order:
 
 ### Noted, not yet fixed (candidates, in value order)
 
+*Items 5, 6, and 9 were fixed on 2026-07-24; see Progress. Kept as written for
+the record of what was found.*
+
 5. **`emit_host_event` per event makes reveal bursts O(N) full round-trips.**
    A map read revealing N places emits N `NodeRevealed` events, each paying
    snapshot clone -> `HostSession::with_history` -> `apply_snapshot` -> fog +
@@ -88,6 +91,166 @@ scale with world size, which the demo lacks). The mechanisms above were each
 verified by reading the actual call paths; the fixes hold under the full test
 suite (core 58, campaign 28, net 42, system 48, views 34 green).
 
+## Findings
+
+### 2026-07-24: the scaled receipt
+
+The demo-scale caveat above is now retired. `isometry_views::synth_world`
+(`crates/isometry-views/src/demo.rs`) builds a campaign at real size -- sites on
+a sparse grid, one notable per site, factions, laws, and storylets in a mix that
+casts early, casts late, and never casts -- and
+`crates/isometry-views/tests/scaled_world.rs` measures against it.
+
+Release build, median of nine batches, storylets at half the place count:
+
+| places | storylets | world clone | swatch build | gate compare | storylet refresh |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 5 | 2 | 7.5 us | 4.7 us | 0.10 us | 0.8 us |
+| 50 | 25 | 73 us | 58 us | 1.0 us | 4.8 us |
+| 150 | 75 | 273 us | 250 us | 3.6 us | 13.9 us |
+| 400 | 200 | 623 us | 1050 us | 11 us | 42 us |
+
+What the columns settle:
+
+- **The four request-flag gates (item 4) avoid ~2.5ms per dispatch** at 400
+  places: four clones at ~623us each, on every click, key, and drag-step.
+- **The `overmap_open` guard (item 1) avoids ~1.05ms per frame.** At 60fps that
+  is ~6% of the frame budget, paid continuously, for a surface that is closed.
+- **The swatch-changed gate (item 2) costs ~11us to avoid that ~1050us**, about
+  100x, and that is its *worst* case: the compare is measured against an equal
+  swatch, which is the unchanged-frame steady state and the one path with no
+  early exit. An earlier draft compared against a differing swatch, exited on the
+  first node, and reported 0.01us; that number flattered the gate by three
+  orders of magnitude and is not the one to quote.
+- **Storylet refresh (item 6, still open) costs ~42us per dispatch** while the
+  surface is open. Real, an order of magnitude under the clones, and the reason
+  item 6 ranks below item 5 rather than above it.
+
+Cost is superlinear in places (2.7x places from 150 to 400 gives 4.2x swatch
+build), so these are floor figures for a campaign that outgrows 400 sites.
+
+The receipt is `#[ignore]`d and needs `--release`; debug timings are dominated
+by unoptimized BTreeMap walks and misreport the ratios:
+
+```sh
+cargo test -p isometry-views --release --test scaled_world -- --ignored --nocapture
+```
+
+Six sibling tests in that file always run, and they are the more durable half.
+They assert the swatch-changed gate is *sound* rather than fast: an unchanged
+world must rebuild an equal swatch (or the gate silently stops gating and the
+per-frame repaint returns unannounced), and a moved party, a revealed place, or
+a hover must each change it (or the overmap paints a stale map). Layout
+determinism is what makes the whole retention design work, and nothing else in
+the suite pins it.
+
+### 2026-07-24: the storylet clone, not the storylet resolve
+
+Item 6 named two costs, "world clone + `resolve_storylet` per storylet", and
+proposed a fix for the second. The receipt says the first was 15x larger:
+
+| | before | after |
+| --- | ---: | ---: |
+| world clone | 686 us | gone |
+| storylet resolve | 47 us | gone while unchanged |
+| inputs compare | -- | 45 us |
+| **per dispatch, surface open** | **733 us** | **45 us** |
+
+Gating only the resolve while keeping the clone would have saved ~6%. The clone
+was also unnecessary: `pump_storylets` cloned the world up front for both its
+paths, and the play path only ever asked `world.storylets.is_empty()`. The rows
+build fine from a borrow. Removing it and gating on the inputs is ~16x.
+
+Two shape choices worth keeping:
+
+- **Compare the inputs, not a revision counter.** A counter is a new invariant
+  every mutation site must honor, and one missed bump leaves the surface
+  silently stale -- a worse failure than the cost it saves. Comparing what the
+  rows were built from cannot go stale.
+- **The row builder is now a free, pure `storylet_rows(&world, &secret_ids)`.**
+  The gate is sound only if the rows depend on nothing but its cached inputs, so
+  the builder takes exactly those and nothing else. Adding a third input will
+  not compile past the call site, which is a better guarantee than a comment.
+
+### 2026-07-24: Cambium node labels cannot land yet
+
+The catalog lane called this "a clean delete-and-adopt". Half of it is: the
+Expand chip is now off at the model (`with_expand(false)`) instead of hidden
+with `display: none`, which had left a tabbable, screen-reader-announced button
+wired to a closure that did nothing. `GRAPH_CANVAS_SWATCH_CSS` is adopted, with
+Isometry keeping colors plus the 4px radius its chrome uses.
+
+The label half cannot. `graph_canvas_swatch` renders every visible label with
+one flat class:
+
+```rust
+// cambium 0.3.0 and 0.3.1, graph_canvas.rs -- illustrative excerpt
+el("span", node.label.clone())
+    .attr("class", "graph-canvas-swatch-label")
+```
+
+Isometry's overlay carries three states (`overmap-label-here` green and bold,
+`overmap-label-hover`, plain), and on a pointcrawl the party's location is the
+label layer's whole job. The `selected` / `hovered` classes the swatch does emit
+go on the node *buttons*, which sit in a different container, so no CSS
+relationship reaches the labels. Verified against both the published 0.3.0 and
+the local 0.3.1 source, so this is not a version-skew artifact.
+
+Adopting as-is would be a visible regression. The order is the one this plan
+already sets: land per-node label state classes upstream, release, then adopt.
+Until then the overlay stays.
+
+### 2026-07-24: the obviation lane needs a state bridge decided first
+
+Scoped before starting, because it is larger than "swap the call". The catalog's
+selection components are typed over Cambium's own state, not the consumer's:
+
+```rust
+// cambium 0.3.0, selection_bar.rs -- illustrative
+pub fn segmented_control(
+    state: &SelectionState,
+    items: &[SelectionItem],
+) -> impl View<SelectionState, (), GenetCtx, Element = GenetElement>
+```
+
+Isometry's rows are `View<UiState, ()>` and act directly (`clickable` -> a
+request flag the host pumps). Adopting therefore needs three things per surface,
+not one:
+
+1. A `SelectionState` field on `UiState` per row (mode, pace, stance).
+2. `lens` to project `UiState -> SelectionState`. Cambium re-exports `lens`,
+   `map_state`, and `map_action` from xilem_core, so the adapter exists.
+3. **A bridge from the component's state change back to a domain action.** The
+   component moves `SelectionState.selected`; it does not know that pace is a
+   replicated world event. Something has to notice and dispatch.
+
+Point 3 is the same question for all three rows, so it was answered once rather
+than three times.
+
+**RULED 2026-07-24 (Mark): pump-side compare.** `SelectionState.selected` is a
+request the host reconciles each dispatch, the shape `pump_overmap` and the
+storylet gate already use. One convention across the codebase beats a second
+event path. The alternative considered and declined was `map_action` (the
+segment emitting a domain action directly): closer to the component's intent,
+but it would run alongside the request-flag convention rather than replacing it.
+
+Each pump reads its cheap flag before doing anything, per the item-4 fix.
+
+The same question governs `command_menu` (dismissal state) and
+`caret_text_field` (a `TextInput` replacing three bespoke key-capture lanes in
+`genet::key()`, which is also where the focus and key-routing done-conditions
+live). Deciding the bridge once unblocks all of them; deciding it per surface is
+how the lane ends up with three conventions.
+
+### 2026-07-24: the leaf-gate generalization is not yet worth writing
+
+Scoped and dropped. `OVERMAP_LEAF_KEY` is the only key ever inserted into the
+host's `LeafRegistry` (`main.rs:433`), so an "any registered leaf changed?"
+rewrite would generalize a fan-out with one member and no way to exercise the
+other paths. The second leaf is real but unscheduled (`appearance_preview`,
+chisel Path-B, in the campaign-packs plan). Revisit when it lands; the current
+gate is ~25 lines and reads clearly.
+
 ## Cambification
 
 Already adopted: `data_grid` (compendium), `summary_body` (downtime),
@@ -104,7 +267,7 @@ Already adopted: `data_grid` (compendium), `summary_body` (downtime),
 | `record_card` + `stat_row`/`stat_list` | `summary_body` (title/eyebrow/facts) or `detail_panel` (`DetailRow`/`DetailSection`) | The facts vec is exactly the stat-list shape; one of the two components covers each consumer. |
 | Turn list / roll log / messages panes | `sectioned_list` | Moderate value; brings selection + row kinds. |
 | `overlay_panel` | keep the layout, adopt `overlay_surface` semantics | The catalog surface owns Escape/outside-click/roles; isometry surfaces currently hand-roll or lack dismissal. |
-| Hand-copied `.graph-canvas-swatch*` CSS in `theme.rs` | `GRAPH_CANVAS_SWATCH_CSS` | Adopt the exported structural constant; keep only palette overrides host-side. |
+| ~~Hand-copied `.graph-canvas-swatch*` CSS in `theme.rs`~~ | `GRAPH_CANVAS_SWATCH_CSS` | **Adopted 2026-07-24.** Structure from the constant, `GRAPH_CANVAS_SWATCH_PALETTE` keeps colors plus the 4px radius the surrounding chrome uses. |
 
 ### Shared projection and catalog lanes
 
@@ -116,6 +279,8 @@ Already adopted: `data_grid` (compendium), `summary_body` (downtime),
 2. **Visible node labels landed in `graph_canvas_swatch`.** Cambium 0.3.0 ships
    `with_node_labels` and `with_expand`; Isometry can now delete its duplicate
    label projection and the hidden no-op Expand route as a local adoption slice.
+   *Revised 2026-07-24: the Expand half landed, the label half is blocked on an
+   upstream change. See Findings.*
 
 **Constraint:** isometry's committed manifest pins published `cambium = 0.3.0`
 and `sprigging = 0.2.0` (local checkouts only override via the gitignored
@@ -131,19 +296,59 @@ mere-style split (per-surface state modules; host concerns out of main) would
 pay for itself. Candidate seams: overmap/story/downtime/generator state blocks;
 the pump family; the selftest family.
 
+**Done 2026-07-24.** Also corrected: the repo *does* state a ceiling, 600 LOC
+per file in `CLAUDE.md`, and the note missed the second-largest file entirely
+(`isometry-system/src/lib.rs`, 3672). All three are split:
+
+| file | before | after | modules |
+| --- | ---: | ---: | --- |
+| `isometry-genet/src/main.rs` | 4012 | 500 | `render`, `input`, `dispatch`, `host`, `sheets`, `adjudicate`, `storylets`, `overmap`, `generators`, `selftest`, `catalog` |
+| `isometry-views/src/state.rs` | 3161 | 377 | `state/{rows,surfaces,play,session,interaction,tests}` |
+| `isometry-system/src/lib.rs` | 3672 | 413 | `sys/{system_core,system_actions,generator,lua_read,lua_write,srd}`, `tests` |
+
+Mechanical: no behavior changed, and the split is verifiable as such because the
+suite is untouched and green (`--all-features`, 18 targets). Method bodies moved
+into `impl` blocks in sibling modules, which needed `pub(crate)` on items that
+now cross a module boundary and were previously private within one file.
+
+Every non-test source file is now under the ceiling. What remains over it:
+
+| file | lines | note |
+| --- | ---: | --- |
+| `isometry-net/tests/replication.rs` | 1970 | test file |
+| `isometry-net/src/session.rs` | 1325 | **not yet split**, next candidate |
+| `isometry-system/src/tests.rs` | 1285 | test file |
+| `isometry-net/src/campaign_space.rs` | 1271 | **not yet split** |
+| `isometry-campaign/src/world.rs` | 860 | **not yet split** |
+| `isometry-views/src/state/tests.rs` | 768 | test file |
+
+The test files were moved wholesale rather than distributed across the new
+modules; splitting them follows the code they cover, and is worth doing when a
+module's tests are what someone is actually reading.
+
 ## Done conditions
 
 - [x] Lag mechanisms identified with call-path evidence (items 1-4) and fixed.
 - [x] Full test suite green after the fixes.
-- [ ] Batched `emit_host_events` for reveal bursts (item 5).
-- [ ] Storylet refresh-on-change (item 6).
+- [x] Scaled receipt: a synthetic campaign world, gate-soundness tests that
+      always run, and measured figures for items 1, 2, 4, and 6 (2026-07-24).
+- [x] Batched `emit_host_events` for reveal bursts (item 5, 2026-07-24).
+- [x] Storylet refresh-on-change (item 6, 2026-07-24) -- and the world clone it
+      turned out to be hiding, which was the larger half.
+- [x] `UiState.messages` capped at `MESSAGES_CAP` (item 9, 2026-07-24).
+- [x] Adopt `GRAPH_CANVAS_SWATCH_CSS` and drop the no-op Expand route
+      (2026-07-24).
+- [x] Split the three oversized files (2026-07-24); see the file-size note.
 - [ ] Obviation lane: adopt `segmented_control`, `tab_bar`, `command_menu`,
-      `caret_text_field`, `GRAPH_CANVAS_SWATCH_CSS` (each its own small PR-
-      sized change, in that order of value).
-- [ ] Projection lane: consume the Scenograph scene contract in P4 and delete
+      `caret_text_field` (each its own small PR-sized change, in that order of
+      value). Bridge decided; see Findings.
+- [ ] Split `isometry-net/src/session.rs` (1325) and `campaign_space.rs` (1271),
+      and `isometry-campaign/src/world.rs` (860).
+- [x] Projection lane: consume the Scenograph scene contract in P4 and delete
       `Overmap::layout`.
-- [ ] Catalog lane: adopt Cambium 0.3.0 node labels and remove Isometry's
-      duplicate label projection and no-op Expand route.
+- [ ] Catalog lane: adopt Cambium node labels. **Blocked upstream** -- see
+      Findings; the swatch emits one flat label class and cannot express the
+      here/hover states Isometry's overlay carries.
 
 ## Progress
 
@@ -151,3 +356,24 @@ the pump family; the selftest family.
   published; Isometry bumped to the published Cambium/Sprigging pair. Cambium
   Winit 0.3.0 remains source-only until `genet-layout` has a standalone
   crates.io release.
+- **2026-07-24:** Scaled receipt landed (`synth_world` + `tests/scaled_world.rs`);
+  see Findings. Items 1, 2, and 4 now have measured figures instead of
+  call-path argument alone, and item 6 has a size. The leaf-gate generalization
+  was scoped and dropped for want of a second leaf.
+- **2026-07-24:** Items 5, 6, and 9 fixed. `emit_host_events(Vec<GameEvent>)`
+  applies a burst to one `HostSession` for one fog + reach recompute, with
+  `emit_host_event` delegating to it so no call site changed; the map read is
+  its first consumer. `pump_storylets` lost its world clone entirely and gates
+  the rebuild on a `(world, secret_ids)` compare through the new pure
+  `storylet_rows`. `UiState::push_message` caps the whisper log at
+  `MESSAGES_CAP` (50).
+- **2026-07-24:** The three oversized files split (see the file-size note):
+  `main.rs` 4012 -> 500, `state.rs` 3161 -> 377, `isometry-system/src/lib.rs`
+  3672 -> 413. Mechanical, suite unchanged and green. The obviation lane's
+  state-bridge question was scoped and ruled (pump-side compare) before any
+  surface was migrated.
+- **2026-07-24:** Catalog lane half-landed: `with_expand(false)` and
+  `GRAPH_CANVAS_SWATCH_CSS` adopted, node labels blocked upstream. Suite green
+  at `--all-features`: core 56, campaign 28, net 10 + 42, system 48, views 40 +
+  6, voxel 7, genet 5, graphshell 2 (244 total, plus the ignored receipt). The
+  "core 58" in the measurement notes above was already stale when quoted.

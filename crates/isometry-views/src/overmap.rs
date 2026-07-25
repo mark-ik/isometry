@@ -202,7 +202,11 @@ pub fn overmap_swatch(ui: &UiState) -> Option<GraphCanvasSwatch<String, OvermapN
 
     let mut swatch = GraphCanvasSwatch::new(OVERMAP_LEAF_KEY, GraphCanvasSubgraph { nodes, edges })
         .with_size(OVERMAP_CANVAS.0, OVERMAP_CANVAS.1)
-        .with_label("Overmap");
+        .with_label("Overmap")
+        // The overmap *is* the full view; there is nothing to expand into. The
+        // chip used to render and get hidden with `display: none`, which left a
+        // focusable, screen-reader-announced control that did nothing.
+        .with_expand(false);
     // A larger ring for a full-panel canvas than the card default.
     swatch.node_radius = 6.0;
     swatch.edge_width = 1.5;
@@ -255,6 +259,32 @@ mod tests {
             scene
         );
         assert_eq!(overmap_positions(&overmap).len(), 3);
+    }
+
+    /// The Expand chip is off at the model, not hidden at the sheet. The old
+    /// `display: none` left a real button in the tree: tabbable, announced as
+    /// "Expand graph", and wired to a closure that did nothing. Switching it
+    /// back on without also wiring a full-canvas route re-creates that, and CSS
+    /// would no longer hide the evidence.
+    #[test]
+    fn overmap_renders_no_expand_affordance() {
+        let mut ui = UiState::new(isometry_core::MapDocument::new("t", 2, 2));
+        ui.world.places.insert(
+            "here".to_owned(),
+            isometry_campaign::WorldPlace {
+                id: "here".to_owned(),
+                name: "Here".to_owned(),
+                tags: Vec::new(),
+                map: None,
+                position: None,
+            },
+        );
+        ui.world.reveal("dm", "here");
+        let swatch = overmap_swatch(&ui).expect("a discovered place draws");
+        assert!(
+            !swatch.show_expand,
+            "the overmap has no fuller view to expand into; wire the route before re-enabling"
+        );
     }
 }
 
@@ -328,7 +358,8 @@ pub fn overmap_overlay(ui: &UiState) -> Option<UiChild> {
                             |ui: &mut UiState, id: String| ui.request_travel(id),
                             // Enter/leave lifts the hovered node on the painted leaf.
                             |ui: &mut UiState, id: Option<String>| ui.hover_overmap(id),
-                            // No full-canvas route yet; Expand is hidden in CSS.
+                            // Never called: the swatch renders no Expand chip
+                            // (`with_expand(false)`).
                             |_ui: &mut UiState| {},
                         ),
                         el::<_, UiState, ()>("div", labels)
