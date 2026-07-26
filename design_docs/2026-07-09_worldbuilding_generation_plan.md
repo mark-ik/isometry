@@ -750,5 +750,5 @@ their Armillary-owned authority session.
 - 2026-07-11: The campaign authority path propagated generic request
   correlation into Armillary (`RequestId`, `RequestIds`, `Correlated<T>`).
   Isometry now reports campaign acceptance/rejection against the initiating
-  request and reserves bridge failure for actor/runtime failure. Merecat's
+  request and reserves bridge failure for actor/runtime failure. Turnstone's
   action/effect plan and Strophe's project-worker plan point at the same seam.
