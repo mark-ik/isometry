@@ -4713,8 +4713,6 @@ dependencies = [
  "murm-replication",
  "p2panda-core",
  "p2panda-encryption",
- "p2panda-net",
- "p2panda-sync",
  "personae",
  "serde",
  "thiserror 1.0.69",

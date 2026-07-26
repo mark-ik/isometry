@@ -342,6 +342,25 @@ So it waits on the same land-release-adopt order the node labels waited on, with
 `command_menu` (Escape, arrows) is inert for the same reason 1, and lights up
 free when the seam lands.
 
+**It also already has an owner, checked 2026-07-26 before building anything.**
+Genet's `2026-07-25_text_editing_primitive_plan.md` was founded the day this
+adoption was attempted, as owner of the 2026-07-24 ruling: build editable text
+once at the cambium/genet primitive layer, with the toolkit `text_input`,
+fullweb forms, and the knot editor as its consumers. Its T4 *is* the
+`text_input` `caret_text_field` belongs to, and it is deliberately at "no code,
+queued behind livery." Mere's `2026-07-25_knot_port_plan.md` is queued on the
+same primitive ("the largest single item the port depends on and it is not ours
+to build here"), so knot is a sibling consumer waiting alongside Isometry, not a
+step before it.
+
+Which settles the sequencing question rather than leaving it to taste: building
+an Isometry-local key-routing seam now would hand-roll the host key and IME
+routing T0 is chartered to inventory and T3 to rule, and would make Isometry a
+consumer of a control T4 is about to rebuild underneath it. The chain is livery
+(the declared long pole, holding focus) -> the text primitive T0-T4 -> this
+adoption. Isometry's constraint is recorded under that plan's T4, so the
+eventual design accounts for a host that captures every key.
+
 Also corrected: the lane's table claimed `command_menu` "deletes the
 hand-rolled dismissal branch in the winit host." It deletes half of it. Escape
 is the component's, but a DOM subtree cannot observe a click *outside* itself
