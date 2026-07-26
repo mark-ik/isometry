@@ -69,16 +69,23 @@ graphshell-stdio = { git = "https://github.com/mark-ik/mere.git", branch = "main
 # owned repos so any machine resolves; local checkouts override via the
 # gitignored .cargo/config.toml source-specific [patch] entries. Cambium
 # supplies the view toolkit while Genet supplies the engine and host crates.
-# 0.3.2 is a floor, not decoration: the overmap adopted `with_node_labels`, whose
-# labels only carry node state from 0.3.2 on. Against 0.3.1 the pointcrawl would
-# still compile and still render names, just without the "here" emphasis -- a
-# silent visual regression, which is why the requirement is stated rather than
-# left to a caret range that happens to resolve.
-cambium = "0.3.2"
+# **Git, not crates.io** (Mark's ruling, 2026-07-26): the family resolves from
+# genet.git until there is an actual GitHub release to consume, and crates.io
+# releases keep being cut for external consumers rather than for us. Isometry was
+# the only repo still taking these from the registry, and it was the one carrying
+# the hazard: published cambium/sprigging resolve `paint_list_api` from crates.io
+# while this workspace git-deps netrender's, so `sprigging::PaintCmd` was not
+# `paint_list_api::PaintCmd`. The gitignored [patch] file hid that here by
+# redirecting sprigging to a path; a clean checkout would not have.
+#
+# The node-label floor the registry pin used to state is now carried by the
+# branch itself: `with_node_labels` labels only carry node state from 0.3.2 on,
+# and main is past it.
+cambium = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 # Cambium's retained custom-paint leaves (the graph-canvas swatch's painted
-# nodes + edges). A host wires them directly, the pelt-desktop pattern; cambium
-# depends on this same published version, so they unify to one copy.
-sprigging = "0.2.0"
+# nodes + edges). A host wires them directly, the pelt-desktop pattern. From the
+# same git source as cambium, which is what keeps one `PaintCmd` in the graph.
+sprigging = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 layout-dom-api = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 genet-scripted-dom = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 genet-layout = { git = "https://github.com/mark-ik/genet.git", branch = "main" }

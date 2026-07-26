@@ -1051,7 +1051,7 @@ dependencies = [
 
 [[package]]
 name = "chartulary"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "codicil",
  "muniment",
@@ -10614,6 +10614,14 @@ dependencies = [
 ]
 
 [[patch.unused]]
+name = "cambium-winit"
+version = "0.3.0"
+
+[[patch.unused]]
+name = "netfetcher"
+version = "0.1.1"
+
+[[patch.unused]]
 name = "graphshell"
 version = "0.0.1"
 
@@ -10643,12 +10651,4 @@ version = "0.1.1"
 
 [[patch.unused]]
 name = "vates"
-version = "0.1.1"
-
-[[patch.unused]]
-name = "cambium-winit"
-version = "0.3.0"
-
-[[patch.unused]]
-name = "netfetcher"
 version = "0.1.1"
