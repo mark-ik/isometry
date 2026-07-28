@@ -1,13 +1,12 @@
 # Performance and cambification
 
 **Date:** 2026-07-20
-**Status:** ACTIVE, one item left. Every performance regression is fixed and
-receipted, the files are split, and the catalog and obviation lanes are adopted
-except `caret_text_field`, which is blocked on a host key-routing seam and on
-a host key-routing seam that belongs to genet's text-editing primitive plan
-(2026-07-25; see Findings). Its second blocker, an unpublishable `cambium-winit`,
-cleared 2026-07-26. The plan also absorbed one thing it did not start with: the
-client-intent authority gap C5 left open.
+**Status:** ACTIVE, one adoption item left. Every performance regression is
+fixed and receipted, the files are split, and the catalog lane is adopted. The
+text-routing blocker cleared 2026-07-27 and the `>` command line now uses
+Cambium's field; the search and whisper capture lanes remain. The plan also
+absorbed one thing it did not start with: the client-intent authority gap C5
+left open.
 **Trigger:** Mark reported "an odd lag that wasn't present a few days ago" and
 asked for an audit: duplications/inefficiencies lowering fps, plus candidates
 for cambification (promotion into the Cambium catalog, or obviation by adopting
@@ -317,52 +316,17 @@ convention, because the ruling was about two-way selection bindings and a menu
 activation is not one -- worth saying plainly, since "one convention" was the
 whole reason `map_action` was declined for the rows.
 
-**`caret_text_field` cannot land, for two independent reasons.**
+**Resolved 2026-07-27.** The shared primitive now separates platform-neutral
+`TextCommand` mutation from Genet/Parley visual geometry, and
+`cambium-winit` translates both keys and IME payloads. Isometry can therefore
+keep host-owned Escape and Enter while dispatching the remaining focused-field
+input through the DOM.
 
-1. **The host never routes a key to the DOM.** `isometry-genet`'s `key()`
-   handles every key itself and returns; `runner.dispatch_key` is never called
-   anywhere in the repo. `caret_text_field` *is* `on_key(el("input"), edit)` --
-   DOM key routing is its entire mechanism. The three bespoke key-capture lanes
-   exist precisely because the host captures keys, so adopting the component
-   means first building a key-routing seam (focus the field when a lane opens,
-   translate and dispatch, keep Escape/Enter as app semantics). That is a real
-   change to the host input model, with every existing shortcut as the
-   regression surface, and it wants runtime verification rather than a green
-   suite.
-2. ~~**The translation helper is in an unpublishable crate.**~~ **Cleared
-   2026-07-26, twice over.** `cambium-winit` exports the missing piece,
-   `key_event_from_winit`, and used to be unpublishable because bare `path` deps
-   on `genet-layout` and `genet-winit-host` (both `publish = false`) sat in its
-   manifest. Those were needed by its a11y host *alone*, which is now
-   `cambium-winit-a11y`; the thin crate depends on `cambium` + `winit` and
-   dry-run-publishes clean. And Mark ruled git-first for the whole family the
-   same day, so Isometry no longer resolves the catalog from the registry at all
-   -- which also retired the `paint_list_api` hazard this plan had flagged as a
-   clean-checkout risk. Either change alone would have been enough.
-
-So it waits on the same land-release-adopt order the node labels waited on, with
-`genet-layout`'s standalone release as the upstream event. The keyboard half of
-`command_menu` (Escape, arrows) is inert for the same reason 1, and lights up
-free when the seam lands.
-
-**It also already has an owner, checked 2026-07-26 before building anything.**
-Genet's `2026-07-25_text_editing_primitive_plan.md` was founded the day this
-adoption was attempted, as owner of the 2026-07-24 ruling: build editable text
-once at the cambium/genet primitive layer, with the toolkit `text_input`,
-fullweb forms, and the knot editor as its consumers. Its T4 *is* the
-`text_input` `caret_text_field` belongs to, and it is deliberately at "no code,
-queued behind livery." Mere's `2026-07-25_knot_port_plan.md` is queued on the
-same primitive ("the largest single item the port depends on and it is not ours
-to build here"), so knot is a sibling consumer waiting alongside Isometry, not a
-step before it.
-
-Which settles the sequencing question rather than leaving it to taste: building
-an Isometry-local key-routing seam now would hand-roll the host key and IME
-routing T0 is chartered to inventory and T3 to rule, and would make Isometry a
-consumer of a control T4 is about to rebuild underneath it. The chain is livery
-(the declared long pole, holding focus) -> the text primitive T0-T4 -> this
-adoption. Isometry's constraint is recorded under that plan's T4, so the
-eventual design accounts for a host that captures every key.
+The first real lane is the `>` command line. Its draft is now a `TextInput`, the
+view uses `caret_text_field`, opening the lane requests focus, the host enables
+IME only while it is focused, and candidate placement comes from retained
+layout geometry. Search and whisper still carry their old capture paths. Their
+remaining adoption is local follow-through rather than an upstream gate.
 
 Also corrected: the lane's table claimed `command_menu` "deletes the
 hand-rolled dismissal branch in the winit host." It deletes half of it. Escape
@@ -426,7 +390,7 @@ Already adopted: `data_grid` (compendium), `summary_body` (downtime),
 | ~~`widgets::tab_strip` (compendium nav)~~ | `tabs::tab_strip` | **Adopted 2026-07-25.** The name collision is gone with the hand-roll. Brings roving-tabindex arrow keys and the ARIA tabs roles. |
 | ~~Mode row, pace row, stance row~~ | `segmented_control` | **Adopted 2026-07-24.** Three consumers at once. |
 | ~~Context menu (`board.rs::context_menu_overlay`)~~ | `command_menu` | **Adopted 2026-07-25.** Brings `role="menu"`, disabled-with-reason rows, submenus, and Escape. *Not* outside-click: the host branch stays, see Findings. |
-| `search_field` (display-only) + the `>` command line + the whisper composer (all host-routed key capture) | `caret_text_field` / `styled_field` | **Blocked on one thing:** a host key-routing seam, owned by genet's text-editing primitive plan. The packaging half cleared 2026-07-26. Still the biggest UX upgrade of the lane; see Findings. |
+| `search_field` (display-only) + the `>` command line + the whisper composer (all host-routed key capture) | `caret_text_field` / `styled_field` | **Partly adopted 2026-07-27:** the command line is on the shared field and host-routing seam. Search and whisper remain local follow-through; the upstream blocker is gone. |
 | `record_card` + `stat_row`/`stat_list` | `summary_body` (title/eyebrow/facts) or `detail_panel` (`DetailRow`/`DetailSection`) | The facts vec is exactly the stat-list shape; one of the two components covers each consumer. |
 | Turn list / roll log / messages panes | `sectioned_list` | Moderate value; brings selection + row kinds. |
 | `overlay_panel` | keep the layout, adopt `overlay_surface` semantics | The catalog surface owns Escape/outside-click/roles; isometry surfaces currently hand-roll or lack dismissal. |
@@ -507,11 +471,9 @@ module's tests are what someone is actually reading.
 - [x] Obviation lane, `tab_strip` and `command_menu` (2026-07-25). The menu also
       settled the one-shot-action case the bridge ruling did not cover, and
       gained disabled-with-reason rows the hand-roll could not express.
-- [ ] Obviation lane, `caret_text_field`: **blocked on one thing** -- the host
-      routes no key to the DOM, and that seam belongs to genet's text-editing
-      primitive plan (T3/T4), not here. The packaging half cleared 2026-07-26
-      when `cambium-winit` split and the family moved to git. Not mechanical;
-      see Findings.
+- [ ] Obviation lane, `caret_text_field`: command line adopted 2026-07-27 with
+      focus, shared key/IME dispatch, undo, and retained-layout candidate
+      placement. Search and whisper remain; they are no longer blocked upstream.
 - [x] Split `isometry-net/src/session.rs`, `campaign_space.rs`, and
       `isometry-campaign/src/world.rs` (2026-07-24). Every non-test source file
       in the repo is now under the 600-LOC ceiling.
@@ -556,6 +518,14 @@ module's tests are what someone is actually reading.
   non-test source file is now under the ceiling. Cambium 0.3.2 teaches visible
   labels their node state, which leaves only the publish step between here and
   the label adoption. Suite green at `--all-features`, 18 targets.
+- **2026-07-27:** The Genet text primitive cleared the host-routing gate and the
+  `>` command lane adopted it. `command_draft` is a `TextInput`;
+  `caret_text_field` owns the view; Escape and Enter remain app commands; other
+  keys and IME events dispatch through Cambium; retained layout supplies the
+  candidate rectangle. Verification is green: isometry-genet 5,
+  isometry-views 46 plus 6 scaled-world tests (one receipt ignored), and the
+  full workspace `--all-features` check. That wider check also corrected the
+  optional campaign-sync import after `murm-replication` became Stickleback.
 - **2026-07-26:** The catalog family moves from crates.io to `genet.git` by
   branch (Mark's git-first ruling: keep cutting registry releases for external
   consumers, consume from git until there is a real GitHub release). Isometry was

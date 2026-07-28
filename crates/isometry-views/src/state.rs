@@ -11,7 +11,7 @@ use isometry_core::{
 };
 use isometry_net::{apply_game, GameEvent, GameSnapshot, ROLL_LOG_CAP};
 
-use cambium::{CommandState, SelectionItem, SelectionState, TabStrip};
+use cambium::{CommandState, SelectionItem, SelectionState, TabStrip, TextInput};
 
 /// Fixed side-panel width in logical px (CSS `.side` width plus its
 /// padding); the host uses it to keep drag painting off the panel.
@@ -80,8 +80,8 @@ mod rows;
 mod session;
 mod surfaces;
 
-pub use rows::*;
 use rows::Step;
+pub use rows::*;
 
 /// Runner state: the substrate document plus view-layer concerns
 /// (camera, selection, editor).
@@ -145,7 +145,7 @@ pub struct UiState {
     /// `command_draft` (the whisper-composer pattern); `command_results` holds
     /// the last `>find` list, shown until the next command.
     pub command_active: bool,
-    pub command_draft: String,
+    pub command_draft: TextInput,
     pub command_results: Vec<String>,
     /// Whether a whisper is being typed (keys route to the draft).
     pub composing: bool,
@@ -362,7 +362,7 @@ impl UiState {
             template_size: 3,
             messages: Vec::new(),
             command_active: false,
-            command_draft: String::new(),
+            command_draft: TextInput::default(),
             command_results: Vec::new(),
             composing: false,
             whisper_draft: String::new(),
@@ -431,7 +431,6 @@ impl UiState {
             items: Vec::new(),
         }
     }
-
 }
 
 /// Facing after a step from `from` to `to` (grid-axis neighbors; equal

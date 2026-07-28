@@ -49,6 +49,13 @@ pub fn board_css() -> String {
     padding: 3px 6px;
     margin-bottom: 2px;
 }
+.cmd-line input {
+    color: #ffd766;
+    background-color: transparent;
+    border: 0;
+    padding: 0;
+}
+.cmd-line .field-caret { color: #fff0a3; }
 .cmd-result { color: #b9c0cf; font-size: 12px; padding: 1px 6px; }
 
 .btn-row { display: flex; flex-wrap: wrap; }

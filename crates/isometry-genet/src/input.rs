@@ -72,10 +72,16 @@ impl App {
         self.hover_target_node = target;
         if let Some(runner) = self.runner.as_mut() {
             if let Some(prev) = previous {
-                runner.dispatch_hover(prev, HoverEvent::new(HoverPhase::Leave, (0.0, 0.0), (0.0, 0.0)));
+                runner.dispatch_hover(
+                    prev,
+                    HoverEvent::new(HoverPhase::Leave, (0.0, 0.0), (0.0, 0.0)),
+                );
             }
             if let Some(now) = target {
-                runner.dispatch_hover(now, HoverEvent::new(HoverPhase::Enter, (0.0, 0.0), (0.0, 0.0)));
+                runner.dispatch_hover(
+                    now,
+                    HoverEvent::new(HoverPhase::Enter, (0.0, 0.0), (0.0, 0.0)),
+                );
             }
         }
         if previous.is_some() || target.is_some() {
@@ -131,7 +137,6 @@ impl App {
         self.after_dispatch();
     }
 
-
     pub(crate) fn key(&mut self, event: &WinitKeyEvent) {
         if event.state != ElementState::Pressed {
             return;
@@ -152,7 +157,7 @@ impl App {
         }
         // While the > command line is open, keys go to its draft. Wins over the
         // whisper composer below so it is never shadowed.
-        if runner.state().command_active {
+        if runner.state().command_active && command_field_node(runner).is_some() {
             match &event.logical_key {
                 WinitKey::Named(WinitNamedKey::Escape) => {
                     runner.update(|ui| ui.command_cancel());
@@ -160,21 +165,12 @@ impl App {
                 WinitKey::Named(WinitNamedKey::Enter) => {
                     runner.update(|ui| ui.command_submit());
                 }
-                WinitKey::Named(WinitNamedKey::Backspace) => {
-                    runner.update(|ui| ui.command_backspace());
+                _ => {
+                    let modifiers = modifiers_from_winit(self.modifiers);
+                    if let Some(event) = key_event_from_winit(&event.logical_key, modifiers) {
+                        runner.dispatch_key(event);
+                    }
                 }
-                WinitKey::Named(WinitNamedKey::Space) => {
-                    runner.update(|ui| ui.command_char(' '));
-                }
-                WinitKey::Character(c) => {
-                    let s = c.to_string();
-                    runner.update(|ui| {
-                        for ch in s.chars() {
-                            ui.command_char(ch);
-                        }
-                    });
-                }
-                _ => {}
             }
             self.after_dispatch();
             return;
@@ -296,5 +292,19 @@ impl App {
                 window.request_redraw();
             }
         }
+    }
+
+    /// Route platform composition through the focused Cambium field. The
+    /// command line remains the app's authority for submit/cancel; preedit and
+    /// commit use the same `TextInput` command path as ordinary keys.
+    pub(crate) fn ime(&mut self, ime: &winit::event::Ime) {
+        let Some(runner) = self.runner.as_mut() else {
+            return;
+        };
+        if !runner.state().command_active || command_field_node(runner).is_none() {
+            return;
+        }
+        runner.dispatch_key(ime_event_from_winit(ime));
+        self.after_dispatch();
     }
 }

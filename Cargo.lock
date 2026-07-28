@@ -985,6 +985,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "cambium-winit"
+version = "0.3.0"
+dependencies = [
+ "cambium",
+ "winit",
+]
+
+[[package]]
 name = "cc"
 version = "1.2.67"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2456,7 +2464,6 @@ dependencies = [
  "mere-proofs",
  "mooting",
  "muniment",
- "murm-replication",
  "p2panda-auth",
  "p2panda-core",
  "p2panda-encryption",
@@ -2465,6 +2472,7 @@ dependencies = [
  "redb 2.6.3",
  "serde",
  "servitor",
+ "stickleback",
  "thiserror 1.0.69",
 ]
 
@@ -4024,6 +4032,7 @@ version = "0.1.0"
 dependencies = [
  "armillary",
  "cambium",
+ "cambium-winit",
  "codicil",
  "genet-layout",
  "genet-scripted-dom",
@@ -4077,7 +4086,6 @@ dependencies = [
  "mooting",
  "muniment",
  "murm",
- "murm-replication",
  "p2panda-core",
  "p2panda-net",
  "p2panda-store",
@@ -4086,6 +4094,7 @@ dependencies = [
  "pollster",
  "postcard",
  "serde",
+ "stickleback",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
@@ -4583,7 +4592,6 @@ dependencies = [
  "iroh",
  "iroh-blobs",
  "iroh-tickets",
- "murm-replication",
  "p2panda-core",
  "p2panda-net",
  "personae",
@@ -4710,33 +4718,15 @@ dependencies = [
  "hex",
  "mere-transport",
  "muniment",
- "murm-replication",
  "p2panda-core",
  "p2panda-encryption",
  "personae",
  "serde",
+ "stickleback",
  "thiserror 1.0.69",
  "tokio",
  "tokio-stream",
  "zeroize",
-]
-
-[[package]]
-name = "murm-replication"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "hex",
- "mere-proofs",
- "muniment",
- "p2panda-core",
- "p2panda-net",
- "p2panda-store",
- "p2panda-sync",
- "serde",
- "thiserror 1.0.69",
- "tokio",
- "tokio-stream",
 ]
 
 [[package]]
@@ -8142,6 +8132,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
+name = "stickleback"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "hex",
+ "mere-proofs",
+ "muniment",
+ "p2panda-core",
+ "p2panda-net",
+ "p2panda-store",
+ "p2panda-sync",
+ "serde",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-stream",
+]
+
+[[package]]
 name = "strict-num"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10614,14 +10622,6 @@ dependencies = [
 ]
 
 [[patch.unused]]
-name = "cambium-winit"
-version = "0.3.0"
-
-[[patch.unused]]
-name = "netfetcher"
-version = "0.1.1"
-
-[[patch.unused]]
 name = "graphshell"
 version = "0.0.1"
 
@@ -10651,4 +10651,8 @@ version = "0.1.1"
 
 [[patch.unused]]
 name = "vates"
+version = "0.1.1"
+
+[[patch.unused]]
+name = "netfetcher"
 version = "0.1.1"

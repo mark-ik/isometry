@@ -1,13 +1,13 @@
 //! Host composition of campaign storage with p2panda LogSync and gossip.
 
-use murm_replication::MunimentStore;
+use murm_replication::{MunimentStore, SyncedSpace};
 use muniment::Backend;
 use p2panda_core::{Operation, Topic};
 use p2panda_net::sync::SyncHandle;
 use p2panda_net::LogSync;
 use p2panda_sync::protocols::TopicLogSyncEvent;
 use personae::Ed25519Keypair;
-use transport::{P2pandaTransport, SyncedSpace};
+use transport::P2pandaTransport;
 
 use crate::campaign_space::{
     CampaignCollaborationEvent, CampaignExt, CampaignSpace, CampaignSpaceError,

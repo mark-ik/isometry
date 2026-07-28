@@ -391,6 +391,7 @@ impl ApplicationHandler for App {
                     self.after_dispatch();
                 }
             }
+            WindowEvent::Ime(ime) => self.ime(&ime),
             WindowEvent::KeyboardInput { event, .. } => self.key(&event),
             WindowEvent::RedrawRequested => self.redraw(),
             _ => {}

@@ -3,7 +3,9 @@
 //! swatches take their color from the same `tile-<kind>` classes the
 //! board uses, so the palette can never drift from the tileset.
 
-use cambium::{clickable, el, lens, segmented_control, text};
+use cambium::{
+    caret_text_field, clickable, el, lens, request_focus, segmented_control, text, TextInput,
+};
 use isometry_core::{TemplateKind, TileKindId, TokenId};
 
 use crate::board::UiChild;
@@ -233,8 +235,12 @@ fn action_button(label: &'static str, enabled: bool, act: fn(&mut UiState)) -> U
 fn command_line(ui: &UiState) -> UiChild {
     let mut rows: Vec<UiChild> = Vec::new();
     if ui.command_active {
+        let field: UiChild = Box::new(lens(
+            |draft: &mut TextInput| request_focus(caret_text_field(draft, &[]), true),
+            |ui: &mut UiState| &mut ui.command_draft,
+        ));
         rows.push(Box::new(
-            el("div", text(format!("> {}_", ui.command_draft))).attr("class", "cmd-line"),
+            el("div", (text("> "), field)).attr("class", "cmd-line"),
         ));
     }
     for line in &ui.command_results {

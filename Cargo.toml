@@ -43,7 +43,7 @@ mooting = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 # Murm's peer-exchange replication foundation (SyncedSpace/MunimentStore/
 # processor). Split out of `mooting` by mere's murm peer-runtime work; mooting
 # now keeps only governance policy.
-murm-replication = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+murm-replication = { package = "stickleback", git = "https://github.com/mark-ik/mere.git", branch = "main" }
 gemot = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
 # mere renamed the package to `mere-transport` (the lib is still `transport`),
 # and `[patch]` keys match the *package* name, so both this dep and the local
@@ -82,6 +82,7 @@ graphshell-stdio = { git = "https://github.com/mark-ik/mere.git", branch = "main
 # branch itself: `with_node_labels` labels only carry node state from 0.3.2 on,
 # and main is past it.
 cambium = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
+cambium-winit = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 # Cambium's retained custom-paint leaves (the graph-canvas swatch's painted
 # nodes + edges). A host wires them directly, the pelt-desktop pattern. From the
 # same git source as cambium, which is what keeps one `PaintCmd` in the graph.

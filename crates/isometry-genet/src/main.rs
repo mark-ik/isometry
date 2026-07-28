@@ -29,7 +29,9 @@ use isometry_campaign::{
     CampaignStore, CampaignWorld, EntropyTape, FactionMove, GenValue, GeneratorRequest, ItemId,
     ItemInstance, MapScale, WorldEvent, WorldFact,
 };
-use isometry_core::{Facing, FieldValue, MapDocument, Rng, SessionEvent, SheetData, TileCoord, Token, TokenId};
+use isometry_core::{
+    Facing, FieldValue, MapDocument, Rng, SessionEvent, SheetData, TileCoord, Token, TokenId,
+};
 use isometry_net::{
     apply_game, ActionIntent, ActionResolved, GameEvent, GameSnapshot, HostSession,
 };
@@ -58,28 +60,46 @@ mod selftest;
 mod sheets;
 mod storylets;
 
-use catalog::{bestiary_of, items_of, schema_of, spells_of};
+use cambium::{GenetAppRunner, HoverEvent, HoverPhase, PointerClick, Propagation};
+use cambium_winit::{ime_event_from_winit, key_event_from_winit, modifiers_from_winit};
 use campaign_store::{CampaignCheckpoint, CampaignRepository};
-use layout_dom_api::{DomMutation, LayoutDomMut as _};
+use catalog::{bestiary_of, items_of, schema_of, spells_of};
+use genet_layout::{
+    Applied, IncrementalLayout, InteractionState, LeafPaintSource, ScrollOffsets, SourceNodeId,
+    VisualAffinity, VisualCaret,
+};
+use genet_scripted_dom::{NodeId, ScriptedDom};
+use genet_winit_host::SurfaceHost;
+use layout_dom_api::{
+    DomMutation, LayoutDom as _, LayoutDomMut as _, LocalName, Namespace,
+};
 use net::{NetBridge, Role};
 use netrender::{ColorLoad, ExternalTexturePlacement, NetrenderOptions};
 use paint_list_api::{DeviceIntSize, PaintCmd, PaintList as _};
-use genet_layout::{
-    Applied, IncrementalLayout, InteractionState, LeafPaintSource, ScrollOffsets, SourceNodeId,
-};
 use sprigging::{ColorF, LeafRegistry, RenderedLeaves, Size};
-use genet_scripted_dom::{NodeId, ScriptedDom};
-use genet_winit_host::SurfaceHost;
 use winit::application::ApplicationHandler;
+use winit::dpi::{LogicalPosition, LogicalSize};
 use winit::event::{
     ElementState, KeyEvent as WinitKeyEvent, MouseButton, MouseScrollDelta, WindowEvent,
 };
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey as WinitNamedKey};
 use winit::window::{Window, WindowId};
-use cambium::{GenetAppRunner, HoverEvent, HoverPhase, PointerClick, Propagation};
 
 type Runner = GenetAppRunner<UiState, fn(&UiState) -> UiChild, UiChild>;
+
+fn command_field_node(runner: &Runner) -> Option<NodeId> {
+    let node = runner.focus()?;
+    let dom = runner.dom();
+    let dom = dom.borrow();
+    if dom.element_name(node)?.local.as_ref() != "input" {
+        return None;
+    }
+    let parent = dom.parent(node)?;
+    (dom.attribute(parent, &Namespace::from(""), &LocalName::from("class"))
+        == Some("cmd-line"))
+    .then_some(node)
+}
 
 /// Logical px per wheel notch, used to normalize trackpad pixel deltas.
 const WHEEL_NOTCH_PX: f32 = 48.0;
@@ -144,7 +164,8 @@ struct App {
     /// frame while the surface is open so the leaf is re-registered (and thus
     /// repainted) only when the model actually changed; also the "any leaf is
     /// live" gate for the per-frame leaf-box walk.
-    last_overmap_swatch: Option<cambium::GraphCanvasSwatch<String, isometry_views::OvermapNodeKind>>,
+    last_overmap_swatch:
+        Option<cambium::GraphCanvasSwatch<String, isometry_views::OvermapNodeKind>>,
     /// The exact inputs the storylet rows were last built from: the world and
     /// the host's secret-fact ids. Compared per dispatch while the surface is
     /// open, so the rows re-resolve only when an answer could have changed. Kept
@@ -290,7 +311,10 @@ fn campaign_path(name: &str) -> std::path::PathBuf {
 /// active board would let the cap be dodged by recruiting on each map in turn.
 fn owner_token_count(ui: &UiState, owner: &str) -> u32 {
     let on = |m: &isometry_core::MapDocument| {
-        m.tokens.iter().filter(|t| t.owner.as_deref() == Some(owner)).count()
+        m.tokens
+            .iter()
+            .filter(|t| t.owner.as_deref() == Some(owner))
+            .count()
     };
     let active = on(&ui.map);
     let stored: usize = ui
@@ -308,8 +332,7 @@ fn owner_token_count(ui: &UiState, owner: &str) -> u32 {
 /// anything occupied. The host commit path holds only a snapshot, so this is the
 /// snapshot twin of the view's `free_spawn_tile`.
 fn free_snapshot_tile(map: &MapDocument) -> TileCoord {
-    let occupied: std::collections::HashSet<TileCoord> =
-        map.tokens.iter().map(|t| t.at).collect();
+    let occupied: std::collections::HashSet<TileCoord> = map.tokens.iter().map(|t| t.at).collect();
     let free = |at: TileCoord| map.ground.in_bounds(at.0, at.1) && !occupied.contains(&at);
     // Prefer a free interior tile scanning outward from (2, 2), but never leave
     // the board: a narrow or short map has no col/row 2..17, and placing a token
@@ -367,8 +390,6 @@ fn generator_pack_roots() -> Vec<std::path::PathBuf> {
     }
     roots
 }
-
-
 
 /// Parse `--host` or `--join <ticket>` from the command line.
 fn parse_net_intent() -> Option<NetIntent> {

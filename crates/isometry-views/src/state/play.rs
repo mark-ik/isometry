@@ -348,35 +348,36 @@ impl UiState {
     /// cancel). Entered by the `>` key, the same way `w` opens a whisper.
     pub fn start_command(&mut self) {
         self.command_active = true;
-        self.command_draft.clear();
+        self.command_draft = cambium::TextInput::default();
         self.command_results.clear();
         self.status = "> command (enter run, esc cancel)".to_owned();
     }
 
     pub fn command_char(&mut self, c: char) {
         if self.command_active {
-            self.command_draft.push(c);
+            self.command_draft
+                .apply(cambium::TextCommand::Insert(c.to_string()));
         }
     }
 
     pub fn command_backspace(&mut self) {
         if self.command_active {
-            self.command_draft.pop();
+            self.command_draft.apply(cambium::TextCommand::Backspace);
         }
     }
 
     pub fn command_cancel(&mut self) {
         self.command_active = false;
-        self.command_draft.clear();
+        self.command_draft = cambium::TextInput::default();
         self.status = "command cancelled".to_owned();
     }
 
     /// Parse and dispatch the command line, then close it. Every verb routes to
     /// machinery that already exists; the command layer is just the front door.
     pub fn command_submit(&mut self) {
-        let input = self.command_draft.trim().to_owned();
+        let input = self.command_draft.text().trim().to_owned();
         self.command_active = false;
-        self.command_draft.clear();
+        self.command_draft = cambium::TextInput::default();
         if input.is_empty() {
             return;
         }
@@ -588,5 +589,4 @@ impl UiState {
             }
         };
     }
-
 }

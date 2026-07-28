@@ -99,6 +99,32 @@ impl App {
             }
 
             let layout = self.layout.as_ref().expect("layout just ensured");
+            if runner.state().command_active {
+                if let Some(node) = command_field_node(runner) {
+                    let input = &runner.state().command_draft;
+                    let affinity = match input.caret_position().affinity {
+                        cambium::CaretAffinity::Downstream => VisualAffinity::Downstream,
+                        cambium::CaretAffinity::Upstream => VisualAffinity::Upstream,
+                    };
+                    if let Some(rect) = layout.caret_rect_for_position(
+                        &*dom_ref,
+                        node,
+                        VisualCaret {
+                            byte: input.caret_byte_in_render(),
+                            affinity,
+                        },
+                        2.0,
+                    ) {
+                        window.set_ime_cursor_area(
+                            LogicalPosition::new(rect.x as f64, rect.y as f64),
+                            LogicalSize::new(
+                                rect.width.max(2.0) as f64,
+                                rect.height.max(1.0) as f64,
+                            ),
+                        );
+                    }
+                }
+            }
             // Repaint each laid-out leaf whose box appears this frame, sizing it
             // from the completed layout, into the retained cache. Skipped whole
             // when no leaf is live: `custom_leaf_boxes` walks the box tree, and
@@ -108,7 +134,9 @@ impl App {
                     layout.custom_leaf_boxes().into_iter().collect();
                 self.leaves.render_into(
                     |key| {
-                        sizes.get(&key).map(|&(width, height)| Size { width, height })
+                        sizes
+                            .get(&key)
+                            .map(|&(width, height)| Size { width, height })
                     },
                     &mut self.rendered_leaves,
                 );
@@ -180,5 +208,4 @@ impl App {
             );
         }
     }
-
 }

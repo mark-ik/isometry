@@ -12,6 +12,13 @@ impl App {
     /// Consume one-shot state requests (save/load) and repaint: the
     /// tail of every dispatch.
     pub(crate) fn after_dispatch(&mut self) {
+        if let Some(window) = self.window.as_ref() {
+            window.set_ime_allowed(
+                self.runner
+                    .as_ref()
+                    .is_some_and(|runner| command_field_node(runner).is_some()),
+            );
+        }
         // Cheap flags first: this tail runs after every dispatch, and the save
         // path below starts by cloning the journal. An ordinary click asks for
         // neither and must not pay for either.
