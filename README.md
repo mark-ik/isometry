@@ -12,6 +12,13 @@ Built in Rust on the Merely stack (Cambium, genet-layout,
 netrender). Status: bootstrap; see
 [design_docs/2026-07-05_isometry_bootstrap_plan.md](design_docs/2026-07-05_isometry_bootstrap_plan.md).
 
+## Screenshots
+
+<p align="center">
+  <img src="assets/screenshots/overmap-after-perf-fix.png" alt="Isometry isometric board with the Overmap panel open" width="900"><br>
+  <sub>A painted isometric board with the Overmap open for map navigation.</sub>
+</p>
+
 ## Workspace
 
 - `crates/isometry-core`: pure substrate model (grids, iso math, map
