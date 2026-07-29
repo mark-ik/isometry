@@ -8140,6 +8140,7 @@ dependencies = [
  "mere-proofs",
  "muniment",
  "p2panda-core",
+ "p2panda-encryption",
  "p2panda-net",
  "p2panda-store",
  "p2panda-sync",
