@@ -318,7 +318,7 @@ dependencies = [
 [[package]]
 name = "armillary"
 version = "0.1.1"
-source = "git+https://github.com/mark-ik/mere.git?branch=main#48e277d42ac90baf2f98281f6cbc879eba099bf4"
+source = "git+https://github.com/merely-made/mere.git?branch=main#d5af0618cb30077af3f1df11b65dc6e7e0da2bd0"
 dependencies = [
  "tracing",
 ]
@@ -976,7 +976,7 @@ dependencies = [
 [[package]]
 name = "cambium"
 version = "0.3.2"
-source = "git+https://github.com/mark-ik/genet.git?branch=main#4ca5b45f0aa79b9ae6d1e2f4592cdea64a89f58e"
+source = "git+https://github.com/merely-made/genet.git?branch=main#2955d41c6c981f650f8c2274e8f5cba9aea08a96"
 dependencies = [
  "genet-host-api",
  "genet-scripted-dom",
@@ -989,7 +989,7 @@ dependencies = [
 [[package]]
 name = "cambium-winit"
 version = "0.3.0"
-source = "git+https://github.com/mark-ik/genet.git?branch=main#4ca5b45f0aa79b9ae6d1e2f4592cdea64a89f58e"
+source = "git+https://github.com/merely-made/genet.git?branch=main#2955d41c6c981f650f8c2274e8f5cba9aea08a96"
 dependencies = [
  "cambium",
  "winit",
@@ -1063,7 +1063,7 @@ dependencies = [
 [[package]]
 name = "chartulary"
 version = "0.2.0"
-source = "git+https://github.com/mark-ik/mere.git?branch=main#48e277d42ac90baf2f98281f6cbc879eba099bf4"
+source = "git+https://github.com/merely-made/mere.git?branch=main#d5af0618cb30077af3f1df11b65dc6e7e0da2bd0"
 dependencies = [
  "codicil",
  "muniment",
@@ -1155,7 +1155,7 @@ dependencies = [
 [[package]]
 name = "codicil"
 version = "0.1.1"
-source = "git+https://github.com/mark-ik/mere.git?branch=main#48e277d42ac90baf2f98281f6cbc879eba099bf4"
+source = "git+https://github.com/merely-made/mere.git?branch=main#d5af0618cb30077af3f1df11b65dc6e7e0da2bd0"
 dependencies = [
  "muniment",
  "serde",
@@ -1929,7 +1929,7 @@ checksum = "66b7e2430c6dff6a955451e2cfc438f09cea1965a9d6f87f7e3b90decc014099"
 [[package]]
 name = "engine-observables-api"
 version = "0.1.1"
-source = "git+https://github.com/mark-ik/genet.git?branch=main#4ca5b45f0aa79b9ae6d1e2f4592cdea64a89f58e"
+source = "git+https://github.com/merely-made/genet.git?branch=main#2955d41c6c981f650f8c2274e8f5cba9aea08a96"
 dependencies = [
  "genet-paint-types",
  "malloc_size_of_derive",
@@ -2436,7 +2436,7 @@ dependencies = [
 [[package]]
 name = "gemot"
 version = "0.1.0"
-source = "git+https://github.com/mark-ik/mere.git?branch=main#48e277d42ac90baf2f98281f6cbc879eba099bf4"
+source = "git+https://github.com/merely-made/mere.git?branch=main#d5af0618cb30077af3f1df11b65dc6e7e0da2bd0"
 dependencies = [
  "mere-proofs",
  "mooting",
@@ -2513,12 +2513,12 @@ dependencies = [
 [[package]]
 name = "genet-host-api"
 version = "0.1.0"
-source = "git+https://github.com/mark-ik/genet.git?branch=main#4ca5b45f0aa79b9ae6d1e2f4592cdea64a89f58e"
+source = "git+https://github.com/merely-made/genet.git?branch=main#2955d41c6c981f650f8c2274e8f5cba9aea08a96"
 
 [[package]]
 name = "genet-layout"
 version = "0.2.0"
-source = "git+https://github.com/mark-ik/genet.git?branch=main#4ca5b45f0aa79b9ae6d1e2f4592cdea64a89f58e"
+source = "git+https://github.com/merely-made/genet.git?branch=main#2955d41c6c981f650f8c2274e8f5cba9aea08a96"
 dependencies = [
  "accesskit",
  "app_units",
@@ -2561,7 +2561,7 @@ dependencies = [
 [[package]]
 name = "genet-paint-types"
 version = "0.1.0"
-source = "git+https://github.com/mark-ik/genet.git?branch=main#4ca5b45f0aa79b9ae6d1e2f4592cdea64a89f58e"
+source = "git+https://github.com/merely-made/genet.git?branch=main#2955d41c6c981f650f8c2274e8f5cba9aea08a96"
 dependencies = [
  "app_units",
  "euclid",
@@ -2573,7 +2573,7 @@ dependencies = [
 [[package]]
 name = "genet-scripted-dom"
 version = "0.1.0"
-source = "git+https://github.com/mark-ik/genet.git?branch=main#4ca5b45f0aa79b9ae6d1e2f4592cdea64a89f58e"
+source = "git+https://github.com/merely-made/genet.git?branch=main#2955d41c6c981f650f8c2274e8f5cba9aea08a96"
 dependencies = [
  "engine-observables-api",
  "genet-static-dom",
@@ -2585,7 +2585,7 @@ dependencies = [
 [[package]]
 name = "genet-static-dom"
 version = "0.1.0"
-source = "git+https://github.com/mark-ik/genet.git?branch=main#4ca5b45f0aa79b9ae6d1e2f4592cdea64a89f58e"
+source = "git+https://github.com/merely-made/genet.git?branch=main#2955d41c6c981f650f8c2274e8f5cba9aea08a96"
 dependencies = [
  "html5ever",
  "layout-dom-api",
@@ -2703,7 +2703,7 @@ dependencies = [
 [[package]]
 name = "genet-winit-host"
 version = "0.2.0"
-source = "git+https://github.com/mark-ik/genet.git?branch=main#4ca5b45f0aa79b9ae6d1e2f4592cdea64a89f58e"
+source = "git+https://github.com/merely-made/genet.git?branch=main#2955d41c6c981f650f8c2274e8f5cba9aea08a96"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -2834,7 +2834,7 @@ dependencies = [
 [[package]]
 name = "graphshell-endpoint"
 version = "0.0.1"
-source = "git+https://github.com/mark-ik/mere.git?branch=main#48e277d42ac90baf2f98281f6cbc879eba099bf4"
+source = "git+https://github.com/merely-made/mere.git?branch=main#d5af0618cb30077af3f1df11b65dc6e7e0da2bd0"
 dependencies = [
  "graphshell-protocol",
 ]
@@ -2842,7 +2842,7 @@ dependencies = [
 [[package]]
 name = "graphshell-protocol"
 version = "0.0.1"
-source = "git+https://github.com/mark-ik/mere.git?branch=main#48e277d42ac90baf2f98281f6cbc879eba099bf4"
+source = "git+https://github.com/merely-made/mere.git?branch=main#d5af0618cb30077af3f1df11b65dc6e7e0da2bd0"
 dependencies = [
  "blake3",
  "sceno",
@@ -2853,7 +2853,7 @@ dependencies = [
 [[package]]
 name = "graphshell-stdio"
 version = "0.0.1"
-source = "git+https://github.com/mark-ik/mere.git?branch=main#48e277d42ac90baf2f98281f6cbc879eba099bf4"
+source = "git+https://github.com/merely-made/mere.git?branch=main#d5af0618cb30077af3f1df11b65dc6e7e0da2bd0"
 dependencies = [
  "graphshell-endpoint",
  "graphshell-protocol",
@@ -3635,7 +3635,7 @@ dependencies = [
 [[package]]
 name = "ipc-channel"
 version = "0.22.0"
-source = "git+https://github.com/mark-ik/genet.git?branch=main#4ca5b45f0aa79b9ae6d1e2f4592cdea64a89f58e"
+source = "git+https://github.com/merely-made/genet.git?branch=main#2955d41c6c981f650f8c2274e8f5cba9aea08a96"
 dependencies = [
  "crossbeam-channel",
  "libc",
@@ -4266,7 +4266,7 @@ dependencies = [
 [[package]]
 name = "layout-dom-api"
 version = "0.1.0"
-source = "git+https://github.com/mark-ik/genet.git?branch=main#4ca5b45f0aa79b9ae6d1e2f4592cdea64a89f58e"
+source = "git+https://github.com/merely-made/genet.git?branch=main#2955d41c6c981f650f8c2274e8f5cba9aea08a96"
 dependencies = [
  "markup5ever",
  "serde",
@@ -4565,7 +4565,7 @@ dependencies = [
 [[package]]
 name = "mere-proofs"
 version = "0.1.0"
-source = "git+https://github.com/mark-ik/mere.git?branch=main#48e277d42ac90baf2f98281f6cbc879eba099bf4"
+source = "git+https://github.com/merely-made/mere.git?branch=main#d5af0618cb30077af3f1df11b65dc6e7e0da2bd0"
 dependencies = [
  "blake3",
  "serde",
@@ -4575,7 +4575,7 @@ dependencies = [
 [[package]]
 name = "mere-transport"
 version = "0.0.1"
-source = "git+https://github.com/mark-ik/mere.git?branch=main#48e277d42ac90baf2f98281f6cbc879eba099bf4"
+source = "git+https://github.com/merely-made/mere.git?branch=main#d5af0618cb30077af3f1df11b65dc6e7e0da2bd0"
 dependencies = [
  "bytes",
  "iroh",
@@ -4592,7 +4592,7 @@ dependencies = [
 [[package]]
 name = "meristem"
 version = "0.1.1"
-source = "git+https://github.com/mark-ik/genet.git?branch=main#4ca5b45f0aa79b9ae6d1e2f4592cdea64a89f58e"
+source = "git+https://github.com/merely-made/genet.git?branch=main#2955d41c6c981f650f8c2274e8f5cba9aea08a96"
 dependencies = [
  "anymore",
  "hashbrown 0.17.1",
@@ -4652,7 +4652,7 @@ dependencies = [
 [[package]]
 name = "mooting"
 version = "0.1.0"
-source = "git+https://github.com/mark-ik/mere.git?branch=main#48e277d42ac90baf2f98281f6cbc879eba099bf4"
+source = "git+https://github.com/merely-made/mere.git?branch=main#d5af0618cb30077af3f1df11b65dc6e7e0da2bd0"
 dependencies = [
  "p2panda-core",
  "serde",
@@ -4692,7 +4692,7 @@ dependencies = [
 [[package]]
 name = "muniment"
 version = "0.1.1"
-source = "git+https://github.com/mark-ik/mere.git?branch=main#48e277d42ac90baf2f98281f6cbc879eba099bf4"
+source = "git+https://github.com/merely-made/mere.git?branch=main#d5af0618cb30077af3f1df11b65dc6e7e0da2bd0"
 dependencies = [
  "async-trait",
  "blake3",
@@ -4704,7 +4704,7 @@ dependencies = [
 [[package]]
 name = "murm"
 version = "0.0.1"
-source = "git+https://github.com/mark-ik/mere.git?branch=main#48e277d42ac90baf2f98281f6cbc879eba099bf4"
+source = "git+https://github.com/merely-made/mere.git?branch=main#d5af0618cb30077af3f1df11b65dc6e7e0da2bd0"
 dependencies = [
  "async-trait",
  "blake3",
@@ -5935,7 +5935,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "personae"
 version = "0.1.1"
-source = "git+https://github.com/mark-ik/mere.git?branch=main#48e277d42ac90baf2f98281f6cbc879eba099bf4"
+source = "git+https://github.com/merely-made/mere.git?branch=main#d5af0618cb30077af3f1df11b65dc6e7e0da2bd0"
 dependencies = [
  "argon2",
  "blake3",
@@ -7256,7 +7256,7 @@ dependencies = [
 [[package]]
 name = "sceno"
 version = "0.0.3"
-source = "git+https://github.com/mark-ik/mere.git?branch=main#48e277d42ac90baf2f98281f6cbc879eba099bf4"
+source = "git+https://github.com/merely-made/mere.git?branch=main#d5af0618cb30077af3f1df11b65dc6e7e0da2bd0"
 dependencies = [
  "serde",
 ]
@@ -7264,7 +7264,7 @@ dependencies = [
 [[package]]
 name = "scenomise"
 version = "0.0.3"
-source = "git+https://github.com/mark-ik/mere.git?branch=main#48e277d42ac90baf2f98281f6cbc879eba099bf4"
+source = "git+https://github.com/merely-made/mere.git?branch=main#d5af0618cb30077af3f1df11b65dc6e7e0da2bd0"
 dependencies = [
  "sceno",
 ]
@@ -7272,7 +7272,7 @@ dependencies = [
 [[package]]
 name = "scenotime"
 version = "0.0.3"
-source = "git+https://github.com/mark-ik/mere.git?branch=main#48e277d42ac90baf2f98281f6cbc879eba099bf4"
+source = "git+https://github.com/merely-made/mere.git?branch=main#d5af0618cb30077af3f1df11b65dc6e7e0da2bd0"
 dependencies = [
  "sceno",
  "serde",
@@ -7495,7 +7495,7 @@ dependencies = [
 [[package]]
 name = "servitor"
 version = "0.0.1"
-source = "git+https://github.com/mark-ik/mere.git?branch=main#48e277d42ac90baf2f98281f6cbc879eba099bf4"
+source = "git+https://github.com/merely-made/mere.git?branch=main#d5af0618cb30077af3f1df11b65dc6e7e0da2bd0"
 dependencies = [
  "chartulary",
  "personae",
@@ -7504,7 +7504,7 @@ dependencies = [
 [[package]]
 name = "servo-allocator"
 version = "0.2.0"
-source = "git+https://github.com/mark-ik/genet.git?branch=main#4ca5b45f0aa79b9ae6d1e2f4592cdea64a89f58e"
+source = "git+https://github.com/merely-made/genet.git?branch=main#2955d41c6c981f650f8c2274e8f5cba9aea08a96"
 dependencies = [
  "libc",
  "tikv-jemalloc-sys",
@@ -7515,7 +7515,7 @@ dependencies = [
 [[package]]
 name = "servo-base"
 version = "0.2.0"
-source = "git+https://github.com/mark-ik/genet.git?branch=main#4ca5b45f0aa79b9ae6d1e2f4592cdea64a89f58e"
+source = "git+https://github.com/merely-made/genet.git?branch=main#2955d41c6c981f650f8c2274e8f5cba9aea08a96"
 dependencies = [
  "accesskit",
  "crossbeam-channel",
@@ -7540,7 +7540,7 @@ dependencies = [
 [[package]]
 name = "servo-config"
 version = "0.2.0"
-source = "git+https://github.com/mark-ik/genet.git?branch=main#4ca5b45f0aa79b9ae6d1e2f4592cdea64a89f58e"
+source = "git+https://github.com/merely-made/genet.git?branch=main#2955d41c6c981f650f8c2274e8f5cba9aea08a96"
 dependencies = [
  "genet-stylo-static-prefs",
  "serde",
@@ -7552,7 +7552,7 @@ dependencies = [
 [[package]]
 name = "servo-config-macro"
 version = "0.2.0"
-source = "git+https://github.com/mark-ik/genet.git?branch=main#4ca5b45f0aa79b9ae6d1e2f4592cdea64a89f58e"
+source = "git+https://github.com/merely-made/genet.git?branch=main#2955d41c6c981f650f8c2274e8f5cba9aea08a96"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7563,7 +7563,7 @@ dependencies = [
 [[package]]
 name = "servo-malloc-size-of"
 version = "0.2.0"
-source = "git+https://github.com/mark-ik/genet.git?branch=main#4ca5b45f0aa79b9ae6d1e2f4592cdea64a89f58e"
+source = "git+https://github.com/merely-made/genet.git?branch=main#2955d41c6c981f650f8c2274e8f5cba9aea08a96"
 dependencies = [
  "app_units",
  "atomic_refcell",
@@ -7602,7 +7602,7 @@ dependencies = [
 [[package]]
 name = "servo-pixels"
 version = "0.2.0"
-source = "git+https://github.com/mark-ik/genet.git?branch=main#4ca5b45f0aa79b9ae6d1e2f4592cdea64a89f58e"
+source = "git+https://github.com/merely-made/genet.git?branch=main#2955d41c6c981f650f8c2274e8f5cba9aea08a96"
 dependencies = [
  "euclid",
  "genet-paint-types",
@@ -7617,7 +7617,7 @@ dependencies = [
 [[package]]
 name = "servo-url"
 version = "0.2.0"
-source = "git+https://github.com/mark-ik/genet.git?branch=main#4ca5b45f0aa79b9ae6d1e2f4592cdea64a89f58e"
+source = "git+https://github.com/merely-made/genet.git?branch=main#2955d41c6c981f650f8c2274e8f5cba9aea08a96"
 dependencies = [
  "encoding_rs",
  "malloc_size_of_derive",
@@ -7931,7 +7931,7 @@ dependencies = [
 [[package]]
 name = "sprigging"
 version = "0.2.1"
-source = "git+https://github.com/mark-ik/genet.git?branch=main#4ca5b45f0aa79b9ae6d1e2f4592cdea64a89f58e"
+source = "git+https://github.com/merely-made/genet.git?branch=main#2955d41c6c981f650f8c2274e8f5cba9aea08a96"
 dependencies = [
  "accesskit",
  "paint_list_api",
@@ -8147,7 +8147,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 [[package]]
 name = "stickleback"
 version = "0.1.0"
-source = "git+https://github.com/mark-ik/mere.git?branch=main#48e277d42ac90baf2f98281f6cbc879eba099bf4"
+source = "git+https://github.com/merely-made/mere.git?branch=main#d5af0618cb30077af3f1df11b65dc6e7e0da2bd0"
 dependencies = [
  "blake3",
  "hex",
@@ -8271,7 +8271,7 @@ dependencies = [
 [[package]]
 name = "stylo_taffy"
 version = "0.3.0-beta.1"
-source = "git+https://github.com/mark-ik/genet.git?branch=main#4ca5b45f0aa79b9ae6d1e2f4592cdea64a89f58e"
+source = "git+https://github.com/merely-made/genet.git?branch=main#2955d41c6c981f650f8c2274e8f5cba9aea08a96"
 dependencies = [
  "genet-stylo",
  "genet-stylo-atoms",
@@ -8404,7 +8404,7 @@ dependencies = [
 [[package]]
 name = "taffy"
 version = "0.12.1"
-source = "git+https://github.com/mark-ik/genet.git?branch=main#4ca5b45f0aa79b9ae6d1e2f4592cdea64a89f58e"
+source = "git+https://github.com/merely-made/genet.git?branch=main#2955d41c6c981f650f8c2274e8f5cba9aea08a96"
 dependencies = [
  "arrayvec",
  "grid",

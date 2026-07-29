@@ -33,23 +33,23 @@ serde_json = "1.0"
 # Portable slots/blobs over a host-chosen backend. Isometry uses its redb
 # backend for private desktop campaign state; the future web host can swap
 # the backend without changing campaign data.
-muniment = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
-codicil = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+muniment = { git = "https://github.com/merely-made/mere.git", branch = "main" }
+codicil = { git = "https://github.com/merely-made/mere.git", branch = "main" }
 # Host-neutral actor runtime for background host/session work. The SerVal
 # application owns its state on the winit thread and drains typed updates.
-armillary = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
-personae = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
-mooting = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+armillary = { git = "https://github.com/merely-made/mere.git", branch = "main" }
+personae = { git = "https://github.com/merely-made/mere.git", branch = "main" }
+mooting = { git = "https://github.com/merely-made/mere.git", branch = "main" }
 # Murm's peer-exchange replication foundation (SyncedSpace/MunimentStore/
 # processor). Split out of `mooting` by mere's murm peer-runtime work; mooting
 # now keeps only governance policy.
-murm-replication = { package = "stickleback", git = "https://github.com/mark-ik/mere.git", branch = "main" }
-gemot = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+murm-replication = { package = "stickleback", git = "https://github.com/merely-made/mere.git", branch = "main" }
+gemot = { git = "https://github.com/merely-made/mere.git", branch = "main" }
 # mere renamed the package to `mere-transport` (the lib is still `transport`),
 # and `[patch]` keys match the *package* name, so both this dep and the local
 # override in .cargo/config.toml must say so.
-transport = { package = "mere-transport", git = "https://github.com/mark-ik/mere.git", branch = "main" }
-murm = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+transport = { package = "mere-transport", git = "https://github.com/merely-made/mere.git", branch = "main" }
+murm = { git = "https://github.com/merely-made/mere.git", branch = "main" }
 p2panda-core = "0.7.0"
 p2panda-net = "0.7.0"
 p2panda-store = { version = "0.7.0", default-features = false }
@@ -59,11 +59,11 @@ thiserror = "1"
 # Product-free projection score and analytic solvers. Isometry owns the
 # campaign-to-score adapter in `isometry-views`; the shared crates carry only
 # opaque source refs, measured footprints, and scenes.
-sceno = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
-scenomise = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
-graphshell-endpoint = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
-graphshell-protocol = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
-graphshell-stdio = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
+sceno = { git = "https://github.com/merely-made/mere.git", branch = "main" }
+scenomise = { git = "https://github.com/merely-made/mere.git", branch = "main" }
+graphshell-endpoint = { git = "https://github.com/merely-made/mere.git", branch = "main" }
+graphshell-protocol = { git = "https://github.com/merely-made/mere.git", branch = "main" }
+graphshell-stdio = { git = "https://github.com/merely-made/mere.git", branch = "main" }
 
 # UI: the Genet host stack (I1, the Woodshed pattern). Git deps on the
 # owned repos so any machine resolves; local checkouts override via the
@@ -81,16 +81,16 @@ graphshell-stdio = { git = "https://github.com/mark-ik/mere.git", branch = "main
 # The node-label floor the registry pin used to state is now carried by the
 # branch itself: `with_node_labels` labels only carry node state from 0.3.2 on,
 # and main is past it.
-cambium = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
-cambium-winit = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
+cambium = { git = "https://github.com/merely-made/genet.git", branch = "main" }
+cambium-winit = { git = "https://github.com/merely-made/genet.git", branch = "main" }
 # Cambium's retained custom-paint leaves (the graph-canvas swatch's painted
 # nodes + edges). A host wires them directly, the pelt-desktop pattern. From the
 # same git source as cambium, which is what keeps one `PaintCmd` in the graph.
-sprigging = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
-layout-dom-api = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
-genet-scripted-dom = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
-genet-layout = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
-genet-winit-host = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
+sprigging = { git = "https://github.com/merely-made/genet.git", branch = "main" }
+layout-dom-api = { git = "https://github.com/merely-made/genet.git", branch = "main" }
+genet-scripted-dom = { git = "https://github.com/merely-made/genet.git", branch = "main" }
+genet-layout = { git = "https://github.com/merely-made/genet.git", branch = "main" }
+genet-winit-host = { git = "https://github.com/merely-made/genet.git", branch = "main" }
 netrender = { git = "https://github.com/merely-made/netrender.git", branch = "main" }
 paint_list_api = { git = "https://github.com/merely-made/netrender.git", branch = "main" }
 paint_list_render = { git = "https://github.com/merely-made/netrender.git", branch = "main" }
@@ -107,9 +107,9 @@ winit = "0.30"
 # workspace tracks the repo. Two sources means two `muniment::Backend` traits and
 # `MunimentStore`'s bounds stop matching, so redirect the registry edge at the
 # same git source: exactly one muniment lands. Track the branch, not a pin.
-muniment = { git = "https://github.com/mark-ik/mere.git", branch = "main" }
-layout-dom-api = { git = "https://github.com/mark-ik/genet.git", branch = "main", version = "=0.1.0" }
-genet-scripted-dom = { git = "https://github.com/mark-ik/genet.git", branch = "main", version = "=0.1.0" }
+muniment = { git = "https://github.com/merely-made/mere.git", branch = "main" }
+layout-dom-api = { git = "https://github.com/merely-made/genet.git", branch = "main", version = "=0.1.0" }
+genet-scripted-dom = { git = "https://github.com/merely-made/genet.git", branch = "main", version = "=0.1.0" }
 # Only one package in the graph may declare `links = "servo_style_crate"`, so
 # stylo_taffy's Stylo and genet-layout's Stylo must be the same package.
 #
@@ -121,6 +121,6 @@ genet-scripted-dom = { git = "https://github.com/mark-ik/genet.git", branch = "m
 # whose own manifest git-deps `genet-stylo` directly. genet-layout resolves the
 # same git source, so exactly one Stylo lands. Patching `stylo`/`stylo_atoms`
 # here is what *creates* the second copy; do not reintroduce it.
-stylo_taffy = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
-taffy = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
-ipc-channel = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
+stylo_taffy = { git = "https://github.com/merely-made/genet.git", branch = "main" }
+taffy = { git = "https://github.com/merely-made/genet.git", branch = "main" }
+ipc-channel = { git = "https://github.com/merely-made/genet.git", branch = "main" }
