@@ -91,9 +91,9 @@ layout-dom-api = { git = "https://github.com/mark-ik/genet.git", branch = "main"
 genet-scripted-dom = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 genet-layout = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
 genet-winit-host = { git = "https://github.com/mark-ik/genet.git", branch = "main" }
-netrender = { git = "https://github.com/mark-ik/netrender.git", branch = "main" }
-paint_list_api = { git = "https://github.com/mark-ik/netrender.git", branch = "main" }
-paint_list_render = { git = "https://github.com/mark-ik/netrender.git", branch = "main" }
+netrender = { git = "https://github.com/merely-made/netrender.git", branch = "main" }
+paint_list_api = { git = "https://github.com/merely-made/netrender.git", branch = "main" }
+paint_list_render = { git = "https://github.com/merely-made/netrender.git", branch = "main" }
 # wgpu for host-side surface/compose types only; backend features come
 # from netrender's own per-target manifest split.
 wgpu = { version = "29", default-features = false, features = ["std"] }
