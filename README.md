@@ -15,8 +15,8 @@ netrender). Status: bootstrap; see
 ## Screenshots
 
 <p align="center">
-  <img src="assets/screenshots/overmap-after-perf-fix.png" alt="Isometry isometric board with the Overmap panel open" width="900"><br>
-  <sub>A painted isometric board with the Overmap open for map navigation.</sub>
+  <img src="assets/screenshots/battlemap-demo.png" alt="Isometry painted battlemap with terrain, tokens, and turn order" width="900"><br>
+  <sub>A painted battlemap with terrain, tokens, editing tools, and turn order in view.</sub>
 </p>
 
 ## Workspace
