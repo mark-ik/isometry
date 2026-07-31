@@ -3983,6 +3983,7 @@ name = "isometry-campaign"
 version = "0.1.0"
 dependencies = [
  "isometry-core",
+ "postcard",
  "serde",
  "serde_json",
 ]

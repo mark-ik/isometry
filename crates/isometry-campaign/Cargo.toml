@@ -11,3 +11,4 @@ description = "Isometry's campaign-state layer: generated objects, secret facts 
 isometry-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+postcard = { workspace = true }

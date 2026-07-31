@@ -9,6 +9,7 @@
 //! no I/O, no net, no substrate geometry. The substrate stores and
 //! displays these objects; system plugins interpret them.
 
+mod chronicle;
 mod fact;
 mod collaboration;
 mod faction;
@@ -19,6 +20,7 @@ mod pack;
 mod store;
 mod world;
 
+pub use chronicle::{Arrival, Chronicle, ChronicleError, Deed, PartOrigin, CHRONICLE_SCHEMA, LOST_PART, VESSEL};
 pub use fact::{RevealCondition, SecretFact, Visibility, WorldFact};
 pub use collaboration::{CampaignProposal, CampaignProposalError, CampaignProposalMode};
 pub use faction::{FactionMove, FactionVerb};
