@@ -20,9 +20,11 @@ mod recipe;
 mod vox;
 mod voxel;
 
+pub mod body;
 pub mod demo;
 
 pub use bake::{BakeParams, Sheet, bake_facing, bake_strip};
+pub use body::{BODY_SCHEMA, BodyError, BodyProfile, PartOrigin};
 pub use recipe::{Appearance, Clip, Palette, compose};
 pub use vox::load_vox;
 pub use voxel::{Rgb, Voxels};

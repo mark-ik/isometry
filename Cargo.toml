@@ -30,6 +30,7 @@ isometry-system = { path = "crates/isometry-system", version = "0.1.0" }
 # Persistence
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+postcard = { version = "1", features = ["alloc"], default-features = false }
 # Portable slots/blobs over a host-chosen backend. Isometry uses its redb
 # backend for private desktop campaign state; the future web host can swap
 # the backend without changing campaign data.
