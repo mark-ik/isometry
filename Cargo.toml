@@ -125,3 +125,34 @@ genet-scripted-dom = { git = "https://github.com/merely-made/genet.git", branch 
 stylo_taffy = { git = "https://github.com/merely-made/genet.git", branch = "main" }
 taffy = { git = "https://github.com/merely-made/genet.git", branch = "main" }
 ipc-channel = { git = "https://github.com/merely-made/genet.git", branch = "main" }
+# `murm-replication` (stickleback, from mere) is written against the **owned
+# p2panda fork**, not the published crates. mere's manifest repoints the whole
+# family there; this workspace did not, so it resolved stock p2panda from
+# crates.io and stickleback failed to compile against it. The break surfaced
+# 2026-07-31 when mere's `JoinedSpace` began naming a per-lane protocol id
+# (`Builder::protocol_id`, a fork API), but the divergence was latent from the
+# moment isometry took a mere git dep without mirroring its p2panda pins.
+#
+# **The family patches together or not at all.** The fork's `p2panda-net`
+# path-deps its siblings, so repointing one alone lands two `p2panda-core`
+# copies and the trait bounds stop matching. `p2panda-sync` is included even
+# though mere's manifest omits it, because this workspace declares it directly
+# (line 57) and would otherwise pull a second copy from the registry.
+#
+# Track the branch, not a pin, and keep no local paths here: the machine-local
+# redirect to a working copy belongs in the gitignored `.cargo/config.toml`.
+p2panda-auth = { git = "https://github.com/mark-ik/p2panda.git", branch = "main" }
+p2panda-core = { git = "https://github.com/mark-ik/p2panda.git", branch = "main" }
+p2panda-discovery = { git = "https://github.com/mark-ik/p2panda.git", branch = "main" }
+p2panda-encryption = { git = "https://github.com/mark-ik/p2panda.git", branch = "main" }
+p2panda-net = { git = "https://github.com/mark-ik/p2panda.git", branch = "main" }
+p2panda-store = { git = "https://github.com/mark-ik/p2panda.git", branch = "main" }
+p2panda-sync = { git = "https://github.com/mark-ik/p2panda.git", branch = "main" }
+# `p2panda-stream` is deliberately absent, though mere patches it. Nothing in
+# this workspace reaches it even under `--all-features`, so the entry only
+# produced a permanent "patch was not used" warning. That matters more than it
+# sounds: a wall of those warnings is what hid this whole bug for a session.
+# The omission is safe because the duplicate-copy hazard only applies to crates
+# actually in the graph, and if something later pulls `p2panda-stream` from the
+# registry the result is a loud trait-bound mismatch, not a silent second copy.
+# Add it back at that point.
