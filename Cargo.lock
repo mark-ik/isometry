@@ -2587,6 +2587,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "genet-render-host"
+version = "0.2.0"
+dependencies = [
+ "netrender",
+ "tracing",
+ "wgpu",
+]
+
+[[package]]
 name = "genet-scripted-dom"
 version = "0.1.0"
 dependencies = [
@@ -2722,6 +2731,7 @@ dependencies = [
  "accesskit_macos",
  "accesskit_unix",
  "accesskit_windows",
+ "genet-render-host",
  "netrender",
  "raw-window-handle",
  "tracing",
