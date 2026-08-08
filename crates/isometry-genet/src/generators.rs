@@ -308,5 +308,4 @@ impl App {
             window.request_redraw();
         }
     }
-
 }

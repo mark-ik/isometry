@@ -372,6 +372,10 @@ const COMPENDIUM_CSS: &str = r#"
 .governance { position: absolute; left: 232px; top: 36px; width: 396px; background-color: #1b1e27; border: 1px solid #2c3347; border-radius: 4px; padding: 10px 10px 12px; z-index: 502; box-shadow: 0 8px 28px rgba(0,0,0,0.55); }
 .overmap { position: absolute; left: 232px; top: 36px; width: 480px; background-color: #1b1e27; border: 1px solid #2c3347; border-radius: 4px; padding: 10px 10px 12px; z-index: 503; box-shadow: 0 8px 28px rgba(0,0,0,0.55); }
 .overmap-graph { margin: 8px 0; }
+.source-time { margin: 8px 0; padding: 7px 8px; border: 1px solid #343c52; border-radius: 3px; background-color: #151923; }
+.source-time-label { margin-bottom: 5px; color: #aeb8cf; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
+.source-time .slider-track { height: 8px; border-radius: 5px; background-color: #343c52; cursor: ew-resize; }
+.source-time .slider-thumb { top: -3px; width: 14px; height: 14px; margin-left: -7px; border-radius: 50%; background-color: #86b7ff; box-shadow: 0 0 0 2px #151923; }
 .overmap-controls { display: flex; gap: 6px; margin-top: 8px; }
 .generator-proposal { color: #e8ebf2; font-size: 14px; font-weight: bold; margin: 10px 0; }
 .governance-row { padding: 8px; border-top: 1px solid #2c3347; cursor: pointer; }

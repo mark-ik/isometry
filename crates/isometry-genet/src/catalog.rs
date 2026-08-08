@@ -108,4 +108,3 @@ pub(crate) fn schema_of(system: &System) -> SheetSchema {
             .collect(),
     }
 }
-

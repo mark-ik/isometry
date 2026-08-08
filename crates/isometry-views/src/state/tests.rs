@@ -780,7 +780,10 @@ fn selection_rows_mirror_mode_and_world() {
     ui.sync_selection_rows();
     assert_eq!(
         ui.mode_selection.selected,
-        vec![EditMode::ALL.iter().position(|m| *m == EditMode::Measure).unwrap()],
+        vec![EditMode::ALL
+            .iter()
+            .position(|m| *m == EditMode::Measure)
+            .unwrap()],
         "the mode row must follow ui.mode"
     );
 
@@ -839,10 +842,14 @@ fn stance_row_defaults_to_walking() {
     assert_eq!(ui.stance_selection.selected, vec![STANCE_KEYS.len() - 1]);
     assert_eq!(STANCE_KEYS[STANCE_KEYS.len() - 1], "");
 
-    let lead = ui.map.tokens.first().map(|t| t.id).expect("demo has tokens");
+    let lead = ui
+        .map
+        .tokens
+        .first()
+        .map(|t| t.id)
+        .expect("demo has tokens");
     ui.map.stances.insert(lead, "forage".to_owned());
     ui.sync_selection_rows();
     assert_eq!(ui.stance_selection.selected, vec![2]);
     assert_eq!(STANCE_KEYS[2], "forage");
 }
-

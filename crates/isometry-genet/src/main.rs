@@ -17,7 +17,8 @@
 //! (frame timers + net trace), `ISOMETRY_CAPTURE_DIR` (self-capture),
 //! `ISOMETRY_SYNTH=1` (stress board), `ISOMETRY_NET_SELFTEST=1` (fire one
 //! end-turn after warm-up to verify the session round-trip without OS
-//! input automation).
+//! input automation), `ISOMETRY_OVERMAP_SELFTEST=1` (overmap capture), and
+//! `ISOMETRY_OVERMAP_SOURCE_TIME_SELFTEST=1` (historical-overmap capture).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -33,16 +34,16 @@ use isometry_core::{
     Facing, FieldValue, MapDocument, Rng, SessionEvent, SheetData, TileCoord, Token, TokenId,
 };
 use isometry_net::{
-    apply_game, ActionIntent, ActionResolved, GameEvent, GameSnapshot, HostSession,
+    ActionIntent, ActionResolved, GameEvent, GameSnapshot, HostSession, apply_game,
 };
 use isometry_system::{
-    monster_sheet, sheet_with_conditions, sheet_with_turn_counters, srd_5e, srd_bestiary,
-    srd_items, srd_spells, ActionError, GeneratorCatalog, GeneratorLimits, System,
+    ActionError, GeneratorCatalog, GeneratorLimits, System, monster_sheet, sheet_with_conditions,
+    sheet_with_turn_counters, srd_5e, srd_bestiary, srd_items, srd_spells,
 };
 use isometry_views::{
-    board_css, board_root, demo_map, synth_map, ActionRow, EditMode, FactionMoveRow,
-    GenerationRequest, InventoryRequest, ItemRow, MonsterRow, NetMode, SheetSchema, SpellRow,
-    StoryletRow, UiChild, UiState, PANEL_W,
+    ActionRow, EditMode, FactionMoveRow, GenerationRequest, InventoryRequest, ItemRow, MonsterRow,
+    NetMode, PANEL_W, SheetSchema, SpellRow, StoryletRow, UiChild, UiState, board_css, board_root,
+    demo_map, synth_map,
 };
 
 mod adjudicate;
@@ -58,6 +59,7 @@ mod render;
 mod selection_rows;
 mod selftest;
 mod sheets;
+mod source_time;
 mod storylets;
 
 use cambium::{GenetAppRunner, HoverEvent, HoverPhase, PointerClick, Propagation};
@@ -70,9 +72,7 @@ use genet_layout::{
 };
 use genet_scripted_dom::{NodeId, ScriptedDom};
 use genet_winit_host::SurfaceHost;
-use layout_dom_api::{
-    DomMutation, LayoutDom as _, LayoutDomMut as _, LocalName, Namespace,
-};
+use layout_dom_api::{DomMutation, LayoutDom as _, LayoutDomMut as _, LocalName, Namespace};
 use net::{NetBridge, Role};
 use netrender::{ColorLoad, ExternalTexturePlacement, NetrenderOptions};
 use paint_list_api::{DeviceIntSize, PaintCmd, PaintList as _};
@@ -96,9 +96,8 @@ fn command_field_node(runner: &Runner) -> Option<NodeId> {
         return None;
     }
     let parent = dom.parent(node)?;
-    (dom.attribute(parent, &Namespace::from(""), &LocalName::from("class"))
-        == Some("cmd-line"))
-    .then_some(node)
+    (dom.attribute(parent, &Namespace::from(""), &LocalName::from("class")) == Some("cmd-line"))
+        .then_some(node)
 }
 
 /// Logical px per wheel notch, used to normalize trackpad pixel deltas.
@@ -149,6 +148,16 @@ struct App {
     /// The host's append-only Codicil history. It is empty for local editing
     /// until a session begins, then mirrors the authority actor.
     history: Codicil<GameEvent>,
+    /// Public state immediately before the first entry in `history`. It is the
+    /// required replay origin for a truthful source-time projection.
+    history_origin: Option<GameSnapshot>,
+    /// The log length last attached to the view's source-time adapter. Keeps
+    /// ordinary dispatches from cloning/reinstalling an unchanged history.
+    source_history_len: Option<usize>,
+    /// Whether the current source-time availability has been projected into the
+    /// view. This distinguishes an unavailable source from a stale projection
+    /// that still needs clearing after a checkpoint load.
+    source_history_attached: bool,
     /// Retained layout session in logical coordinates: hit-test target
     /// and incremental-apply subject.
     layout: Option<IncrementalLayout<NodeId>>,
@@ -253,6 +262,10 @@ struct App {
     /// open the overmap surface for a capture (C8).
     overmap_selftest: bool,
     overmap_fired: bool,
+    /// `ISOMETRY_OVERMAP_SOURCE_TIME_SELFTEST`: after the normal overmap seed,
+    /// capture its first durable source prefix. This stays opt-in so the C8
+    /// screenshot mode remains a live exploration proof.
+    overmap_source_time_selftest: bool,
     /// `ISOMETRY_COMBAT_SELFTEST`: drive a short adjudicated exchange on boot.
     combat_selftest: bool,
     /// Swings left to throw, when the last one landed, and whether the winner
@@ -451,6 +464,9 @@ fn main() {
         campaign: CampaignStore::new(),
         journal: Vec::new(),
         history: Codicil::new(),
+        history_origin: None,
+        source_history_len: None,
+        source_history_attached: false,
         layout: None,
         layout_size: (0.0, 0.0),
         leaves: LeafRegistry::new(),
@@ -490,6 +506,8 @@ fn main() {
         storylet_fired: false,
         overmap_selftest: std::env::var_os("ISOMETRY_OVERMAP_SELFTEST").is_some(),
         overmap_fired: false,
+        overmap_source_time_selftest: std::env::var_os("ISOMETRY_OVERMAP_SOURCE_TIME_SELFTEST")
+            .is_some(),
         combat_selftest: std::env::var_os("ISOMETRY_COMBAT_SELFTEST").is_some(),
         combat_swings: 4,
         last_swing: None,

@@ -1,7 +1,7 @@
 # Optional intelligence: DM-loaded models, agents, and dynamic content
 
 **Date:** 2026-07-07
-**Status:** vision record (capture-now, not a build commitment). Horizon: post-keystone. Depends on the widened schema/Lua ABI and the generators lane. Recorded so the shape is not lost; explicitly not sequenced ahead of viewport windowing. Companion to [2026-07-07_next_horizons_landscape.md](2026-07-07_next_horizons_landscape.md).
+**Status:** vision record, **parked (audit 2026-08-08)**: refresh authority and model assumptions only when activated. Capture-now, not a build commitment. Horizon: post-keystone. Depends on the widened schema/Lua ABI and the generators lane. Recorded so the shape is not lost; explicitly not sequenced ahead of viewport windowing. Companion to [2026-07-07_next_horizons_landscape.md](archive_docs/2026-08-08/2026-07-07_next_horizons_landscape.md).
 
 ---
 

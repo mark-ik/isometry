@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use isometry_campaign::{
     CampaignMap, CampaignWorld, EquipmentSlot, GenValue, GenerationRecord, GeneratorChoice,
@@ -11,7 +11,7 @@ use isometry_core::{
 };
 use isometry_net::{apply_game, GameEvent, GameSnapshot, ROLL_LOG_CAP};
 
-use cambium::{CommandState, SelectionItem, SelectionState, TabStrip, TextInput};
+use cambium::{CommandState, SelectionItem, SelectionState, Slider, TabStrip, TextInput};
 
 /// Fixed side-panel width in logical px (CSS `.side` width plus its
 /// padding); the host uses it to keep drag painting off the panel.
@@ -78,6 +78,7 @@ mod interaction;
 mod play;
 mod rows;
 mod session;
+mod source_time;
 mod surfaces;
 
 use rows::Step;
@@ -260,6 +261,34 @@ pub struct UiState {
     /// hover enter/leave; the painted graph leaf lifts the hovered node so the
     /// place under the cursor stands out before it is clicked.
     pub overmap_hover: Option<String>,
+    /// The local relation cell currently inspected in the overmap. It is a
+    /// view selection, not a campaign-route edit.
+    pub overmap_selected_relation: Option<String>,
+    /// The relation cell under the pointer, used to lift its Swatch target.
+    pub overmap_hovered_relation: Option<String>,
+    /// Locally hidden relation cells. Hiding a route changes only this
+    /// projection; travel and campaign geography still retain the route.
+    pub overmap_hidden_relations: BTreeSet<String>,
+    /// Local visual placement overrides made by pulling overmap nodes. These
+    /// belong to this UI projection only: the campaign's places and travel graph
+    /// remain untouched until an explicit world-authoring feature chooses to
+    /// persist coordinates.
+    pub overmap_position_overrides: BTreeMap<String, (f32, f32)>,
+    /// Pointer position at the start of one captured overmap-node gesture. It
+    /// distinguishes an ordinary click-to-travel from a drag-to-reposition.
+    pub overmap_drag_start: Option<(String, (f32, f32))>,
+    /// The node moved past drag slop in the active gesture. The following click
+    /// is consumed so releasing a pull never also requests travel.
+    pub overmap_dragged_node: Option<String>,
+    /// The host-supplied origin and authority history, kept separate from the
+    /// live world so historical Swatch selection cannot write truth backwards.
+    overmap_source: Option<isometry_net::GameSourceHistory>,
+    /// `None` means the live tail. A prefix cursor selects a replayed snapshot.
+    overmap_source_cursor: Option<u64>,
+    /// Disposable historical projection; `self.world` remains live at all times.
+    overmap_source_snapshot: Option<GameSnapshot>,
+    /// Cambium's normalized source-time scrubber state.
+    pub overmap_source_slider: Slider,
     /// The catalog `segmented_control` state behind the mode, pace, and stance
     /// rows. Cambium's selection components own their own state, so these are
     /// the inner states a `lens` projects into.
@@ -405,6 +434,18 @@ impl UiState {
             overmap_stance_request: None,
             overmap_read_request: false,
             overmap_hover: None,
+            overmap_selected_relation: None,
+            overmap_hovered_relation: None,
+            overmap_hidden_relations: BTreeSet::new(),
+            overmap_position_overrides: BTreeMap::new(),
+            overmap_drag_start: None,
+            overmap_dragged_node: None,
+            overmap_source: None,
+            overmap_source_cursor: None,
+            overmap_source_snapshot: None,
+            overmap_source_slider: Slider::new(1.0)
+                .with_steps(1.0 / 63.0, 10.0 / 63.0)
+                .with_label("Overmap history"),
             mode_selection: SelectionState::single(0).with_id("mode-row"),
             pace_selection: SelectionState::single(1).with_id("pace-row"),
             stance_selection: SelectionState::single(3).with_id("stance-row"),

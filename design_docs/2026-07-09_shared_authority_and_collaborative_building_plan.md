@@ -1,7 +1,14 @@
 # Shared authority and collaborative building
 
 **Date:** 2026-07-09
-**Status:** revised implementation plan (2026-07-11). The original conclusion
+**Status:** revised implementation plan (2026-07-11); **re-scoped
+2026-08-08 (audit)**: the sequencing gate (no second Isometry runtime)
+**stands and governs**. The earlier tiers describing host-owned private
+stores, peer-side Lua revalidation, regenerated secrets, and
+commit-reveal mechanics are **superseded** by the
+[Stickleback migration plan](2026-08-08_stickleback_migration_plan.md);
+live `campaign_sync.rs` assembling `LogSync`/`SyncedSpace` directly is
+named pre-rebase debt there. The original conclusion
 that one ordered log should survive every tier was too broad. The first
 multi-writer campaign-space slice is landed behind `isometry-net`'s
 `campaign-p2p` feature; tactical play still uses the existing sequencer.

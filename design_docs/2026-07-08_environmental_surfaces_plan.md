@@ -1,7 +1,13 @@
 # Environmental surfaces
 
 **Date:** 2026-07-08
-**Status:** design lane. Architecture plus a phased sketch; not scheduled.
+**Status:** design lane; **active only after the authority rewrite (audit
+2026-08-08)**. As written this plan assigns rules authority to storage:
+"the substrate owns spread." Corrected posture before any phase starts:
+core *stores* surfaces and exposes generic area/neighborhood operations
+and explicit deltas; Lua/system resolution chooses propagation,
+combinations, duration, and affected tiles, **once**, per the
+resolve-once law. Architecture plus a phased sketch; not scheduled.
 Emerged from a 2026-07-08 conversation referencing Larian (Divinity: Original
 Sin, Baldur's Gate 3) and Owlcat (Pathfinder: Kingmaker) environmental
 systems.

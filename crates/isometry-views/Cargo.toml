@@ -12,6 +12,7 @@ isometry-core = { workspace = true }
 isometry-campaign = { workspace = true }
 isometry-net = { workspace = true }
 isometry-voxel = { workspace = true }
+codicil = { workspace = true }
 cambium = { workspace = true }
 sceno = { workspace = true }
 scenomise = { workspace = true }

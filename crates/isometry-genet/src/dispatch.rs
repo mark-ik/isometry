@@ -19,6 +19,9 @@ impl App {
                     .is_some_and(|runner| command_field_node(runner).is_some()),
             );
         }
+        if let Some(runner) = self.runner.as_mut() {
+            runner.update(|ui| ui.sync_overmap_source_time());
+        }
         // Cheap flags first: this tail runs after every dispatch, and the save
         // path below starts by cloning the journal. An ordinary click asks for
         // neither and must not pay for either.
@@ -39,6 +42,7 @@ impl App {
             self.pump_overmap_orders();
             self.pump_overmap_read();
             self.pump_net();
+            self.refresh_source_history();
             return;
         }
         let mut save: Option<(std::path::PathBuf, String, String, GameSnapshot)> = None;
@@ -98,7 +102,8 @@ impl App {
                 .as_ref()
                 .and_then(NetBridge::history)
                 .unwrap_or_else(|| self.history.clone());
-            let checkpoint = CampaignCheckpoint::new(public, campaign, history);
+            let checkpoint =
+                CampaignCheckpoint::new(public, campaign, history, self.history_origin.clone());
             let campaign_result = CampaignRepository::open(campaign_path(&name))
                 .and_then(|repository| repository.save_checkpoint(&checkpoint));
             if let Some(runner) = self.runner.as_mut() {
@@ -123,6 +128,9 @@ impl App {
                 self.campaign = checkpoint.private;
                 self.journal = checkpoint.public.journal.clone();
                 self.history = checkpoint.history;
+                self.history_origin = checkpoint.history_origin;
+                self.source_history_len = None;
+                self.source_history_attached = false;
                 if let Some(runner) = self.runner.as_mut() {
                     runner.update(|ui| {
                         ui.apply_snapshot(checkpoint.public);
@@ -132,6 +140,7 @@ impl App {
                 if let Some(window) = self.window.as_ref() {
                     window.request_redraw();
                 }
+                self.refresh_source_history();
                 return;
             }
             let checkpoint_error = checkpoint.err();
@@ -183,6 +192,7 @@ impl App {
         self.pump_overmap_orders();
         self.pump_overmap_read();
         self.pump_net();
+        self.refresh_source_history();
     }
 
     /// In networked mode: ship the UI's queued game events to the
@@ -329,5 +339,4 @@ impl App {
             beat_seq: 0,
         }
     }
-
 }

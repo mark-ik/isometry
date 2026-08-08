@@ -301,4 +301,3 @@ pub enum GovernanceResolutionRequest {
     Adopt { selected: [u8; 32] },
     Branch { candidates: Vec<[u8; 32]> },
 }
-

@@ -1,7 +1,7 @@
 # Performance and cambification
 
 **Date:** 2026-07-20
-**Status:** ACTIVE, one adoption item left. Every performance regression is
+**Status:** ACTIVE, **narrowed (audit 2026-08-08)** to search/whisper text-field adoption and current file-size debt; nothing else in this plan is live. Every performance regression is
 fixed and receipted, the files are split, and the catalog lane is adopted. The
 text-routing blocker cleared 2026-07-27 and the `>` command line now uses
 Cambium's field; the search and whisper capture lanes remain. The plan also

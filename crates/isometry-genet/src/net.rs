@@ -204,7 +204,11 @@ impl NetBridge {
     }
 
     /// Ask the host to play a storylet (session path). Its effects replicate.
-    pub fn commit_storylet(&mut self, key: String, item_owner: Option<TokenId>) -> Option<RequestId> {
+    pub fn commit_storylet(
+        &mut self,
+        key: String,
+        item_owner: Option<TokenId>,
+    ) -> Option<RequestId> {
         let request = self.request_ids.issue();
         self.actor
             .command(BridgeCommand::Storylet {

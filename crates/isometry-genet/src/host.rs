@@ -61,6 +61,9 @@ impl ApplicationHandler for App {
                         self.campaign = checkpoint.private;
                         self.journal = checkpoint.public.journal.clone();
                         self.history = checkpoint.history;
+                        self.history_origin = checkpoint.history_origin;
+                        self.source_history_len = None;
+                        self.source_history_attached = false;
                         restored_public = Some(checkpoint.public);
                         restore_status = Some(format!("restored campaign {name}"));
                     }
@@ -96,6 +99,18 @@ impl ApplicationHandler for App {
         let ids: Vec<_> = ui.map.tokens.iter().map(|t| t.id).collect();
         for id in ids {
             ui.turns.add(id);
+        }
+        let initial_snapshot = self.snapshot_of(&ui);
+        if !matches!(self.net_intent.as_ref(), Some(NetIntent::Join(_))) {
+            self.ensure_history_origin(&initial_snapshot);
+        }
+        if let Some(origin) = self.history_origin.clone() {
+            ui.set_overmap_source_history(Some(isometry_net::GameSourceHistory::new(
+                origin,
+                self.history.clone(),
+            )));
+            self.source_history_len = Some(self.history.len());
+            self.source_history_attached = true;
         }
 
         // Session setup: host publishes this board; a client starts from
@@ -205,6 +220,7 @@ impl ApplicationHandler for App {
             self.pump_sheets();
             self.pump_generators();
             self.pump_storylets();
+            self.refresh_source_history();
             event_loop.set_control_flow(ControlFlow::WaitUntil(
                 Instant::now() + Duration::from_millis(100),
             ));

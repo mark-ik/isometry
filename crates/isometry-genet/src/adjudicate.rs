@@ -24,7 +24,15 @@ impl App {
         // everything else. Only the resolved outcome is replicated, so peers
         // apply it without rerunning a line of Lua.
         {
-            let (actor_sheet, actor_inv, target_sheet, target_inv, tiles, turn_ok, under_initiative) = {
+            let (
+                actor_sheet,
+                actor_inv,
+                target_sheet,
+                target_inv,
+                tiles,
+                turn_ok,
+                under_initiative,
+            ) = {
                 let s = runner.state();
                 let tiles = match (s.map.token(actor), s.map.token(target)) {
                     (Some(a), Some(t)) => Some((a.at, t.at)),
@@ -58,8 +66,7 @@ impl App {
                     return Err("not your turn".to_owned());
                 }
                 let actor_sheet = actor_sheet.ok_or_else(|| "attacker has no sheet".to_owned())?;
-                let target_sheet =
-                    target_sheet.ok_or_else(|| "target has no sheet".to_owned())?;
+                let target_sheet = target_sheet.ok_or_else(|| "target has no sheet".to_owned())?;
                 // Equipment counts: resolve against the effective sheets, so a
                 // magic sword's bonus lands and armour raises the AC it is
                 // compared against. Conditions ride along as boolean fields, so
@@ -152,8 +159,7 @@ impl App {
                 let mut displaced = Vec::new();
                 if let Some((step, tiles)) = resolution.push {
                     if let Some(from) = ui.map.token(target).map(|t| t.at) {
-                        let occupied: Vec<TileCoord> =
-                            ui.map.tokens.iter().map(|t| t.at).collect();
+                        let occupied: Vec<TileCoord> = ui.map.tokens.iter().map(|t| t.at).collect();
                         let (w, h) = (ui.map.ground.width(), ui.map.ground.height());
                         let landing = isometry_core::push_path(from, step, tiles, |at| {
                             at.0 >= 0
@@ -205,7 +211,11 @@ impl App {
                 let down = !resolution.defeated.is_empty();
                 ui.status = if resolution.recruited.is_some() {
                     // A social action; "hits for 0 damage" would read wrong.
-                    let verb = if owner_changes.is_empty() { "sways" } else { "wins over" };
+                    let verb = if owner_changes.is_empty() {
+                        "sways"
+                    } else {
+                        "wins over"
+                    };
                     format!(
                         "{} {verb} {victim} ({}){recruit_note}",
                         resolution.attack.by, resolution.attack.total
@@ -332,7 +342,5 @@ impl App {
                 ui.sheet_effective = None;
             });
         }
-
     }
-
 }

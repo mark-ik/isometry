@@ -19,10 +19,10 @@
 use std::collections::BTreeMap;
 
 use cambium::{
-    clickable, el, graph_canvas_swatch, lens, segmented_control, text, GraphCanvasEdge,
-    GraphCanvasNode, GraphCanvasSubgraph, GraphCanvasSwatch,
+    clickable, el, graph_canvas_swatch_with_drag_and_relations, lens, segmented_control, slider,
+    text, GraphCanvasNode, GraphCanvasRelation, GraphCanvasSubgraph, GraphCanvasSwatch, Slider,
 };
-use isometry_core::Overmap;
+use isometry_core::{Overmap, OvermapEdge};
 use sceno::{
     Arrangement, Footprint, Geographic, Placement, Representation, Score, ScoreItem, SourceRef,
     Spiral, Vec2,
@@ -54,6 +54,17 @@ pub const OVERMAP_CANVAS: (u32, u32) = (440, 300);
 /// The adapter id persisted in a score's opaque source refs. It identifies a
 /// boundary, not an Isometry type in the portable scene schema.
 pub const ISOMETRY_OVERMAP_ADAPTER: &str = "isometry.overmap";
+
+/// A local relation-cell id for the present overmap projection. `OvermapEdge`
+/// does not yet carry the campaign route id, so the source order distinguishes
+/// parallel routes. A future projection with campaign ids can replace this
+/// adapter-local identity without changing Cambium's relation contract.
+fn overmap_relation_id(index: usize, edge: &OvermapEdge) -> String {
+    format!(
+        "route:{index}:{}:{}:{}:{}",
+        edge.from, edge.to, edge.weight, edge.directed
+    )
+}
 
 /// Adapt a pointcrawl to the shared score contract.
 ///
@@ -163,11 +174,12 @@ pub fn overmap_swatch(ui: &UiState) -> Option<GraphCanvasSwatch<String, OvermapN
     // Whose party? The viewer's; the DM (no viewer) watches the "dm" party.
     let party = ui.viewer.as_deref().unwrap_or("dm");
     // Only what the party has discovered (E6): the unfound map is not drawn.
-    let overmap = ui.world.overmap_for(party);
+    let world = ui.overmap_source_world();
+    let overmap = world.overmap_for(party);
     if overmap.nodes.is_empty() {
         return None;
     }
-    let here = ui.world.party_at(party).map(str::to_owned);
+    let here = world.party_at(party).map(str::to_owned);
 
     // Shared score -> scene realization; the final viewport fit is local to the
     // Cambium swatch and does not alter campaign or scene data.
@@ -176,7 +188,12 @@ pub fn overmap_swatch(ui: &UiState) -> Option<GraphCanvasSwatch<String, OvermapN
         .nodes
         .iter()
         .map(|node| {
-            let position = placed.get(&node.id).copied().unwrap_or((0.5, 0.5));
+            let position = ui
+                .overmap_position_overrides
+                .get(&node.id)
+                .copied()
+                .or_else(|| placed.get(&node.id).copied())
+                .unwrap_or((0.5, 0.5));
             let kind = if here.as_deref() == Some(node.id.as_str()) {
                 OvermapNodeKind::Here
             } else {
@@ -191,26 +208,55 @@ pub fn overmap_swatch(ui: &UiState) -> Option<GraphCanvasSwatch<String, OvermapN
             }
         })
         .collect();
-    let edges: Vec<GraphCanvasEdge<String>> = overmap
+    let relations: Vec<GraphCanvasRelation<String>> = overmap
         .edges
         .iter()
-        .map(|edge| GraphCanvasEdge {
-            from: edge.from.clone(),
-            to: edge.to.clone(),
+        .enumerate()
+        .map(|(index, edge)| {
+            let id = overmap_relation_id(index, edge);
+            let from = overmap
+                .node(&edge.from)
+                .map(|node| node.name.clone())
+                .unwrap_or_else(|| edge.from.clone());
+            let to = overmap
+                .node(&edge.to)
+                .map(|node| node.name.clone())
+                .unwrap_or_else(|| edge.to.clone());
+            GraphCanvasRelation {
+                id: id.clone(),
+                from: edge.from.clone(),
+                to: edge.to.clone(),
+                kind: if edge.directed {
+                    "One-way route".to_owned()
+                } else {
+                    "Route".to_owned()
+                },
+                label: format!("{from} to {to}, travel weight {}", edge.weight),
+                visible: !ui.overmap_hidden_relations.contains(&id),
+                emphasized: ui.overmap_selected_relation.as_deref() == Some(id.as_str())
+                    || ui.overmap_hovered_relation.as_deref() == Some(id.as_str()),
+            }
         })
         .collect();
 
-    let mut swatch = GraphCanvasSwatch::new(OVERMAP_LEAF_KEY, GraphCanvasSubgraph { nodes, edges })
-        .with_size(OVERMAP_CANVAS.0, OVERMAP_CANVAS.1)
-        .with_label("Overmap")
-        // The overmap *is* the full view; there is nothing to expand into. The
-        // chip used to render and get hidden with `display: none`, which left a
-        // focusable, screen-reader-announced control that did nothing.
-        .with_expand(false)
-        // A pointcrawl is unreadable as unnamed dots, and since cambium 0.3.2 the
-        // visible labels carry each node's `selected` / `hovered` state, so "here"
-        // can be emphasized without a parallel hand-rolled label layer.
-        .with_node_labels(true);
+    let mut swatch = GraphCanvasSwatch::new(
+        OVERMAP_LEAF_KEY,
+        GraphCanvasSubgraph {
+            nodes,
+            edges: Vec::new(),
+        },
+    )
+    .with_relations(relations)
+    .with_size(OVERMAP_CANVAS.0, OVERMAP_CANVAS.1)
+    .with_label("Overmap")
+    // The overmap *is* the full view; there is nothing to expand into. The
+    // chip used to render and get hidden with `display: none`, which left a
+    // focusable, screen-reader-announced control that did nothing.
+    .with_expand(false)
+    // A pointcrawl is unreadable as unnamed dots, and since cambium 0.3.2 the
+    // visible labels carry each node's `selected` / `hovered` state, so "here"
+    // can be emphasized without a parallel hand-rolled label layer.
+    .with_node_labels(true);
     // A larger ring for a full-panel canvas than the card default.
     swatch.node_radius = 6.0;
     swatch.edge_width = 1.5;
@@ -304,6 +350,78 @@ mod tests {
         );
     }
 
+    #[test]
+    fn overmap_drag_is_local_curation_and_consumes_its_release_click() {
+        let mut ui = discovered_one_place();
+        let source_position = ui.world.places["here"].position.clone();
+
+        ui.drag_overmap_node(cambium::GraphCanvasNodeDrag {
+            id: "here".to_owned(),
+            phase: cambium::PointerPhase::Down,
+            position: (0.5, 0.5),
+        });
+        ui.drag_overmap_node(cambium::GraphCanvasNodeDrag {
+            id: "here".to_owned(),
+            phase: cambium::PointerPhase::Move,
+            position: (0.78, 0.22),
+        });
+        ui.drag_overmap_node(cambium::GraphCanvasNodeDrag {
+            id: "here".to_owned(),
+            phase: cambium::PointerPhase::Up,
+            position: (0.78, 0.22),
+        });
+
+        let swatch = overmap_swatch(&ui).expect("a discovered place draws");
+        assert_eq!(swatch.graph.nodes[0].position, (0.78, 0.22));
+        assert_eq!(
+            ui.world.places["here"].position, source_position,
+            "pulling a Swatch node does not edit campaign geography"
+        );
+
+        ui.activate_overmap_node("here".to_owned());
+        assert!(
+            ui.overmap_travel_request.is_none(),
+            "the click following a drag is consumed rather than becoming travel"
+        );
+        ui.activate_overmap_node("here".to_owned());
+        assert_eq!(ui.overmap_travel_request.as_deref(), Some("here"));
+    }
+
+    #[test]
+    fn parallel_route_cells_remain_independently_selectable_and_hideable() {
+        let first = OvermapEdge {
+            from: "here".to_owned(),
+            to: "there".to_owned(),
+            weight: 1,
+            directed: false,
+        };
+        let second = OvermapEdge {
+            weight: 3,
+            ..first.clone()
+        };
+        let first_id = overmap_relation_id(0, &first);
+        let second_id = overmap_relation_id(1, &second);
+        assert_ne!(first_id, second_id, "parallel routes are distinct cells");
+
+        let mut ui = discovered_one_place();
+        ui.select_overmap_relation(first_id.clone());
+        ui.toggle_overmap_relation_visibility(first_id.clone());
+        assert_eq!(
+            ui.overmap_selected_relation.as_deref(),
+            Some(first_id.as_str())
+        );
+        assert!(ui.overmap_hidden_relations.contains(&first_id));
+        assert!(
+            !ui.overmap_hidden_relations.contains(&second_id),
+            "hiding one relation cell never hides its parallel sibling"
+        );
+        ui.toggle_overmap_relation_visibility(first_id.clone());
+        assert!(
+            !ui.overmap_hidden_relations.contains(&first_id),
+            "show restores only the local view cell"
+        );
+    }
+
     fn discovered_one_place() -> UiState {
         let mut ui = UiState::new(isometry_core::MapDocument::new("t", 2, 2));
         ui.world.places.insert(
@@ -332,21 +450,47 @@ pub fn overmap_overlay(ui: &UiState) -> Option<UiChild> {
         return None;
     }
     let party = ui.viewer.as_deref().unwrap_or("dm");
-    let overmap = ui.world.overmap_for(party);
-    let here = ui.world.party_at(party).map(str::to_owned);
+    let world = ui.overmap_source_world();
+    let overmap = world.overmap_for(party);
+    let here = world.party_at(party).map(str::to_owned);
+    let historical = ui.overmap_is_historical();
 
-    let actions: Vec<UiChild> = vec![
-        Box::new(clickable(
+    let mut actions: Vec<UiChild> = Vec::new();
+    if historical {
+        actions.push(Box::new(clickable(
+            el::<_, UiState, ()>("span", text("return live")).attr("class", "btn btn-mini"),
+            |ui: &mut UiState, _| ui.return_overmap_to_live(),
+        )));
+    } else {
+        actions.push(Box::new(clickable(
             el::<_, UiState, ()>("span", text("study map")).attr("class", "btn btn-mini"),
             |ui: &mut UiState, _| ui.request_map_read(),
-        )),
-        Box::new(clickable(
-            el::<_, UiState, ()>("span", text("close")).attr("class", "btn btn-mini"),
-            |ui: &mut UiState, _| ui.close_overmap(),
-        )),
-    ];
+        )));
+    }
+    actions.push(Box::new(clickable(
+        el::<_, UiState, ()>("span", text("close")).attr("class", "btn btn-mini"),
+        |ui: &mut UiState, _| ui.close_overmap(),
+    )));
 
     let mut body: Vec<UiChild> = Vec::new();
+
+    if let Some(label) = ui.overmap_source_time_label() {
+        if ui.overmap_source_time_available() {
+            body.push(Box::new(
+                el(
+                    "section",
+                    (
+                        el("div", text(label)).attr("class", "source-time-label"),
+                        lens(
+                            |state: &mut Slider| slider(state),
+                            |ui: &mut UiState| &mut ui.overmap_source_slider,
+                        ),
+                    ),
+                )
+                .attr("class", "source-time"),
+            ));
+        }
+    }
 
     // The painted graph, when there is one; else the "find your way" hint.
     match overmap_swatch(ui) {
@@ -357,12 +501,26 @@ pub fn overmap_overlay(ui: &UiState) -> Option<UiChild> {
             body.push(Box::new(
                 el(
                     "div",
-                    graph_canvas_swatch(
+                    graph_canvas_swatch_with_drag_and_relations(
                         &swatch,
-                        // A node click asks the host to travel there.
-                        |ui: &mut UiState, id: String| ui.request_travel(id),
+                        // A click asks the host to travel there; the drag path
+                        // consumes its own release-click so a pull stays local
+                        // curation rather than becoming a trip request.
+                        |ui: &mut UiState, id: String| {
+                            if !ui.overmap_is_historical() {
+                                ui.activate_overmap_node(id);
+                            }
+                        },
                         // Enter/leave lifts the hovered node on the painted leaf.
                         |ui: &mut UiState, id: Option<String>| ui.hover_overmap(id),
+                        // Pulling a site changes only this view's local
+                        // placement override. Campaign geography remains the
+                        // source of truth until a separate authoring command.
+                        |ui: &mut UiState, event| ui.drag_overmap_node(event),
+                        // Relation cells keep their own stable local identity,
+                        // even where two routes share the same endpoints.
+                        |ui: &mut UiState, id: String| ui.select_overmap_relation(id),
+                        |ui: &mut UiState, id: Option<String>| ui.hover_overmap_relation(id),
                         // Never called: the swatch renders no Expand chip
                         // (`with_expand(false)`).
                         |_ui: &mut UiState| {},
@@ -396,18 +554,72 @@ pub fn overmap_overlay(ui: &UiState) -> Option<UiChild> {
             .map(|n| n.name.clone())
             .unwrap_or_else(|| id.to_owned())
     };
-    for edge in &overmap.edges {
-        body.push(Box::new(
+    for (index, edge) in overmap.edges.iter().enumerate() {
+        let relation = overmap_relation_id(index, edge);
+        let selected = ui.overmap_selected_relation.as_deref() == Some(relation.as_str());
+        let hidden = ui.overmap_hidden_relations.contains(&relation);
+        let mut class = String::from("side-line overmap-route");
+        if selected {
+            class.push_str(" selected");
+        }
+        if hidden {
+            class.push_str(" hidden");
+        }
+        let row_relation = relation.clone();
+        body.push(Box::new(clickable(
             el(
-                "div",
+                "button",
                 text(format!(
-                    "{} — {} ({})",
+                    "{} to {} ({}){}",
                     name_of(&edge.from),
                     name_of(&edge.to),
-                    edge.weight
+                    edge.weight,
+                    if hidden { " [hidden]" } else { "" },
                 )),
             )
-            .attr("class", "side-line"),
+            .attr("class", class)
+            .attr("type", "button")
+            .attr("aria-current", if selected { "true" } else { "false" }),
+            move |ui: &mut UiState, _| ui.select_overmap_relation(row_relation.clone()),
+        )));
+    }
+
+    if let Some((index, edge)) = overmap.edges.iter().enumerate().find(|(index, edge)| {
+        let relation = overmap_relation_id(*index, edge);
+        ui.overmap_selected_relation.as_deref() == Some(relation.as_str())
+    }) {
+        let relation = overmap_relation_id(index, edge);
+        let hidden = ui.overmap_hidden_relations.contains(&relation);
+        let toggle_relation = relation.clone();
+        body.push(Box::new(
+            el(
+                "section",
+                (
+                    el("strong", text("Route")),
+                    el(
+                        "div",
+                        text(format!(
+                            "{} to {} · travel weight {}{}",
+                            name_of(&edge.from),
+                            name_of(&edge.to),
+                            edge.weight,
+                            if edge.directed { " · one way" } else { "" },
+                        )),
+                    ),
+                    clickable(
+                        el(
+                            "button",
+                            text(if hidden { "Show route" } else { "Hide route" }),
+                        )
+                        .attr("class", "btn btn-mini")
+                        .attr("type", "button"),
+                        move |ui: &mut UiState, _| {
+                            ui.toggle_overmap_relation_visibility(toggle_relation.clone())
+                        },
+                    ),
+                ),
+            )
+            .attr("class", "overmap-link-card"),
         ));
     }
 
@@ -418,33 +630,39 @@ pub fn overmap_overlay(ui: &UiState) -> Option<UiChild> {
     // `SelectionState`; `pump_selection_rows` notices the divergence from the
     // world and dispatches the real request, so a click still travels the
     // ordinary host-adjudicated path.
-    let pace_items = crate::state::pace_items();
-    body.push(Box::new(
-        el::<_, UiState, ()>(
-            "div",
-            lens(
-                move |sel: &mut cambium::SelectionState| segmented_control(sel, &pace_items),
-                |ui: &mut UiState| &mut ui.pace_selection,
-            ),
-        )
-        .attr("class", "overmap-controls"),
-    ));
+    if !historical {
+        let pace_items = crate::state::pace_items();
+        body.push(Box::new(
+            el::<_, UiState, ()>(
+                "div",
+                lens(
+                    move |sel: &mut cambium::SelectionState| segmented_control(sel, &pace_items),
+                    |ui: &mut UiState| &mut ui.pace_selection,
+                ),
+            )
+            .attr("class", "overmap-controls"),
+        ));
 
-    let stance_items = crate::state::stance_items();
-    body.push(Box::new(
-        el::<_, UiState, ()>(
-            "div",
-            lens(
-                move |sel: &mut cambium::SelectionState| segmented_control(sel, &stance_items),
-                |ui: &mut UiState| &mut ui.stance_selection,
-            ),
-        )
-        .attr("class", "overmap-controls"),
-    ));
+        let stance_items = crate::state::stance_items();
+        body.push(Box::new(
+            el::<_, UiState, ()>(
+                "div",
+                lens(
+                    move |sel: &mut cambium::SelectionState| segmented_control(sel, &stance_items),
+                    |ui: &mut UiState| &mut ui.stance_selection,
+                ),
+            )
+            .attr("class", "overmap-controls"),
+        ));
+    }
 
-    let hint = match &here {
+    let hint = if historical {
+        "historical projection: travel and exploration orders are disabled".to_owned()
+    } else {
+        match &here {
         Some(node) => format!("here: {} — click a place to travel", name_of(node)),
         None => "the party is not on the overmap yet".to_owned(),
+        }
     };
     body.push(Box::new(el("div", text(hint)).attr("class", "side-hint")));
 

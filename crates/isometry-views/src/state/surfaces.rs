@@ -220,6 +220,51 @@ impl UiState {
         self.overmap_travel_request = Some(node);
     }
 
+    /// Activate an overmap node as a travel request unless the current pointer
+    /// gesture pulled that node. The drag callback arrives before the browser's
+    /// click activation, so this consumes exactly the release-click that would
+    /// otherwise make repositioning a site also travel there.
+    pub fn activate_overmap_node(&mut self, node: String) {
+        if let Some(dragged) = self.overmap_dragged_node.take() {
+            if dragged == node {
+                return;
+            }
+        }
+        self.request_travel(node);
+    }
+
+    /// Respond to a captured Swatch node gesture with a local position override.
+    /// The pointcrawl's source graph stays immutable: this is projection curation
+    /// for the currently open UI only. A small normalized slop keeps a press and
+    /// release available as the existing travel click.
+    pub fn drag_overmap_node(&mut self, event: cambium::GraphCanvasNodeDrag<String>) {
+        const SLOP: f32 = 0.015;
+        match event.phase {
+            cambium::PointerPhase::Down => {
+                self.overmap_drag_start = Some((event.id, event.position));
+                self.overmap_dragged_node = None;
+            }
+            cambium::PointerPhase::Move | cambium::PointerPhase::Up => {
+                let Some((started_id, start)) = self.overmap_drag_start.as_ref() else {
+                    return;
+                };
+                if started_id != &event.id {
+                    return;
+                }
+                let dx = event.position.0 - start.0;
+                let dy = event.position.1 - start.1;
+                if self.overmap_dragged_node.is_some() || dx.hypot(dy) >= SLOP {
+                    self.overmap_dragged_node = Some(event.id.clone());
+                    self.overmap_position_overrides
+                        .insert(event.id, event.position);
+                }
+                if matches!(event.phase, cambium::PointerPhase::Up) {
+                    self.overmap_drag_start = None;
+                }
+            }
+        }
+    }
+
     /// Choose the party's travel pace (a percent of normal time). The host
     /// records it; the next trip travels at it.
     pub fn request_pace(&mut self, pace: i64) {
@@ -243,6 +288,25 @@ impl UiState {
     /// painted graph's hover emphasis; no game state changes.
     pub fn hover_overmap(&mut self, node: Option<String>) {
         self.overmap_hover = node;
+    }
+
+    /// Inspect one relation cell in the local overmap projection. Campaign
+    /// routes remain source truth; this merely selects the Link card target.
+    pub fn select_overmap_relation(&mut self, relation: String) {
+        self.overmap_selected_relation = Some(relation);
+    }
+
+    /// The pointer entered or left an overmap relation cell.
+    pub fn hover_overmap_relation(&mut self, relation: Option<String>) {
+        self.overmap_hovered_relation = relation;
+    }
+
+    /// Toggle one relation cell's local visibility. This must not delete or
+    /// mutate the campaign route it projects.
+    pub fn toggle_overmap_relation_visibility(&mut self, relation: String) {
+        if !self.overmap_hidden_relations.insert(relation.clone()) {
+            self.overmap_hidden_relations.remove(&relation);
+        }
     }
 
     pub fn open_generator(&mut self) {

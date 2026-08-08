@@ -24,21 +24,28 @@ pub struct CampaignCheckpoint {
     pub public: GameSnapshot,
     pub private: CampaignStore,
     pub history: Codicil<isometry_net::GameEvent>,
+    /// The public state immediately before `history` began. Checkpoints written
+    /// before source time omit it and remain readable, but cannot fabricate a
+    /// replayable past from their current snapshot.
+    #[serde(default)]
+    pub history_origin: Option<GameSnapshot>,
 }
 
 impl CampaignCheckpoint {
-    pub const FORMAT: u32 = 1;
+    pub const FORMAT: u32 = 2;
 
     pub fn new(
         public: GameSnapshot,
         private: CampaignStore,
         history: Codicil<isometry_net::GameEvent>,
+        history_origin: Option<GameSnapshot>,
     ) -> Self {
         Self {
             format: Self::FORMAT,
             public,
             private,
             history,
+            history_origin,
         }
     }
 }
@@ -71,7 +78,7 @@ impl CampaignRepository {
             pollster::block_on(self.slots.load(CAMPAIGN_CHECKPOINT_SLOT))
                 .map_err(|error| error.to_string())?;
         match checkpoint {
-            Some(checkpoint) if checkpoint.format == CampaignCheckpoint::FORMAT => {
+            Some(checkpoint) if (1..=CampaignCheckpoint::FORMAT).contains(&checkpoint.format) => {
                 Ok(Some(checkpoint))
             }
             Some(checkpoint) => Err(format!(
@@ -161,26 +168,23 @@ mod tests {
         inventory
             .equip(EquipmentSlot::MainHand, ItemId::new("checkpoint.sword"))
             .unwrap();
-        let checkpoint = CampaignCheckpoint::new(
-            GameSnapshot {
-                map: MapDocument::new("checkpoint", 2, 2),
-                turns: TurnList::new(),
-                roll_log: Vec::new(),
-                journal: vec![fact],
-                inventories: std::collections::BTreeMap::from([(TokenId(1), inventory)]),
-                generations: vec![generation],
-                maps: Default::default(),
-                active_map: None,
-                world: Default::default(),
-                clocks: Default::default(),
+        let public = GameSnapshot {
+            map: MapDocument::new("checkpoint", 2, 2),
+            turns: TurnList::new(),
+            roll_log: Vec::new(),
+            journal: vec![fact],
+            inventories: std::collections::BTreeMap::from([(TokenId(1), inventory)]),
+            generations: vec![generation],
+            maps: Default::default(),
+            active_map: None,
+            world: Default::default(),
+            clocks: Default::default(),
 
-                party_cap: isometry_net::default_party_cap(),
-                last_beats: Vec::new(),
-                beat_seq: 0,
-            },
-            campaign,
-            history,
-        );
+            party_cap: isometry_net::default_party_cap(),
+            last_beats: Vec::new(),
+            beat_seq: 0,
+        };
+        let checkpoint = CampaignCheckpoint::new(public.clone(), campaign, history, Some(public));
 
         CampaignRepository::open(&path)
             .unwrap()

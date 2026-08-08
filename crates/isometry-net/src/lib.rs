@@ -17,6 +17,7 @@
 
 mod protocol;
 mod session;
+mod source_time;
 pub mod sim;
 
 #[cfg(feature = "campaign-p2p")]
@@ -36,6 +37,7 @@ pub use protocol::{
     PeerId, Recipient, ROLL_LOG_CAP,
 };
 pub use session::{apply_game, ClientSession, GameError, HostSession};
+pub use source_time::{GameSourceHistory, GameSourceTimeError};
 
 #[cfg(feature = "iroh")]
 pub mod iroh_link;

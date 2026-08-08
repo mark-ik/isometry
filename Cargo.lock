@@ -2530,6 +2530,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "genet-document-resources"
+version = "0.2.0"
+dependencies = [
+ "genet-host-api",
+ "layout-dom-api",
+]
+
+[[package]]
 name = "genet-host-api"
 version = "0.1.0"
 
@@ -2545,6 +2553,7 @@ dependencies = [
  "engine-observables-api",
  "euclid",
  "fontique",
+ "genet-document-resources",
  "genet-paint-types",
  "genet-stylo",
  "genet-stylo-atoms",
@@ -2871,10 +2880,12 @@ dependencies = [
 name = "graphshell-protocol"
 version = "0.0.1"
 dependencies = [
+ "base64",
  "blake3",
  "sceno",
  "scenotime",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -4144,6 +4155,7 @@ name = "isometry-views"
 version = "0.1.0"
 dependencies = [
  "cambium",
+ "codicil",
  "isometry-campaign",
  "isometry-core",
  "isometry-net",

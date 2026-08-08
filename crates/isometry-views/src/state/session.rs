@@ -308,5 +308,4 @@ impl UiState {
             false
         }
     }
-
 }

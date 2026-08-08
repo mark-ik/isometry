@@ -72,7 +72,11 @@ impl App {
         let (open, request, can_edit) = match self.runner.as_ref() {
             Some(r) => {
                 let s = r.state();
-                (s.storylet_open, s.storylet_request.clone(), s.can_edit_inventory)
+                (
+                    s.storylet_open,
+                    s.storylet_request.clone(),
+                    s.can_edit_inventory,
+                )
             }
             None => return,
         };
@@ -94,7 +98,10 @@ impl App {
         let (item_owner, snapshot, any_storylets) = match self.runner.as_ref() {
             Some(r) => {
                 let s = r.state();
-                let owner = s.turns.active().or_else(|| s.map.tokens.first().map(|t| t.id));
+                let owner = s
+                    .turns
+                    .active()
+                    .or_else(|| s.map.tokens.first().map(|t| t.id));
                 (owner, self.snapshot_of(s), !s.world.storylets.is_empty())
             }
             None => return,
@@ -105,7 +112,10 @@ impl App {
         if !any_storylets {
             return;
         }
-        let remote = matches!(self.runner.as_ref().map(|r| r.state().net_mode), Some(NetMode::Remote));
+        let remote = matches!(
+            self.runner.as_ref().map(|r| r.state().net_mode),
+            Some(NetMode::Remote)
+        );
         if remote {
             if let Some(net) = self.net.as_mut() {
                 let request = net.commit_storylet(key.clone(), item_owner);
@@ -119,11 +129,8 @@ impl App {
                 }
             }
         } else {
-            let mut host = HostSession::with_history(
-                snapshot,
-                self.campaign.clone(),
-                self.history.clone(),
-            );
+            let mut host =
+                HostSession::with_history(snapshot, self.campaign.clone(), self.history.clone());
             match host.commit_storylet(&key, item_owner) {
                 Ok(_) => {
                     self.campaign = host.campaign().clone();
@@ -266,6 +273,7 @@ impl App {
                 Some(r) => self.snapshot_of(r.state()),
                 None => return,
             };
+            self.ensure_history_origin(&snapshot);
             let mut host =
                 HostSession::with_history(snapshot, self.campaign.clone(), self.history.clone());
             match host.commit_faction_turn(kept) {
@@ -346,12 +354,12 @@ impl App {
             if let Some(runner) = self.runner.as_mut() {
                 runner.update(|ui| ui.apply_snapshot(snapshot));
             }
+            self.refresh_source_history();
         }
         if let Some(window) = self.window.as_ref() {
             window.request_redraw();
         }
     }
-
 }
 
 /// A DM-facing reason a storylet is not yet playable.

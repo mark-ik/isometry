@@ -1,8 +1,22 @@
 # Overmap Presentation Plan: Hulls, Backdrop, and a Map That Reads as Terrain
 
 **Date:** 2026-08-02
-**Status:** Ready. Prerequisites landed; see the "already landed" list before
-starting.
+**Status:** Active, with **two prerequisites reopened by the 2026-08-08
+audit** ahead of the "already landed" list:
+(1) **a neutral region-paint seam**: sprigging's `GraphCanvas` privately
+owns paint order and geometry, so "extend the existing leaf" is not
+implementable as written; a product-free region/composite layer is now
+justified by the Mesocosm minimap as second consumer;
+(2) **hulls derive from final displayed node positions**, including local
+placement overrides, never from authored coordinates alone. Required
+receipts: uniform-position, unplaced-node, override, parallel-route, and
+a headed screenshot.
+**Product direction recorded (wing session, 2026-08-08): source-time as a
+feature** — the overmap viewed from historical standpoints: what was
+believed then, what the table knows now, what was retconned, which map
+version a character possessed. This is the wing's *claim* carrier at
+campaign scale; it rides this plan's machinery once the prerequisites
+land.
 **Companion:** mere `design_docs/mere_docs/implementation_strategy/2026-07-21_projection_proofs_plan.md`
 (the arrangement register), mesocosm's minimap (`mesocosm-views`, the first
 Hulls consumer and the working example to follow).

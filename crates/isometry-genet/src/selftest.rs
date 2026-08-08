@@ -143,7 +143,10 @@ impl App {
         if !self.cmd_selftest || self.cmd_fired {
             return;
         }
-        if !self.started.is_some_and(|t| t.elapsed() > Duration::from_secs(2)) {
+        if !self
+            .started
+            .is_some_and(|t| t.elapsed() > Duration::from_secs(2))
+        {
             return;
         }
         self.cmd_fired = true;
@@ -193,8 +196,12 @@ impl App {
                 before,
                 ui.map.tokens.len(),
                 newest.map(|t| (t.id.0, t.sprite.clone(), t.at)),
-                newest.and_then(|t| ui.map.sheet(t.id)).and_then(|s| s.text("name").map(str::to_owned)),
-                newest.and_then(|t| ui.map.sheet(t.id)).and_then(|s| s.int("hp_current")),
+                newest
+                    .and_then(|t| ui.map.sheet(t.id))
+                    .and_then(|s| s.text("name").map(str::to_owned)),
+                newest
+                    .and_then(|t| ui.map.sheet(t.id))
+                    .and_then(|s| s.int("hp_current")),
                 ui.status,
             );
         }
@@ -211,12 +218,17 @@ impl App {
         if !self.storylet_selftest || self.storylet_fired {
             return;
         }
-        if !self.started.is_some_and(|t| t.elapsed() > Duration::from_secs(2)) {
+        if !self
+            .started
+            .is_some_and(|t| t.elapsed() > Duration::from_secs(2))
+        {
             return;
         }
         self.storylet_fired = true;
 
-        use isometry_campaign::{StoryletEffect, StoryletProposal, StoryletRequirements, WorldFact};
+        use isometry_campaign::{
+            StoryletEffect, StoryletProposal, StoryletRequirements, WorldFact,
+        };
         // A ready storylet (no requirements, no roles) and a locked one (needs a
         // faction that does not exist).
         let ready = StoryletProposal {
@@ -247,8 +259,12 @@ impl App {
         };
         if let Some(runner) = self.runner.as_mut() {
             runner.update(|ui| {
-                ui.world.storylets.insert("gate-greeting".to_owned(), ready.clone());
-                ui.world.storylets.insert("cult-rises".to_owned(), locked.clone());
+                ui.world
+                    .storylets
+                    .insert("gate-greeting".to_owned(), ready.clone());
+                ui.world
+                    .storylets
+                    .insert("cult-rises".to_owned(), locked.clone());
                 ui.open_storylets();
             });
         }
@@ -265,7 +281,11 @@ impl App {
         // Select the ready one and play it.
         if let Some(runner) = self.runner.as_mut() {
             runner.update(|ui| {
-                let idx = ui.storylets.iter().position(|r| r.key == "gate-greeting").unwrap_or(0);
+                let idx = ui
+                    .storylets
+                    .iter()
+                    .position(|r| r.key == "gate-greeting")
+                    .unwrap_or(0);
                 ui.storylet_selected = idx;
                 ui.play_storylet();
             });
@@ -292,7 +312,10 @@ impl App {
         if !self.overmap_selftest || self.overmap_fired {
             return;
         }
-        if !self.started.is_some_and(|t| t.elapsed() > Duration::from_secs(2)) {
+        if !self
+            .started
+            .is_some_and(|t| t.elapsed() > Duration::from_secs(2))
+        {
             return;
         }
         self.overmap_fired = true;
@@ -325,13 +348,23 @@ impl App {
                     tags: Vec::new(),
                     weight,
                 };
-                ui.world.routes.insert("r1".to_owned(), route("r1", "village", "forest", 2));
-                ui.world.routes.insert("r2".to_owned(), route("r2", "forest", "ruins", 3));
-                ui.world.routes.insert("r3".to_owned(), route("r3", "village", "keep", 5));
-                ui.world.routes.insert("r4".to_owned(), route("r4", "keep", "citadel", 4));
+                ui.world
+                    .routes
+                    .insert("r1".to_owned(), route("r1", "village", "forest", 2));
+                ui.world
+                    .routes
+                    .insert("r2".to_owned(), route("r2", "forest", "ruins", 3));
+                ui.world
+                    .routes
+                    .insert("r3".to_owned(), route("r3", "village", "keep", 5));
+                ui.world
+                    .routes
+                    .insert("r4".to_owned(), route("r4", "keep", "citadel", 4));
 
                 let party = ui.viewer.clone().unwrap_or_else(|| "dm".to_owned());
-                ui.world.party_node.insert(party.clone(), "village".to_owned());
+                ui.world
+                    .party_node
+                    .insert(party.clone(), "village".to_owned());
                 // The party knows only its own ground and the near woods. The keep
                 // is one route past the known (a frontier the "study map" read
                 // finds); the Sky Citadel is two routes out, unreachable by that
@@ -367,6 +400,40 @@ impl App {
         // on a window event, of which a headless selftest has none. Drive it once
         // here so the seeded chart resolves and the capture shows the outcome.
         self.pump_overmap_read();
+        if self.overmap_source_time_selftest {
+            // The C8 fixture is deliberately assembled directly so it can
+            // exercise discovery and a carried map without a content pack. For
+            // this receipt, make the finished public state the explicit origin,
+            // then append one real authority event through the normal host path.
+            // Selecting its empty prefix is consequently a truthful source
+            // projection, never a reconstruction from current state.
+            let origin = self
+                .runner
+                .as_ref()
+                .map(|runner| self.snapshot_of(runner.state()));
+            if let Some(origin) = origin {
+                self.history = Codicil::new();
+                self.history_origin = Some(origin);
+                self.source_history_len = None;
+                self.source_history_attached = false;
+                self.emit_host_event(GameEvent::Fact(WorldFact {
+                    id: "overmap-source-time-receipt".to_owned(),
+                    kind: "history".to_owned(),
+                    text: "The survey was filed after the route was drawn.".to_owned(),
+                    tags: vec!["receipt".to_owned()],
+                }));
+                if let Some(runner) = self.runner.as_mut() {
+                    runner.update(|ui| {
+                        ui.overmap_source_slider.value = 0.0;
+                        ui.sync_overmap_source_time();
+                        ui.status = "source-time receipt: historical prefix selected".to_owned();
+                    });
+                }
+                eprintln!(
+                    "[isometry] overmap source-time selftest: selected event 0 of 1; live authority retained"
+                );
+            }
+        }
         eprintln!(
             "[isometry] overmap selftest: seeded 5 places, party at the village knowing 3, \
              carrying a chart to the citadel; reading the map reveals keep + citadel"
@@ -380,7 +447,10 @@ impl App {
         if !self.convince_selftest || self.convince_fired {
             return;
         }
-        if !self.started.is_some_and(|t| t.elapsed() > Duration::from_secs(2)) {
+        if !self
+            .started
+            .is_some_and(|t| t.elapsed() > Duration::from_secs(2))
+        {
             return;
         }
         self.convince_fired = true;
@@ -455,19 +525,28 @@ impl App {
 
         // First pitch: goblin 2 joins A (A goes 2 -> 3 tokens, at the cap).
         if let Some(runner) = self.runner.as_mut() {
-            runner.update(|ui| ui.action_intent = Some((TokenId(1), TokenId(2), "convince".to_owned())));
+            runner.update(|ui| {
+                ui.action_intent = Some((TokenId(1), TokenId(2), "convince".to_owned()))
+            });
         }
         self.pump_sheets();
         // Second pitch: goblin 4 would make 4 > cap 3, so it fails to hold.
         if let Some(runner) = self.runner.as_mut() {
-            runner.update(|ui| ui.action_intent = Some((TokenId(1), TokenId(4), "convince".to_owned())));
+            runner.update(|ui| {
+                ui.action_intent = Some((TokenId(1), TokenId(4), "convince".to_owned()))
+            });
         }
         self.pump_sheets();
 
         if let Some(runner) = self.runner.as_ref() {
             let ui = runner.state();
             let owner = |id| ui.map.token(id).and_then(|t| t.owner.clone());
-            let a_here = ui.map.tokens.iter().filter(|t| t.owner.as_deref() == Some("A")).count();
+            let a_here = ui
+                .map
+                .tokens
+                .iter()
+                .filter(|t| t.owner.as_deref() == Some("A"))
+                .count();
             let a_global = a_here
                 + ui.campaign_maps
                     .values()
@@ -531,7 +610,10 @@ impl App {
         knight.set_text("name", "Knight");
         knight.set_int("str", 18); // +4
         knight.set_int("prof", 3); // so the swing is 1d20+7 against AC 15
-        let Some(goblin) = srd_bestiary().iter().find(|m| m.key == "goblin").map(monster_sheet)
+        let Some(goblin) = srd_bestiary()
+            .iter()
+            .find(|m| m.key == "goblin")
+            .map(monster_sheet)
         else {
             eprintln!("[isometry] combat selftest: no goblin in the bestiary");
             return;
@@ -585,5 +667,4 @@ impl App {
             window.request_redraw();
         }
     }
-
 }
