@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 /// the space: a body that *does* decode and means something else. Bump it for
 /// any change to the wire shape, and move `iroh_link::ALPN` with it so an
 /// incompatible peer cannot even dial.
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 2;
 
 /// A peer's identity within a session. For the iroh transport this wraps
 /// the remote node id; the pure-sync core only needs it to route.
@@ -240,6 +240,58 @@ pub struct ActionResolved {
     pub turn_counters: Vec<(TokenId, String, i64)>,
 }
 
+/// One doorway crossing, resolved: every consequence of walking through a
+/// transition point, named by the authority.
+///
+/// The travel half of the resolve-once law. This used to be `Traveled { token }`,
+/// and everything below was recomputed by each peer as the event applied: which
+/// door, which map, which tile, whether the id collided, what the clocks became,
+/// whether the board followed. Six derivations, per peer, per crossing. The
+/// authority now rules them once ([`resolve_transition`]) and every peer applies
+/// exactly these fields.
+///
+/// What is *not* here is deliberate: the traveler's sheet, conditions, mobility,
+/// and defeat carry across with it. Those are not choices, they are the token
+/// still being itself on the other side of the door, so applying moves them by
+/// the ids named here rather than restating replicated state on the wire.
+///
+/// [`resolve_transition`]: crate::resolve_transition
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransitionResolved {
+    /// The ask this answers. Applying two crossings that carry the same id
+    /// applies one of them; see [`GameSnapshot::applied_actions`].
+    pub request: RequestId,
+    /// The traveler, by the id it holds on `from_map`.
+    pub token: TokenId,
+    /// The map it leaves. Must be the active board, which is what makes this a
+    /// departure rather than an edit of somewhere else.
+    pub from_map: String,
+    /// The map it arrives on.
+    pub to_map: String,
+    /// The tile it arrives on: the destination's named entry door, else its
+    /// first spawn zone, then the first free tile outward from there.
+    pub landing: TileCoord,
+    /// The id it arrives under. Equal to `token` unless the destination already
+    /// held that id, in which case the authority minted a fresh one (ids are
+    /// per-map, inventories key on them globally).
+    pub arrival: TokenId,
+    /// Inventories to re-key, `(from, to)`. Non-empty exactly when an identity
+    /// replacement stranded one: the sword follows the knight through the door.
+    #[serde(default)]
+    pub inventory_remaps: Vec<(TokenId, TokenId)>,
+    /// What `to_map`'s clock becomes. Nobody arrives before they left, so the
+    /// destination is pulled up to the traveler's time and never pushed back
+    /// (the C3 rule). Named as a value rather than as a rule, so a peer applies
+    /// a number instead of recomputing a maximum.
+    pub destination_clock: u64,
+    /// The map the board follows the traveler to, if this crossing was the last
+    /// player-owned token leaving. `Some` activates it exactly as
+    /// [`GameEvent::MapActivated`] would: fresh board, fresh turn order. A
+    /// consequence the authority names, not one a peer infers from who is left.
+    #[serde(default)]
+    pub activated: Option<String>,
+}
+
 /// The replicated unit: a map mutation or a turn-order change. The host
 /// orders these into one log every peer replays; `MapDocument` and
 /// `TurnList` together are the whole shared state.
@@ -325,21 +377,18 @@ pub enum GameEvent {
         value: i64,
         mobility: Option<(u32, u32)>,
     },
-    /// One token walks through a transition point: it leaves the active map and
-    /// arrives on the target map, carrying its sheet, conditions, and inventory.
+    /// One token walked through a transition point, and here is everything that
+    /// followed: see [`TransitionResolved`].
     ///
-    /// Everything else is resolved *deterministically from replicated state*
-    /// when the event applies: which door (the tile the token stands on), the
-    /// destination (the target's named entry, else its first spawn zone), a
-    /// free landing tile, and a fresh id on collision. So the event names only
-    /// the traveler, and every peer computes the identical outcome. When the
-    /// last player-owned token leaves the active map, the board follows it
-    /// through the door (the target map activates), which is how a party
-    /// crossing reads at the table.
+    /// Host-committed, and unchanged in that: the host sweeps for tokens
+    /// standing on doors after each applied move, so a client walks through a
+    /// door by simply walking. What changed is that the sweep now *rules* the
+    /// crossing instead of asking every peer to work it out again.
     ///
-    /// Host-committed: the host sweeps for tokens standing on doors after each
-    /// applied move, so a client walks through a door by simply walking.
-    Traveled { token: TokenId },
+    /// In `Traveled`'s old slot deliberately. Postcard tags by index, so
+    /// replacing the variant in place leaves every later variant's tag where it
+    /// was; the wire break is this variant's body alone.
+    TransitionResolved(TransitionResolved),
     /// The DM declares time passing on the active location: "an hour passes."
     /// Rounds tick the clock automatically; this is the downtime verb, for the
     /// stretches no turn order measures. Host-committed: the DM keeps the clock.

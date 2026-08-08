@@ -20,7 +20,8 @@ use isometry_core::{
 };
 use isometry_net::sim::Sim;
 use isometry_net::{
-    ActionIntent, ActionResolved, GameEvent, GameSnapshot, HostSession, PeerId, RequestId,
+    ActionIntent, ActionResolved, GameError, GameEvent, GameSnapshot, HostSession, PeerId,
+    RequestId, TransitionResolved,
 };
 
 fn snapshot() -> GameSnapshot {
@@ -567,6 +568,15 @@ fn two_map_snapshot() -> GameSnapshot {
     snap
 }
 
+/// The host rules the crossing `token` is standing in, and commits the verdict.
+/// The app's door sweep in one line: resolve once, on the authority, and
+/// broadcast a payload that names every consequence.
+fn cross(sim: &mut Sim, token: TokenId) {
+    let ruled = isometry_net::resolve_transition(sim.host.state(), token, next_request())
+        .expect("the traveler is standing on a door");
+    sim.host_event(GameEvent::TransitionResolved(ruled));
+}
+
 #[test]
 fn walking_through_a_door_crosses_maps_and_the_board_follows_the_party() {
     // The goblin is DM furniture (owner: None), so the knight is the last
@@ -594,7 +604,7 @@ fn walking_through_a_door_crosses_maps_and_the_board_follows_the_party() {
         id: TokenId(1),
         to: (3, 3),
     }));
-    sim.host_event(GameEvent::Traveled { token: TokenId(1) });
+    cross(&mut sim, TokenId(1));
 
     let host = sim.host.state();
     // The board followed the last player out.
@@ -643,7 +653,7 @@ fn arriving_where_your_id_is_taken_mints_a_new_one_and_carries_the_inventory() {
         id: TokenId(1),
         to: (3, 3),
     }));
-    sim.host_event(GameEvent::Traveled { token: TokenId(1) });
+    cross(&mut sim, TokenId(1));
 
     let host = sim.host.state();
     assert_eq!(host.active_map.as_deref(), Some("hut"));
@@ -695,7 +705,7 @@ fn split_party_time_drifts_freely_and_travel_reconciles_it() {
         id: TokenId(1),
         to: (3, 3),
     }));
-    sim.host_event(GameEvent::Traveled { token: TokenId(1) });
+    cross(&mut sim, TokenId(1));
     assert_eq!(clock(sim.host.state(), "hut"), 7);
     assert_eq!(
         clock(sim.clients[&PeerId(10)].state().unwrap(), "hut"),
@@ -716,12 +726,29 @@ fn travel_off_a_door_is_refused_and_clients_cannot_rule_it() {
     sim.connect(PeerId(10));
     let seq = sim.host.seq();
 
-    // Not standing on a transition point: nothing happens.
-    sim.host_event(GameEvent::Traveled { token: TokenId(1) });
+    // Not standing on a transition point: there is nothing to rule, so the
+    // refusal now happens where the ruling would have, and no event is minted.
+    let ruling = isometry_net::resolve_transition(sim.host.state(), TokenId(1), next_request());
+    assert_eq!(ruling, Err(GameError::NotOnTransition(TokenId(1))));
     assert_eq!(sim.host.seq(), seq, "an off-door travel entered the log");
 
-    // And travel is the host's ruling: a client walks, it does not ask in words.
-    sim.client_intent(PeerId(10), GameEvent::Traveled { token: TokenId(1) });
+    // And a crossing is the host's verdict: a client walks through a door, it
+    // does not pronounce where the door led. Forged whole, since a client that
+    // cannot resolve one has nothing else to send.
+    sim.client_intent(
+        PeerId(10),
+        GameEvent::TransitionResolved(TransitionResolved {
+            request: next_request(),
+            token: TokenId(1),
+            from_map: "field".to_owned(),
+            to_map: "hut".to_owned(),
+            landing: (1, 1),
+            arrival: TokenId(1),
+            inventory_remaps: Vec::new(),
+            destination_clock: 0,
+            activated: Some("hut".to_owned()),
+        }),
+    );
     assert_eq!(sim.host.seq(), seq);
     assert_converged(&sim);
 }

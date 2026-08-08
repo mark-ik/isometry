@@ -23,6 +23,7 @@ mod apply;
 mod client;
 mod host;
 mod messages;
+mod travel;
 
 // The 2026-07-24 split moved the bodies into the four modules above while this
 // file kept the shared imports they read through `use super::*`. Re-exported
@@ -31,4 +32,5 @@ mod messages;
 pub use apply::{apply_game, GameError};
 pub use client::ClientSession;
 pub use host::HostSession;
+pub use travel::resolve_transition;
 

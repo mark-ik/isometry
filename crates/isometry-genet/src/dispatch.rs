@@ -292,6 +292,10 @@ impl App {
                 // words; they walk, the move replicates, and this notices. The
                 // emitted list keeps one crossing from being ruled twice while
                 // its echo is still in flight.
+                //
+                // The authority *rules* each crossing here and broadcasts the
+                // verdict. Peers used to be handed the traveler's id and left to
+                // work out the rest; now the payload names it.
                 if self.net_is_host {
                     let on_doors: Vec<TokenId> = {
                         let ui = runner.state();
@@ -302,12 +306,35 @@ impl App {
                             .map(|t| t.id)
                             .collect()
                     };
-                    for token in &on_doors {
-                        if !self.travel_emitted.contains(token) {
-                            runner.update(|ui| {
-                                ui.net_outbox.push(GameEvent::Traveled { token: *token })
-                            });
+                    let mut crossings = Vec::new();
+                    let mut refusals = Vec::new();
+                    {
+                        // Not `self.snapshot_of`: `runner` already holds a
+                        // mutable borrow of one field of `self`, so the whole-
+                        // `self` method is out of reach here.
+                        let state = snapshot_with_journal(self.journal.clone(), runner.state());
+                        for token in &on_doors {
+                            if self.travel_emitted.contains(token) {
+                                continue;
+                            }
+                            self.own_requests += 1;
+                            match isometry_net::resolve_transition(
+                                &state,
+                                *token,
+                                RequestId::host(self.own_requests),
+                            ) {
+                                Ok(res) => crossings.push(GameEvent::TransitionResolved(res)),
+                                Err(error) => refusals.push(format!("cannot travel: {error:?}")),
+                            }
                         }
+                    }
+                    if !crossings.is_empty() || !refusals.is_empty() {
+                        runner.update(|ui| {
+                            ui.net_outbox.extend(crossings);
+                            if let Some(last) = refusals.last() {
+                                ui.status = last.clone();
+                            }
+                        });
                     }
                     self.travel_emitted = on_doors;
                 }
@@ -324,21 +351,31 @@ impl App {
     /// Build a replicated snapshot from the view's current state, for a host
     /// operation that needs to prevalidate against a clone (storylet commit).
     pub(crate) fn snapshot_of(&self, ui: &UiState) -> GameSnapshot {
-        GameSnapshot {
-            map: ui.map.clone(),
-            turns: ui.turns.clone(),
-            roll_log: ui.roll_log.clone(),
-            journal: self.journal.clone(),
-            inventories: ui.inventories.clone(),
-            generations: ui.generations.clone(),
-            maps: ui.campaign_maps.clone(),
-            active_map: ui.active_map.clone(),
-            world: ui.world.clone(),
-            clocks: ui.clocks.clone(),
-            party_cap: ui.party_cap,
-            last_beats: Vec::new(),
-            beat_seq: 0,
-            applied_actions: Default::default(),
-        }
+        snapshot_with_journal(self.journal.clone(), ui)
+    }
+}
+
+/// The same build, with the journal passed in rather than read off the app.
+/// The door sweep needs it while a `&mut` borrow of the runner is live, which
+/// puts the whole-`self` method out of reach.
+pub(crate) fn snapshot_with_journal(
+    journal: Vec<isometry_campaign::WorldFact>,
+    ui: &UiState,
+) -> GameSnapshot {
+    GameSnapshot {
+        map: ui.map.clone(),
+        turns: ui.turns.clone(),
+        roll_log: ui.roll_log.clone(),
+        journal,
+        inventories: ui.inventories.clone(),
+        generations: ui.generations.clone(),
+        maps: ui.campaign_maps.clone(),
+        active_map: ui.active_map.clone(),
+        world: ui.world.clone(),
+        clocks: ui.clocks.clone(),
+        party_cap: ui.party_cap,
+        last_beats: Vec::new(),
+        beat_seq: 0,
+        applied_actions: Default::default(),
     }
 }

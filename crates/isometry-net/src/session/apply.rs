@@ -275,7 +275,9 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
             Ok(())
         }
         GameEvent::World(event) => state.world.apply(event).map_err(GameError::World),
-        GameEvent::Traveled { token } => travel(state, *token),
+        // Apply-only. The crossing was ruled once, by `resolve_transition`, and
+        // every field it decided is in the payload: see `session/travel.rs`.
+        GameEvent::TransitionResolved(res) => super::travel::apply_transition(state, res),
         GameEvent::TimeAdvanced { ticks } => {
             let active = state
                 .active_map
@@ -342,151 +344,6 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
             Ok(())
         }
     }
-}
-
-/// Walk one token through the transition point it stands on. Everything is
-/// derived from replicated state, so all peers land it identically.
-pub(crate) fn travel(state: &mut GameSnapshot, token: TokenId) -> Result<(), GameError> {
-    require_token(state, token)?;
-    let at = state.map.token(token).map(|t| t.at).unwrap_or_default();
-    let active_id = state
-        .active_map
-        .clone()
-        .ok_or_else(|| GameError::UnknownMap("<no active map>".to_owned()))?;
-    // The door is the tile the traveler stands on.
-    let transition = state
-        .maps
-        .get(&active_id)
-        .and_then(|m| {
-            m.transitions
-                .iter()
-                .find(|t| (t.at.col as i32, t.at.row as i32) == at)
-        })
-        .cloned()
-        .ok_or(GameError::NotOnTransition(token))?;
-    let target = state
-        .maps
-        .get(&transition.target_map)
-        .ok_or_else(|| GameError::UnknownMap(transition.target_map.clone()))?;
-
-    // Destination: the target's named entry door, else its first spawn zone,
-    // else the origin corner; then the first free tile scanning outward, the
-    // same deterministic walk spawning already uses.
-    let anchor: TileCoord = transition
-        .target_entry
-        .as_ref()
-        .and_then(|entry| target.transitions.iter().find(|t| &t.id == entry))
-        .map(|t| (t.at.col as i32, t.at.row as i32))
-        .or_else(|| {
-            target
-                .spawn_zones
-                .first()
-                .and_then(|z| z.cells.first())
-                .map(|c| (c.col as i32, c.row as i32))
-        })
-        .unwrap_or((1, 1));
-    let (w, h) = (target.document.ground.width(), target.document.ground.height());
-    let occupied: Vec<TileCoord> = target.document.tokens.iter().map(|t| t.at).collect();
-    let mut landing = anchor;
-    for d in 0..64 {
-        let cand = (anchor.0 + (d % 8), anchor.1 + (d / 8));
-        if cand.0 >= 0
-            && cand.1 >= 0
-            && (cand.0 as u32) < w
-            && (cand.1 as u32) < h
-            && !occupied.contains(&cand)
-        {
-            landing = cand;
-            break;
-        }
-    }
-
-    // Ids are per-map, so an arrival can collide with a resident. Mint the
-    // next id above every token on every map (inventories key on TokenId
-    // globally, so global uniqueness is what keeps them sound).
-    let collides = target.document.tokens.iter().any(|t| t.id == token);
-    let new_id = if collides {
-        let max = state
-            .maps
-            .values()
-            .flat_map(|m| m.document.tokens.iter())
-            .chain(state.map.tokens.iter())
-            .map(|t| t.id.0)
-            .chain(state.inventories.keys().map(|id| id.0))
-            .max()
-            .unwrap_or(0);
-        TokenId(max + 1)
-    } else {
-        token
-    };
-
-    // Depart: the traveler and everything it carries leaves the active map.
-    let Some(pos) = state.map.tokens.iter().position(|t| t.id == token) else {
-        return Err(GameError::Core(EventError::UnknownToken(token)));
-    };
-    let mut traveler = state.map.tokens.remove(pos);
-    let sheet = state.map.sheets.remove(&token);
-    let conditions = state.map.conditions.remove(&token);
-    let mobility = state.map.mobility.remove(&token);
-    let was_defeated = state.map.defeated.remove(&token);
-    state.turns.remove(token);
-    sync_active_map(state);
-
-    // Arrive.
-    traveler.id = new_id;
-    traveler.at = landing;
-    let target = state
-        .maps
-        .get_mut(&transition.target_map)
-        .expect("target existed above");
-    target.document.tokens.push(traveler);
-    if let Some(sheet) = sheet {
-        target.document.sheets.insert(new_id, sheet);
-    }
-    if let Some(conditions) = conditions {
-        target.document.conditions.insert(new_id, conditions);
-    }
-    if let Some(mobility) = mobility {
-        target.document.mobility.insert(new_id, mobility);
-    }
-    if was_defeated {
-        target.document.defeated.insert(new_id);
-    }
-    if new_id != token {
-        if let Some(inventory) = state.inventories.remove(&token) {
-            state.inventories.insert(new_id, inventory);
-        }
-    }
-
-    // Nobody arrives before they left: the destination's clock catches up to
-    // the traveler's. This is the whole of split-party reconciliation: while
-    // parties are apart their locations' clocks drift freely (simultaneity is
-    // presentation), and the moment anyone crosses, the two timelines agree.
-    let source_time = state.clocks.get(&active_id).copied().unwrap_or(0);
-    let dest = state
-        .clocks
-        .entry(transition.target_map.clone())
-        .or_insert(0);
-    *dest = (*dest).max(source_time);
-
-    // The board follows the last player out: when no player-owned token
-    // remains on the active map, the target activates, exactly as a manual
-    // `MapActivated` would (fresh board, fresh turn order).
-    if !state.map.tokens.iter().any(|t| t.owner.is_some()) {
-        let doc = state
-            .maps
-            .get(&transition.target_map)
-            .expect("target existed above")
-            .document
-            .clone();
-        state.map = doc;
-        state.active_map = Some(transition.target_map.clone());
-        state.turns = isometry_core::TurnList::new();
-        for t in &state.map.tokens {
-            state.turns.add(t.id);
-        }
-    }
-    Ok(())
 }
 
 pub(crate) fn sync_active_map(state: &mut GameSnapshot) {

@@ -185,6 +185,10 @@ pub struct UiState {
     /// The `beat_seq` whose beats have already been staged, so a replicated
     /// action plays once rather than on every snapshot mirror.
     pub beat_seq: u64,
+    /// Nonces for doorway crossings this state ruled itself (solo / hot-seat
+    /// play, where there is no host to ask and no connection to attribute the
+    /// ask to). Networked crossings are numbered by the authority instead.
+    pub(crate) travel_requests: u64,
     /// A monster spawn awaiting its stat block: `(token, monster key)`. The host
     /// owns the system, so it is what turns a compendium row into a sheet.
     pub spawn_sheet_request: Option<(TokenId, String)>,
@@ -409,6 +413,7 @@ impl UiState {
             action_intent: None,
             beats: BTreeMap::new(),
             beat_seq: 0,
+            travel_requests: 0,
             spawn_sheet_request: None,
             clear_condition_request: None,
             inventory_request: None,

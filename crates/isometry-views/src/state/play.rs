@@ -197,12 +197,13 @@ impl UiState {
 
     /// Walk `token` through the door it stands on (solo / hot-seat path).
     ///
-    /// Deliberately *not* a reimplementation: it builds a scratch snapshot and
-    /// runs the same `apply_game` travel logic every networked peer runs, then
-    /// copies the outcome back. One crossing, one set of rules, whoever hosts.
+    /// Deliberately *not* a reimplementation: it rules the crossing with the
+    /// shared resolver, applies the verdict through the same `apply_game` every
+    /// networked peer runs, and copies the outcome back. Solo play *is* the
+    /// authority, so this is the host's door sweep, minus the network.
     pub fn travel(&mut self, token: TokenId) {
-        // The stored copy of the active map must be current before the
-        // crossing, or the departure would be computed against a stale board.
+        // Refresh the stored copy of the active map: a stale board would rule
+        // the departure against tokens that have since moved.
         if let Some(id) = &self.active_map {
             if let Some(m) = self.campaign_maps.get_mut(id) {
                 m.document = self.map.clone();
@@ -218,17 +219,21 @@ impl UiState {
             maps: self.campaign_maps.clone(),
             active_map: self.active_map.clone(),
             world: Default::default(),
-            // The clocks must cross with everything else, or travel's
-            // reconciliation would run against empty time and wipe the ledger
-            // on copy-back.
+            // The clocks must cross too, or reconciliation runs against empty
+            // time and wipes the ledger on copy-back.
             clocks: self.clocks.clone(),
-
             party_cap: self.party_cap,
             last_beats: Vec::new(),
             beat_seq: 0,
             applied_actions: Default::default(),
         };
-        match apply_game(&mut snap, &GameEvent::Traveled { token }) {
+        // One crossing, one ruling. The nonce is this state's own, against the
+        // reserved host identity: there is no connection to attribute it to.
+        self.travel_requests += 1;
+        let request = isometry_net::RequestId::host(self.travel_requests);
+        let ruled = isometry_net::resolve_transition(&snap, token, request)
+            .and_then(|res| apply_game(&mut snap, &GameEvent::TransitionResolved(res)));
+        match ruled {
             Ok(()) => {
                 let switched = snap.active_map != self.active_map;
                 self.map = snap.map;
@@ -252,9 +257,7 @@ impl UiState {
                 }
                 self.recompute_fog();
             }
-            Err(error) => {
-                self.status = format!("cannot travel: {error:?}");
-            }
+            Err(error) => self.status = format!("cannot travel: {error:?}"),
         }
     }
 

@@ -1,6 +1,6 @@
 # Protocol Hardening Plan (2026-08-08)
 
-**Status: in progress (2026-08-08).** H0 landed; H1 and H2 open. Founded
+**Status: in progress (2026-08-08).** H0 and H1 landed; H2 open. Founded
 from the 2026-08-08 wing audit's two protocol
 findings, extracting the corrective work from the
 [adjudication plan](archive_docs/2026-08-08/2026-07-14_adjudication_and_representation_plan.md)
@@ -48,8 +48,8 @@ idempotency, refusal, on the existing tactical path.
 unsupported-version peer refuses with a receipt; existing replays
 re-green under the versioned envelope.
 
-**H1 — Travel as Resolved.** Doorway transitions carry the full explicit
-consequence payload.
+**H1 — Travel as Resolved. LANDED 2026-08-08.** Doorway transitions carry
+the full explicit consequence payload.
 **Done when:** a doorway crossing produces one `Resolved` naming every
 consequence; peers apply without derivation; **late-join replay is
 proven** (the adjudication plan's missing receipt): a peer joining after
@@ -125,6 +125,56 @@ two-peer receipt exists.
   and out of H0's scope: a peer that never sends `Hello` is not gated
   either, it merely owns no token, so `Rolled` still reaches the log from
   a silent peer.
+
+- **2026-08-08 (H1).** **The activation rule had to be read one moment
+  earlier, and that is what made it nameable.** The derivation asked "is
+  any player-owned token still on this map" *after* removing the
+  traveler. A resolver runs before anything moves, so the same question
+  has to be asked as "is anyone but the traveler still here". Identical
+  answer, different vantage, and the different vantage is the whole
+  trick: a consequence can only be named in advance if it can be decided
+  in advance. Every field of the payload turned out to be decidable
+  pre-departure; the one that needed re-framing was this one.
+
+- **2026-08-08 (H1).** **The carry is not a consequence, so it is not on
+  the wire.** The traveler's sheet, conditions, mobility, and defeat move
+  through the door with it. It is tempting to name them too, in the name
+  of explicitness, but they are not decisions: they are the token still
+  being itself on the other side, and restating them would put a copy of
+  replicated state into every crossing. What the payload names is every
+  place the old code made a *choice* (which door, which map, which tile,
+  which id, which inventories, what the clock became, whether the board
+  followed). The identity-preserving move stays mechanical. The stop rule
+  cuts the other way here: a consequence expensive to name is a sign it
+  was never one consequence, and the carry was never a consequence at
+  all.
+
+- **2026-08-08 (H1).** **The clock is named as a value, not as a rule.**
+  `destination_clock` is the number the destination's clock becomes, not
+  "pull it up to the traveler's". A peer that applied `max(dest, source)`
+  would be re-deriving, however cheaply, and cheap derivations are how
+  the expensive ones get justified later. The C3 rule is preserved
+  exactly, on the resolver, where it is computed once.
+
+- **2026-08-08 (H1).** **Late-join replay would have passed before this
+  change, and that is not the same as being proven.** The old derivation
+  was deterministic over replicated state, so a from-the-log replay
+  converged; nobody had ever asserted it. What is new is that it now
+  converges for a *reason* rather than by the coincidence of every peer
+  running identical derivation code over identical authored data. The
+  receipt that shows the difference is
+  `applying_a_crossing_reads_no_door_table`: re-author the doors out of
+  the world and replay the same log. The derivation would have refused
+  (nobody stands on a door any more, and there is no target to look up);
+  the payload lands identically, because it names its own two ends.
+
+- **2026-08-08 (H1).** **The host's door sweep could not call
+  `snapshot_of`.** The sweep lives inside a `&mut` borrow of the app's
+  runner, and `snapshot_of` takes `&self`, so the whole-`self` method is
+  out of reach exactly where the resolver needs its input. Split into a
+  free `snapshot_with_journal(journal, ui)` that the method now delegates
+  to, rather than growing a fourth `GameSnapshot` literal.
+  (`crates/isometry-genet/src/dispatch.rs`.)
 
 - **2026-08-08.** **`isometry-graphshell` does not compile at `main`.**
   `AdvertisedAction` gained an `input_form` field upstream and
@@ -210,3 +260,87 @@ two-peer receipt exists.
   `UiState` does not mirror `applied_actions`, so a snapshot rebuilt from
   the view (`snapshot_of`) starts with an empty ledger; that is a host
   bootstrap and a prevalidation clone, neither of which replays a log.
+
+- **2026-08-08.** **H1 landed.** `GameEvent::Traveled { token }` is gone.
+  A doorway crossing is now `GameEvent::TransitionResolved`, carrying a
+  `TransitionResolved` payload that names every consequence.
+
+  **What the payload names.** `request: RequestId` (the H0 ledger's
+  handle), `token` (the traveler, by its id on the near side), `from_map`
+  and `to_map` (both ends of the door, so an auditor reading the log
+  needs no map registry), `landing: TileCoord` (the arrival tile the
+  authority chose: named entry, else first spawn zone, then the outward
+  free-tile scan), `arrival: TokenId` (the identity it lands under, equal
+  to `token` unless the destination already held that id),
+  `inventory_remaps: Vec<(TokenId, TokenId)>` (non-empty exactly when a
+  replacement stranded one), `destination_clock: u64` (what the
+  destination's clock becomes, the C3 rule computed once), and
+  `activated: Option<String>` (the board following the last player out,
+  as a named consequence rather than a peer's inference from who is
+  left). Six derivations became eight fields.
+
+  **Where the old derivations died.** All of them lived in one function,
+  `apply.rs::travel`, which ran inside `apply_game` on every peer: the
+  door lookup against `maps[active].transitions`, the destination anchor
+  and free-tile scan against `target.spawn_zones` and its occupancy, the
+  id mint scanning every token on every map, the clock `max`, and the
+  activation test. That function is deleted. Its body now lives, split in
+  two, in the new `session/travel.rs`: `resolve_transition` (the
+  authority's, returning the payload) and `apply_transition` (everyone's,
+  which looks up no door, searches no tile, mints no id, compares no
+  clock, and infers no activation). The three emit sites were converted
+  to resolve-then-commit: the host's door sweep
+  (`isometry-genet/src/dispatch.rs`, which now rules each crossing and
+  broadcasts the verdict), solo/hot-seat play
+  (`isometry-views/src/state/play.rs::travel`, which is itself the
+  authority), and the sim tests' `cross` helper. `intent_refusal` refuses
+  a client-sent `TransitionResolved` as the verdict it now is.
+
+  **Receipts.** `crates/isometry-net/tests/transition_resolution.rs`:
+  `a_doorway_crossing_names_every_consequence` (whole-payload equality
+  against the values the old derivation produced for the same fixture,
+  then the applied board);
+  `an_identity_collision_is_named_with_the_inventory_that_follows_it`;
+  **`a_late_joiner_reconstructs_the_crossing_from_the_log_alone`**, the
+  headline receipt the adjudication plan never landed, which proves it
+  two independent ways: a peer connecting *after* the crossing holds the
+  host's state, log hash, and seq, and separately the origin plus the
+  ordered log alone (via `GameSourceHistory`, rehosted through
+  `HostSession::with_history`) rebuilds the same state, the same log
+  hash, and the same seq with no snapshot to copy from;
+  `applying_a_crossing_reads_no_door_table` (the same log replayed over a
+  world whose transitions were re-authored away, which the derivation
+  could not have survived); and `a_repeated_crossing_is_a_no_op` (the H0
+  ledger over the H1 payload, plus that a renumbered crossing is judged
+  rather than swallowed). `travel_off_a_door_is_refused_and_clients_
+  cannot_rule_it` moved its refusal to where the ruling is: an off-door
+  crossing now fails at `resolve_transition` and mints no event at all.
+
+  **Re-greened.** `cargo test -p isometry-net --all-features`: 11 lib
+  (including the iroh transport's), 5 `protocol_envelope.rs`, 43
+  `replication.rs`, 5 new. `isometry-core` (56), `isometry-views` (55),
+  `isometry-genet` (5). `cargo check --workspace --all-features
+  --all-targets` clean apart from `isometry-graphshell` (see Findings).
+  `cargo clippy -p isometry-net --all-targets` produces the identical
+  warning set to HEAD, verified by stashing this work and re-running.
+  Headed runtime receipt: `ISOMETRY_TRAVEL_SELFTEST=1` walks the knight
+  onto the field's door at (12, 14); the board follows it to `hut`, it
+  lands on the entry door at (2, 2), the field no longer holds it, and
+  the clocks reconcile `{"field": 4, "hut": 4}`.
+
+  **Breaking wire change, as the plan expects.** `PROTOCOL_VERSION` is 2
+  and `iroh_link::ALPN` moved to `isometry/session/v2` with it, so an
+  older peer cannot dial and one that somehow did would be refused by
+  H0's handshake gate. The new variant sits in `Traveled`'s old slot
+  deliberately: postcard tags by index, so replacing in place leaves
+  every later variant's tag where it was and the break is this variant's
+  body alone. No migration shim, per the no-legacy-friction rule.
+
+  **Not touched.** H2 is untouched: overmap travel is still
+  `GameEvent::TravelResolved`, still an inline-struct variant, and its
+  clock/encounter/exhaustion consequences still apply as they did. The
+  no-`Hello` hole from H0's Findings stays open (a peer that never sends
+  `Hello` is not version-gated; it owns no token, so it can still only
+  push `Rolled`). No headed two-peer receipt was taken for the doorway
+  path: that is H2's stated done-condition, and H1's sim receipts cover
+  the same resolve-then-commit shape the app's sweep uses.

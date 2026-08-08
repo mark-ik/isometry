@@ -162,9 +162,12 @@ impl HostSession {
                 Some("travel is adjudicated by the host".to_owned())
             }
             GameEvent::ConditionSet { .. } => Some("conditions are ruled by the host".to_owned()),
-            // Ruled by the host's own door sweep after each applied move, so a
-            // client walks through a door by walking; it never asks in words.
-            GameEvent::Traveled { .. } => Some("travel is ruled by the host".to_owned()),
+            // A crossing is a verdict now, and the strongest one a client could
+            // forge: its payload names the map it lands on, the id it lands
+            // under, and what the clocks become. Ruled by the host's own door
+            // sweep after each applied move, so a client walks through a door by
+            // walking; it never asks in words.
+            GameEvent::TransitionResolved(_) => Some("travel is ruled by the host".to_owned()),
             GameEvent::TimeAdvanced { .. } => Some("the DM keeps the clock".to_owned()),
 
             // Campaign authoring: what is true, what exists, and what it is worth.
