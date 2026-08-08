@@ -29,6 +29,11 @@ pub struct HostSession {
     /// hit. The host *app* drains these, resolves them with its rules plugin, and
     /// commits the outcome back through `local_event`.
     pub(super) pending_actions: Vec<ActionIntent>,
+    /// Peers whose protocol version this host cannot speak, and the version
+    /// each of them offered. A refused peer stays refused for the session: it
+    /// is answered with the same receipt every time and nothing it sends
+    /// reaches game state.
+    pub(super) refused: HashMap<PeerId, u16>,
 }
 
 impl HostSession {
@@ -61,7 +66,15 @@ impl HostSession {
             history,
             peer_names: HashMap::new(),
             pending_actions: Vec::new(),
+            refused: HashMap::new(),
         }
+    }
+
+    /// The version `peer` speaks, if this host refused it. `Some` is the
+    /// receipt an app can show the DM: somebody tried to join with another
+    /// build.
+    pub fn refused_version(&self, peer: PeerId) -> Option<u16> {
+        self.refused.get(&peer).copied()
     }
 
     /// Drain the client action requests awaiting adjudication.
@@ -104,6 +117,7 @@ impl HostSession {
         vec![(
             Recipient::One(peer),
             NetMessage::Snapshot {
+                version: PROTOCOL_VERSION,
                 seq: self.seq,
                 log_hash: self.log_hash,
                 state: self.state.clone(),

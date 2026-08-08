@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use isometry_campaign::{
     CampaignMap, CampaignWorld, GenerationRecord, Inventory, ItemId, ItemModifierReveal,
@@ -10,10 +10,67 @@ use isometry_core::{
 };
 use serde::{Deserialize, Serialize};
 
+/// The version of this session protocol.
+///
+/// Carried in the handshake each side speaks first: the client's
+/// [`NetMessage::Hello`] and the host's [`NetMessage::Snapshot`]. Either side
+/// that is offered a version it cannot speak answers
+/// [`NetMessage::VersionRefused`] and applies nothing, so a mismatch reads as a
+/// refusal rather than as garbled state.
+///
+/// Postcard is not self-describing, so a mismatch usually fails to decode at
+/// all and the frame never arrives. This constant covers the dangerous half of
+/// the space: a body that *does* decode and means something else. Bump it for
+/// any change to the wire shape, and move `iroh_link::ALPN` with it so an
+/// incompatible peer cannot even dial.
+pub const PROTOCOL_VERSION: u16 = 1;
+
 /// A peer's identity within a session. For the iroh transport this wraps
 /// the remote node id; the pure-sync core only needs it to route.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct PeerId(pub u64);
+
+impl PeerId {
+    /// The authority itself: the DM's own asks, which arrive over no
+    /// connection. Reserved, so a transport must never derive it for a remote
+    /// peer and the DM's request ids cannot collide with a player's.
+    pub const HOST: PeerId = PeerId(0);
+    /// An ask that has not been attributed yet: what a client stamps on its own
+    /// request, because only the host knows which connection a message arrived
+    /// on. The host restamps it on receipt. Reserved for the same reason.
+    pub const UNATTRIBUTED: PeerId = PeerId(u64::MAX);
+}
+
+/// Who asked, and which of their asks.
+///
+/// `peer` is the authority's word, never the asker's: the host restamps it from
+/// the connection the request arrived on, so a peer cannot ask as somebody
+/// else. `nonce` stays the asker's own, so it can match an answer to its
+/// question. Together they name one request for the whole session, which is
+/// what makes applying a resolution twice a no-op by identity rather than by
+/// luck (see [`GameSnapshot::applied_actions`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct RequestId {
+    pub peer: PeerId,
+    pub nonce: u64,
+}
+
+impl RequestId {
+    /// An ask the client has built but its session has not numbered yet.
+    pub const UNSTAMPED: RequestId = RequestId {
+        peer: PeerId::UNATTRIBUTED,
+        nonce: 0,
+    };
+
+    /// The authority's own nth ask (the DM swinging for itself, or a solo
+    /// game, where there is no connection to attribute).
+    pub const fn host(nonce: u64) -> Self {
+        Self {
+            peer: PeerId::HOST,
+            nonce,
+        }
+    }
+}
 
 /// The replicated game state: exactly the substrate document plus the
 /// turn order. View concerns (camera, undo, selection) never cross the
@@ -82,6 +139,23 @@ pub struct GameSnapshot {
     pub last_beats: Vec<Beat>,
     #[serde(default)]
     pub beat_seq: u64,
+    /// Every [`ActionResolved`] request this state has already taken, by the
+    /// identity the authority stamped on it. `apply_game` consults it first and
+    /// returns without touching anything when the id is already here, so the
+    /// same verdict arriving twice is a no-op by name rather than by ordering
+    /// luck.
+    ///
+    /// Replicated, because it must survive a late join: a peer that seeded from
+    /// a snapshot has the resolution's effects but not its history, and would
+    /// otherwise take a replayed verdict a second time. It is also why the
+    /// source-time replay in `GameSourceHistory` is safe over a log that
+    /// happens to carry a duplicate.
+    ///
+    /// Uncapped, for the same reason the journal is: an evicted id silently
+    /// re-opens the double-apply this exists to close, and one entry is two
+    /// integers.
+    #[serde(default)]
+    pub applied_actions: BTreeSet<RequestId>,
 }
 
 /// Rolls kept in the shared log; older ones drop off.
@@ -104,6 +178,10 @@ pub fn default_party_cap() -> u32 {
 /// meaningful.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ActionResolved {
+    /// The ask this answers, echoed from the [`ActionIntent`] the authority
+    /// adjudicated. Applying two resolutions that carry the same id applies one
+    /// of them; see [`GameSnapshot::applied_actions`].
+    pub request: RequestId,
     pub actor: TokenId,
     pub target: TokenId,
     pub action_key: String,
@@ -301,7 +379,12 @@ pub enum NetMessage {
     /// Host to a joining client: full state as of `seq` applied events,
     /// plus the host's rolling log hash at that point so a late joiner
     /// seeds its own hash to match and converges on the tail.
+    ///
+    /// This is the host's half of the handshake, and the first thing it sends,
+    /// so `version` reaches a client before any state does. A client that
+    /// cannot speak it adopts nothing and answers [`Self::VersionRefused`].
     Snapshot {
+        version: u16,
         seq: u64,
         log_hash: u64,
         state: GameSnapshot,
@@ -312,9 +395,14 @@ pub enum NetMessage {
     Intent { event: GameEvent },
     /// Host to the proposer: the intent failed validation.
     Rejected { reason: String },
-    /// Client to host on connect: announce the player name, so the host
-    /// can address whispers to it.
-    Hello { name: String },
+    /// Client to host on connect: announce the protocol version and the
+    /// player name, so the host can refuse a stranger's dialect and address
+    /// whispers to the rest.
+    ///
+    /// The client's half of the handshake, and the first thing it sends. A
+    /// host that cannot speak `version` never records the name, so the peer
+    /// owns no token and every later ask of its falls to the ownership gate.
+    Hello { version: u16, name: String },
     /// Host to one peer: a private message (a GM whisper). Directed, not
     /// broadcast, so it never enters the replicated log.
     Whisper { from: String, text: String },
@@ -328,14 +416,42 @@ pub enum NetMessage {
     ///
     /// Appended at the end: postcard tags variants by index.
     Action(ActionIntent),
+    /// Either side to the other: "I cannot speak that version."
+    ///
+    /// The receipt is the pair of numbers: `offered` is the version that
+    /// arrived, `supported` is the one this endpoint speaks. A refusal is
+    /// terminal for the session, never a downgrade -- silently degrading is
+    /// exactly the misapplication the version exists to prevent.
+    ///
+    /// Appended at the end, like `Action`: postcard tags variants by index.
+    VersionRefused { offered: u16, supported: u16 },
 }
 
 /// A player asking to act. Everything about the outcome is the host's to say.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActionIntent {
+    /// Which ask this is. The sending session numbers it and the receiving
+    /// host attributes it; the resolution echoes it back. See [`RequestId`].
+    pub request: RequestId,
     pub actor: TokenId,
     pub target: TokenId,
     pub action_key: String,
+}
+
+impl ActionIntent {
+    /// A fresh ask, unnumbered. [`ClientSession::action`] stamps the nonce on
+    /// the way out and the host stamps the peer on the way in, so a caller
+    /// never invents an identity of its own.
+    ///
+    /// [`ClientSession::action`]: crate::ClientSession::action
+    pub fn new(actor: TokenId, target: TokenId, action_key: impl Into<String>) -> Self {
+        Self {
+            request: RequestId::UNSTAMPED,
+            actor,
+            target,
+            action_key: action_key.into(),
+        }
+    }
 }
 
 /// Where a produced message goes. The transport resolves this to actual

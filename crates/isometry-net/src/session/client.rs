@@ -21,6 +21,14 @@ pub struct ClientSession {
     pending: Vec<(u64, GameEvent)>,
     /// Whispers received from the DM, oldest first: `(from, text)`.
     inbox: Vec<(String, String)>,
+    /// Nonces for this client's own asks. Monotone, so two swings in one turn
+    /// are two requests and the second is not mistaken for a replay of the
+    /// first.
+    next_request: u64,
+    /// The version the host speaks, once it turned out not to be ours. Set
+    /// means the session is over: nothing further is read and no state is ever
+    /// adopted.
+    refused: Option<u16>,
 }
 
 impl Default for ClientSession {
@@ -37,18 +45,28 @@ impl ClientSession {
             log_hash: FNV_OFFSET,
             pending: Vec::new(),
             inbox: Vec::new(),
+            next_request: 0,
+            refused: None,
         }
     }
 
-    /// Announce this player's name to the host (sent on connect), so the
-    /// DM can whisper to it.
+    /// Announce this client's protocol version and player name to the host
+    /// (sent on connect), so the DM can refuse a dialect it cannot read and
+    /// whisper to the rest.
     pub fn hello(&self, name: &str) -> Outbound {
         (
             Recipient::Host,
             NetMessage::Hello {
+                version: PROTOCOL_VERSION,
                 name: name.to_owned(),
             },
         )
+    }
+
+    /// The host's version, if it turned out to be one this client cannot
+    /// speak. `Some` is the receipt for a refused session.
+    pub fn refused(&self) -> Option<u16> {
+        self.refused
     }
 
     /// Whispers received so far.
@@ -84,19 +102,47 @@ impl ClientSession {
 
     /// Ask the host to resolve an action. The client never decides the outcome,
     /// so this carries no roll, no damage and no verdict: only the request.
-    pub fn action(&self, intent: ActionIntent) -> Outbound {
+    ///
+    /// The nonce is stamped here rather than by the caller, so every ask a
+    /// client sends is a distinct request whether or not the caller thought
+    /// about it. The host attributes the peer half on receipt.
+    pub fn action(&mut self, mut intent: ActionIntent) -> Outbound {
+        self.next_request += 1;
+        intent.request = RequestId {
+            peer: PeerId::UNATTRIBUTED,
+            nonce: self.next_request,
+        };
         (Recipient::Host, NetMessage::Action(intent))
     }
 
     /// Handle a message from the host. Returns any follow-on outbound
-    /// (none today; the shape leaves room for acks).
+    /// (the version refusal; the shape leaves room for acks).
     pub fn on_message(&mut self, msg: NetMessage) -> Vec<Outbound> {
+        // A refused session reads nothing more. Degrading to "apply what I can
+        // parse" is the failure the version exists to prevent.
+        if self.refused.is_some() {
+            return Vec::new();
+        }
         match msg {
             NetMessage::Snapshot {
+                version,
                 seq,
                 log_hash,
                 state,
             } => {
+                // The host's dialect arrives before its state does, so a
+                // mismatch is refused with nothing adopted: no snapshot, no
+                // seq, no hash.
+                if version != PROTOCOL_VERSION {
+                    self.refused = Some(version);
+                    return vec![(
+                        Recipient::Host,
+                        NetMessage::VersionRefused {
+                            offered: version,
+                            supported: PROTOCOL_VERSION,
+                        },
+                    )];
+                }
                 // Seed from the host's hash at snapshot time, so folding
                 // the tail forward lands on the same value the host holds
                 // — late joiners and from-start peers all converge.
@@ -111,6 +157,11 @@ impl ClientSession {
             }
             NetMessage::Whisper { from, text } => {
                 self.inbox.push((from, text));
+            }
+            // The host refused *us*. Symmetric: the session is over either way,
+            // and `supported` records the dialect it does speak.
+            NetMessage::VersionRefused { supported, .. } => {
+                self.refused = Some(supported);
             }
             NetMessage::Intent { .. }
             | NetMessage::Rejected { .. }

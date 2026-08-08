@@ -100,6 +100,16 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
             Ok(())
         }
         GameEvent::ActionResolved(res) => {
+            // The idempotency rule. A verdict is taken once, named by the
+            // request the authority stamped on it: a retransmit, a log replayed
+            // over a state that already holds it, or an app that commits the
+            // same answer twice all land here and change nothing. By identity,
+            // not by content -- two identical strikes are two verdicts and both
+            // must land, which is why the check is on the id and not on the
+            // event.
+            if state.applied_actions.contains(&res.request) {
+                return Ok(());
+            }
             require_token(state, res.actor)?;
             require_token(state, res.target)?;
             // Every delta must address a token that actually has a sheet. A
@@ -154,6 +164,9 @@ pub fn apply_game(state: &mut GameSnapshot, event: &GameEvent) -> Result<(), Gam
                 push_roll(state, damage);
             }
             play_beats(state, res.beats.clone());
+            // Recorded only now: a resolution refused above (an unsheeted
+            // target) never applied, so it must stay askable.
+            state.applied_actions.insert(res.request);
             sync_active_map(state);
             Ok(())
         }

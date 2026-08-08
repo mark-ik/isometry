@@ -191,6 +191,7 @@ fn remote_mode_routes_moves_as_events_not_local_mutation() {
         party_cap: isometry_net::default_party_cap(),
         last_beats: Vec::new(),
         beat_seq: 0,
+        applied_actions: Default::default(),
     };
     ui.apply_snapshot(snap);
     assert_eq!(
@@ -733,6 +734,7 @@ fn apply_snapshot_mirrors_the_clock_and_the_cap() {
         party_cap: 2,
         last_beats: Vec::new(),
         beat_seq: 0,
+        applied_actions: Default::default(),
     };
     snap.clocks.insert("field".to_owned(), 7);
     ui.apply_snapshot(snap);

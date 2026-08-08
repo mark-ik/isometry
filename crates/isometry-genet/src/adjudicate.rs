@@ -12,7 +12,15 @@ impl App {
     /// Resolve one action request and commit its outcome. The only path from
     /// "I swing at that goblin" to the goblin being hurt, taken by the DM's own
     /// swings and by a player's request alike.
-    pub(crate) fn adjudicate(&mut self, (actor, target, key): (TokenId, TokenId, String)) {
+    ///
+    /// `request` names the ask being answered, and the resolution echoes it, so
+    /// the verdict is applied exactly once wherever it lands. It arrives
+    /// already attributed: the host stamped a player's, and `pump_sheets` mints
+    /// this process's own.
+    pub(crate) fn adjudicate(
+        &mut self,
+        (request, actor, target, key): (RequestId, TokenId, TokenId, String),
+    ) {
         let Some(system) = self.system.as_mut() else {
             return;
         };
@@ -235,6 +243,7 @@ impl App {
                 };
 
                 let event = GameEvent::ActionResolved(ActionResolved {
+                    request,
                     actor,
                     target,
                     action_key: key.clone(),

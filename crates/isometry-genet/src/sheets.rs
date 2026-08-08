@@ -294,11 +294,9 @@ impl App {
         if let Some((actor, target, key)) = intent.clone() {
             if self.net.is_some() && !self.net_is_host {
                 if let Some(net) = self.net.as_ref() {
-                    net.submit_action(ActionIntent {
-                        actor,
-                        target,
-                        action_key: key,
-                    });
+                    // Unnumbered: the client session stamps the nonce on the way
+                    // out and the host stamps whose ask it was on the way in.
+                    net.submit_action(ActionIntent::new(actor, target, key));
                 }
                 runner.update(|ui| {
                     ui.action_intent = None;
@@ -308,19 +306,27 @@ impl App {
             }
         }
 
+        // This process's own ask (the DM's swing, or solo play) arrives over no
+        // connection, so nobody else can attribute it: number it here, against
+        // the reserved host identity.
+        let own = intent.map(|(actor, target, key)| {
+            self.own_requests += 1;
+            (RequestId::host(self.own_requests), actor, target, key)
+        });
+
         // The host also adjudicates its players' requests, through this same
         // path: one resolver, one entropy source, one set of rules, whoever asked.
-        let mut queued: Vec<(TokenId, TokenId, String)> = Vec::new();
+        let mut queued: Vec<(RequestId, TokenId, TokenId, String)> = Vec::new();
         if self.net_is_host {
             if let Some(net) = self.net.as_mut() {
                 queued = net
                     .take_action_intents()
                     .into_iter()
-                    .map(|i| (i.actor, i.target, i.action_key))
+                    .map(|i| (i.request, i.actor, i.target, i.action_key))
                     .collect();
             }
         }
-        for pending in intent.into_iter().chain(queued) {
+        for pending in own.into_iter().chain(queued) {
             self.adjudicate(pending);
         }
 

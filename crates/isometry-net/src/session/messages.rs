@@ -53,17 +53,46 @@ impl HostSession {
         Ok(out)
     }
 
-    /// A message arrived from `from`: `Intent` proposes an event,
-    /// `Hello` announces the player's name; anything else is ignored (a
-    /// misbehaving client cannot corrupt the authority).
+    /// A message arrived from `from`: `Hello` announces the peer's protocol
+    /// version and player name, `Intent` proposes an event, `Action` asks for a
+    /// verdict; anything else is ignored (a misbehaving client cannot corrupt
+    /// the authority).
+    ///
+    /// The version is the first thing checked, and a peer that fails it is
+    /// refused for the session rather than partially served.
     pub fn on_message(&mut self, from: PeerId, msg: NetMessage) -> Vec<Outbound> {
+        // A peer whose dialect this host cannot read is answered with the same
+        // receipt for the rest of the session, and nothing it says is read. The
+        // refusal is checked before the message is even matched, so there is no
+        // arm through which a stranger's bytes can reach game state.
+        if let Some(&offered) = self.refused.get(&from) {
+            return vec![(Recipient::One(from), Self::version_receipt(offered))];
+        }
         match msg {
+            // The handshake. A version this host cannot speak is refused here,
+            // before the peer is ever recorded as a player, so it owns no token
+            // and can commit nothing.
+            NetMessage::Hello { version, name } => {
+                if version != PROTOCOL_VERSION {
+                    self.refused.insert(from, version);
+                    return vec![(Recipient::One(from), Self::version_receipt(version))];
+                }
+                self.peer_names.insert(from, name);
+                Vec::new()
+            }
+            // The peer refused *us*: our version is one it cannot speak. Drop
+            // it the same way, recording the dialect it does speak.
+            NetMessage::VersionRefused { supported, .. } => {
+                self.refused.insert(from, supported);
+                self.peer_names.remove(&from);
+                Vec::new()
+            }
             // A player asking to act. Two things are checkable without any rules
             // at all, so they are checked here: the actor exists, and it is
             // yours. Everything else -- reach, turn, whether it hits, what it
             // costs -- is the rules system's, so the request is queued for the
             // host app to adjudicate and commit.
-            NetMessage::Action(intent) => {
+            NetMessage::Action(mut intent) => {
                 if !self.peer_owns(from, intent.actor) {
                     return vec![(
                         Recipient::One(from),
@@ -72,6 +101,14 @@ impl HostSession {
                         },
                     )];
                 }
+                // Who asked is the authority's to say, not the asker's: the ask
+                // is attributed to the connection it arrived on, so a peer
+                // cannot number its request as somebody else's. The nonce stays
+                // the asker's, so it can match this answer to its question.
+                intent.request = RequestId {
+                    peer: from,
+                    nonce: intent.request.nonce,
+                };
                 self.pending_actions.push(intent);
                 Vec::new()
             }
@@ -84,11 +121,15 @@ impl HostSession {
                     Err(reason) => vec![(Recipient::One(from), NetMessage::Rejected { reason })],
                 }
             }
-            NetMessage::Hello { name } => {
-                self.peer_names.insert(from, name);
-                Vec::new()
-            }
             _ => Vec::new(),
+        }
+    }
+
+    /// The legible half of a refusal: what arrived, and what this host speaks.
+    fn version_receipt(offered: u16) -> NetMessage {
+        NetMessage::VersionRefused {
+            offered,
+            supported: PROTOCOL_VERSION,
         }
     }
 

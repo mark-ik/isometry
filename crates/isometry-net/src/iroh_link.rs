@@ -30,13 +30,25 @@ use isometry_campaign::CampaignStore;
 
 /// The session ALPN. Bumping it is a protocol break (old clients can't
 /// dial a new host).
+///
+/// It moves with [`PROTOCOL_VERSION`], and the two do different jobs: the ALPN
+/// stops an incompatible peer from dialing at all, while the version is the
+/// in-session handshake that refuses one which got through anyway (a same-ALPN
+/// build with a changed message shape).
 pub const ALPN: &[u8] = b"isometry/session/v1";
 
 type PeerMap = Arc<Mutex<HashMap<PeerId, mpsc::UnboundedSender<NetMessage>>>>;
 
 /// Derive a routing [`PeerId`] from the connection's remote endpoint id.
+///
+/// Clamped off both reserved ids: `PeerId::HOST` names the DM's own asks and
+/// `PeerId::UNATTRIBUTED` names one nobody has attributed yet, so a remote peer
+/// landing on either would let its request ids collide with theirs. One node id
+/// in 2^64 gets nudged, which is the same order of chance as the hash collision
+/// this routing already accepts.
 fn peer_of(conn: &Connection) -> PeerId {
-    PeerId(fnv1a(FNV_OFFSET, conn.remote_id().as_bytes()))
+    let hash = fnv1a(FNV_OFFSET, conn.remote_id().as_bytes());
+    PeerId(hash.clamp(PeerId::HOST.0 + 1, PeerId::UNATTRIBUTED.0 - 1))
 }
 
 async fn write_frame(send: &mut SendStream, msg: &NetMessage) -> Result<(), String> {
@@ -438,6 +450,7 @@ mod tests {
             party_cap: crate::protocol::default_party_cap(),
             last_beats: Vec::new(),
             beat_seq: 0,
+            applied_actions: Default::default(),
         }
     }
 

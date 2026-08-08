@@ -135,6 +135,7 @@ impl ApplicationHandler for App {
                     party_cap: ui.party_cap,
                     last_beats: Vec::new(),
                     beat_seq: 0,
+                    applied_actions: Default::default(),
                 };
                 self.net = Some(NetBridge::spawn(Role::Host {
                     state: snapshot,

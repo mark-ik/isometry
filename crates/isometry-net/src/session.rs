@@ -16,7 +16,7 @@ use isometry_core::{apply, EventError, TileCoord, TokenId};
 
 use crate::protocol::{
     fold_event, ActionIntent, GameEvent, GameSnapshot, NetMessage, Outbound, PeerId, Recipient,
-    FNV_OFFSET,
+    RequestId, FNV_OFFSET, PROTOCOL_VERSION,
 };
 
 mod apply;

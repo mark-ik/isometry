@@ -4,6 +4,7 @@
 //! two machines.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use isometry_campaign::{
     CampaignDraft, CampaignMap, CampaignWorld, DraftMap, EncounterAnchor, EntropyTape,
@@ -18,7 +19,9 @@ use isometry_core::{
     TurnList,
 };
 use isometry_net::sim::Sim;
-use isometry_net::{ActionIntent, ActionResolved, GameEvent, GameSnapshot, HostSession, PeerId};
+use isometry_net::{
+    ActionIntent, ActionResolved, GameEvent, GameSnapshot, HostSession, PeerId, RequestId,
+};
 
 fn snapshot() -> GameSnapshot {
     let mut map = MapDocument::new("net demo", 8, 8);
@@ -57,7 +60,16 @@ fn snapshot() -> GameSnapshot {
         party_cap: isometry_net::default_party_cap(),
         last_beats: Vec::new(),
         beat_seq: 0,
+        applied_actions: Default::default(),
     }
+}
+
+/// A fresh request id, standing in for the authority's stamp: in play the host
+/// numbers each ask, and a fixture that reused one number would be asking the
+/// same question twice (and the second answer would rightly be a no-op).
+fn next_request() -> RequestId {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    RequestId::host(NEXT.fetch_add(1, Ordering::Relaxed))
 }
 
 /// Bind a sheet to a token so it can take part in an adjudicated action.
@@ -75,6 +87,7 @@ fn sheet(name: &str, hp: i64, ac: i64) -> SheetData {
 /// what the rules decided.
 fn attack_hit(damage: i64) -> GameEvent {
     GameEvent::ActionResolved(ActionResolved {
+        request: next_request(),
         actor: TokenId(1),
         target: TokenId(2),
         action_key: "attack".to_owned(),
@@ -814,11 +827,7 @@ fn a_client_asks_and_the_host_adjudicates() {
     // damage, no verdict. The host holds the rules; the client holds none.
     sim.client_action(
         PeerId(10),
-        ActionIntent {
-            actor: TokenId(1),
-            target: TokenId(2),
-            action_key: "attack".to_owned(),
-        },
+        ActionIntent::new(TokenId(1), TokenId(2), "attack"),
     );
 
     // It changes nothing by itself. It is not an event and never enters the log;
@@ -844,11 +853,8 @@ fn a_client_may_only_act_with_its_own_tokens() {
     // ownership is one of the two things the rules-blind session can check.
     sim.client_action(
         PeerId(10),
-        ActionIntent {
-            actor: TokenId(1), // player A's knight
-            target: TokenId(2),
-            action_key: "attack".to_owned(),
-        },
+        // Player A's knight, which B does not command.
+        ActionIntent::new(TokenId(1), TokenId(2), "attack"),
     );
     assert!(
         sim.host.take_action_intents().is_empty(),

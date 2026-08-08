@@ -136,6 +136,7 @@ mod tests {
             party_cap: isometry_net::default_party_cap(),
             last_beats: Vec::new(),
             beat_seq: 0,
+            applied_actions: Default::default(),
         };
         let mut history = Codicil::new();
         history.append(GameEvent::Fact(WorldFact {

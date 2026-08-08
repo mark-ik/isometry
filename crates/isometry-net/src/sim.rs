@@ -86,9 +86,10 @@ impl Sim {
         }
     }
 
-    /// A client asks the host to resolve an action.
+    /// A client asks the host to resolve an action. The client numbers the ask
+    /// on the way out, so the caller hands over an unstamped intent.
     pub fn client_action(&mut self, peer: PeerId, intent: crate::protocol::ActionIntent) {
-        if let Some(client) = self.clients.get(&peer) {
+        if let Some(client) = self.clients.get_mut(&peer) {
             let out = client.action(intent);
             self.enqueue_from_client(peer, vec![out]);
             self.settle();

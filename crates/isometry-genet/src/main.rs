@@ -34,7 +34,7 @@ use isometry_core::{
     Facing, FieldValue, MapDocument, Rng, SessionEvent, SheetData, TileCoord, Token, TokenId,
 };
 use isometry_net::{
-    ActionIntent, ActionResolved, GameEvent, GameSnapshot, HostSession, apply_game,
+    ActionIntent, ActionResolved, GameEvent, GameSnapshot, HostSession, RequestId, apply_game,
 };
 use isometry_system::{
     ActionError, GeneratorCatalog, GeneratorLimits, System, monster_sheet, sheet_with_conditions,
@@ -187,6 +187,11 @@ struct App {
     /// Host entropy for adjudication. Every die an action rolls comes from here,
     /// so a fixed seed replays a session's combat exactly; peers never roll.
     action_rng: Rng,
+    /// Nonces for this process's *own* asks: the DM's swings and solo play,
+    /// which arrive over no connection and so carry [`PeerId::HOST`]. A joined
+    /// player's ask is numbered by its own `ClientSession` and attributed by the
+    /// host, so it never passes through here.
+    own_requests: u64,
     /// True while a beat is on screen, so the beats can be cleared the moment
     /// the engine's clock reports the last one finished. Without this the class
     /// would still be set when the next strike lands, and an unchanged class
@@ -477,6 +482,7 @@ fn main() {
         // A fixed seed keeps a solo session reproducible and makes the headed
         // verification deterministic. A real table seeds this per session.
         action_rng: Rng::new(0x15D_0BE),
+        own_requests: 0,
         beats_playing: false,
         sheet,
         cursor: (0.0, 0.0),
